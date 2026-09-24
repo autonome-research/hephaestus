@@ -1,0 +1,25 @@
+[registry]
+name = "hephaestus-tools"
+kind = "tools"
+version = "0.1.0"
+license = "Apache-2.0"
+description = """
+The CAM tool library (CAM.md §3.5): cutter records with a mandatory holder
+envelope and sourced feeds entries. Pure data — unlike parts (generators) and
+dfm (predicates), a tool record carries no executable content: there is no
+reason for a cutter to be a program, and every reason for it not to be. Each
+record's simplifications list is safety content, not documentation; it is
+copied into any future program header verbatim.
+"""
+
+[[tools]]
+id = "em_6mm_3fl_carbide"
+file = "em_6mm_3fl_carbide.json"
+
+[[tools]]
+id = "em_3mm_2fl_carbide"
+file = "em_3mm_2fl_carbide.json"
+
+[[tools]]
+id = "drill_5mm_hss"
+file = "drill_5mm_hss.json"

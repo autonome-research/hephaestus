@@ -358,8 +358,16 @@ def test_committed_schema_files_match_the_declared_surface() -> None:
     # propose_placement / read_proposals (Stage 13B) — repointed with the
     # sub-stage that ships each tool, per SOLVER.md §11's per-sub-stage pin
     # discipline (13C adds none: its parameter space is an enum value on
-    # propose_placement, not a fourth tool).
-    assert len(TOOL_NAMES) == 57
+    # propose_placement, not a fourth tool);
+    # +15 for CAM.md §9 / tool_schema.md "Manufacturing setups" (Stage 14B) —
+    # the five CAM declare/update/read quartet families (setups, stock,
+    # fixtures, WCS, operations), the 16-tool shape argued in the 2026-09-02
+    # amendment;
+    # +1 for CAM.md §5.9/§9 check_program (Stage 14C) — simulate and verify,
+    # the one CAM measuring verb; 14D adds none (emission is an operator CLI
+    # verb; `emit_program` is a refused reservation in tool_schema.md's
+    # Deferred section).
+    assert len(TOOL_NAMES) == 73
 
 
 def test_sequential_declarations_cover_the_normative_list() -> None:
@@ -474,6 +482,33 @@ def test_orchestrator_only_families_are_declared_orchestrator_only() -> None:
         # a project-scoped budget.
         "read_proposals",
     }
+    # CAM.md §9 (Stage 14B) applies the 8C quartet decision once more: the five
+    # CAM declared-state families are canonical-pipeline surfaces ("part +
+    # orchestrator profiles", the §9 wording) — declaring a setup is cheap,
+    # reversible, generational, and measured against geometry the model did not
+    # choose; a quick-edit session interprets nothing and the §5 reviewer is
+    # HANDED ProgramStatus rather than re-declaring the job.
+    cam_family = {
+        "declare_setup",
+        "update_setup",
+        "read_setups",
+        "declare_stock",
+        "update_stock",
+        "read_stock",
+        "declare_fixture",
+        "update_fixture",
+        "read_fixtures",
+        "declare_wcs",
+        "update_wcs",
+        "read_wcs",
+        "declare_operation",
+        "update_operation",
+        "read_operations",
+        # CAM.md §5.9/§9 (Stage 14C): check_program measures — simulate and
+        # verify on the same pair, exactly as check_assembly/check_motion sit
+        # with their families.
+        "check_program",
+    }
     for name in TOOL_NAMES:
         profiles = set(tools_decl.get_tool(name).profiles)
         if name in orchestrator_only:
@@ -483,6 +518,7 @@ def test_orchestrator_only_families_are_declared_orchestrator_only() -> None:
             or name in comparison_family
             or name in constraint_family
             or name in kinematics_family
+            or name in cam_family
         ):
             assert profiles == {"part", "orchestrator"}, f"{name} profiles drifted"
         elif name in reference_family:

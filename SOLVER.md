@@ -39,7 +39,7 @@ the machinery the three sub-gates ship.
 This document is unusual among its siblings: every other normative spec in
 this repo *adds* a capability the plan already anticipated. This one
 **reverses a rule five documents and four modules state in the imperative**.
-Mission rule 5 (`mission_plan.md:1957-1959`) is the only door — deferred items
+Mission rule 5 (`mission_plan.md:2307-2309`) is the only door — deferred items
 enter by amending the plan with a new gated stage — and `ASSEMBLY.md:68`
 pre-authorised exactly this route in the same breath as the refusal: "(A
 placement solver, if ever, is a separate stage.)" §1 is therefore not
@@ -118,7 +118,7 @@ rule 1, the rule that says a gate is a command, and nothing in Stage 13 touched
 the file it points at.
 
 **This sentence was tightened on 2026-09-01, loudly, under mission rule 1
-(`mission_plan.md:1943-1946`), after an independent verifier found it
+(`mission_plan.md:2293-2296`), after an independent verifier found it
 asserting more than any gate could.** It read "every `file:line` citation in
 this document resolves to text containing the anchor it is cited for" — a
 universal anchor claim over ~160 citations. No parser can derive a
@@ -143,10 +143,10 @@ fails *silently*, and a reader following it lands on a sentence that says
 something else; four of these were wrong that way once, before this stage
 touched anything.
 
-- `mission_plan.md:1943-1946` — "Gates are commands"
-- `mission_plan.md:1957-1959` — "Scope discipline"
-- `mission_plan.md:1960-1964` — "Framework boundaries are contractual"
-- `mission_plan.md:1965-1969` — "Pinned, isolated agent dependencies"
+- `mission_plan.md:2293-2296` — "Gates are commands"
+- `mission_plan.md:2307-2309` — "Scope discipline"
+- `mission_plan.md:2310-2314` — "Framework boundaries are contractual"
+- `mission_plan.md:2315-2319` — "Pinned, isolated agent dependencies"
 - `mission_plan.md:984-1000` — "Stage 12 — Mesh and scan ingest"
 - `ASSEMBLY.md:56-57` — "A constraint that requires motion to satisfy is"
 - `ASSEMBLY.md:55-75` — "NO SOLVER MOVES GEOMETRY"
@@ -302,7 +302,7 @@ holds it.*
   in an amendment manifest is a claim: part scripts declare no solve, `PARAMS`
   and `hc` are untouched, the `CHECKS` facade gains no solver surface (§12),
   and no build path changes. The 13C parameter solve rides `build_part`'s
-  existing transient-override preview contract (`script_contract.md:476-481`,
+  existing transient-override preview contract (`script_contract.md:495-500`,
   `tool_schema.md:238-243`) without amending it.
 - **`COMPARE.md`, `INGEST.md`, `EXTERNAL_EVAL.md`, `architecture.md`,
   `verification.md`, `repo_conventions.md`, `INTERFACE.md`** — unchanged.
@@ -351,7 +351,7 @@ as a content-addressed artifact. It is:
 - **13C — parameter proposal.** Free variables are declared `Param`s
   (`script_contract.md:119-140`), evaluated by transient-override preview
   builds, which are `current=false` by contract and publish nothing
-  (`script_contract.md:476-481`).
+  (`script_contract.md:495-500`).
 
 It is **not**:
 
@@ -384,7 +384,7 @@ It is **not**:
   starts, and its verdicts say so by name (§6). No branch-and-bound, no
   simulated annealing, no random restarts (an RNG would also break §9).
 - **Dynamics, loads, FEA, or contact resolution.** Unchanged from
-  `KINEMATICS.md:57-62`; FEA is named deferred by `mission_plan.md:1957-1959`.
+  `KINEMATICS.md:57-62`; FEA is named deferred by `mission_plan.md:2307-2309`.
 - **A verdict.** §7 and §8 are the sections that make this true, and they are
   the sections a hostile review should read first.
 
@@ -450,11 +450,11 @@ spirit" of an unenumerated rule preserves nothing.
 
 - **P1 — reproducibility is defined off the script.** A build's identity is
   `input_hashes = {script, hc_dependencies, part_params, effective_params,
-  toolchain, imports}` (`script_contract.md:469-479`, rules at `:475-484`). A
+  toolchain, imports}` (`script_contract.md:488-498`, rules at `:494-503`). A
   position originating anywhere else is not named by that hash set, so the
   artifact stops being a function of its recorded inputs.
 - **P2 — git owns authored design state (mission rule 6,
-  `mission_plan.md:1960-1964`).** Per-part placement stored in `.heph/` or a
+  `mission_plan.md:2310-2314`).** Per-part placement stored in `.heph/` or a
   ledger would be a second source of geometric truth, which rule 6 forbids
   independently of `ASSEMBLY.md`.
 - **P3 — one home per number.** `hc` is how mating parts agree without
@@ -518,7 +518,7 @@ Property by property, under that decision:
 
 | Property | How it survives |
 |---|---|
-| P1 | No artifact is produced by anything but a script build. A proposal is not an input to a build and is not in `input_hashes`. The 13C preview builds are `current=false` by existing contract (`script_contract.md:476-481`). |
+| P1 | No artifact is produced by anything but a script build. A proposal is not an input to a build and is not in `input_hashes`. The 13C preview builds are `current=false` by existing contract (`script_contract.md:495-500`). |
 | P2 | A proposal is a *measurement*, in the same category as an `AssemblyStatus` or a `SolidDiff` — not design state. Design state after Stage 13 is exactly what it is today: scripts, `globals.py`, and persisted params, in git. |
 | P3 | Nothing is written, so no second home is created. The 13C parameter space is the strongest case: its free variables are `Param`s, which already have exactly one home and already ride `effective_params` in the input hash. |
 | P4 | The author writes the diff. A proposal deliberately ships **no** suggested source text (§8). |
@@ -907,7 +907,7 @@ arithmetic implemented in `geom.solve`. `numpy` is already a core dependency
 (`core/pyproject.toml:7-17`) but its BLAS backend is threaded and
 dispatch-dependent, which §9 shows would forfeit the one determinism tier
 worth having; `scipy` is not a dependency and adding one is mission rule 7
-territory (`mission_plan.md:1965-1969`). **The alternative that lost:
+territory (`mission_plan.md:2315-2319`). **The alternative that lost:
 `scipy.optimize.least_squares`** — fewer lines, no reproducible digits, and a
 new pinned dependency.
 
@@ -1384,7 +1384,7 @@ about a run, never about the design.
 
 ## 10. Bounded execution
 
-`COMPARE.md:152-176` is the pattern, and its measurement is the warning: a
+`COMPARE.md:165-189` is the pattern, and its measurement is the warning: a
 single boolean ground for ~19 h on a pathological B-rep, and five of six
 live-run infrastructure deaths ended on an unanswered `compare_solids`. The
 Stage 13 sharpening is that **the ceiling must be per iteration, not only per
@@ -1527,7 +1527,7 @@ stays byte-for-byte valid. No change to `check_assembly` or `check_motion`
 semantics. No change to `edit_part` / `write_part` / `set_params`: no force
 overwrite appears, and no tool applies a proposal. No change to export —
 `as_built` is still what a script built, never a proposed placement. No
-dynamics, loads, FEA, or motor sizing (`mission_plan.md:1957-1959`). No new
+dynamics, loads, FEA, or motor sizing (`mission_plan.md:2307-2309`). No new
 runtime dependency (§4.2). **No measurement floor**: Stage 13 does not
 measure `evaluate_residual`'s accuracy against analytically known geometry
 and does not claim one exists; the only 1e-9 **constant Stage 13 declares** is
@@ -1680,7 +1680,7 @@ already exists.
 Stage 13 lands in three gated sub-stages, strictly ordered. Every clause below
 is a pytest assertion; a clause that cannot be written as one is a defect in
 this document to be fixed by tightening it, never by waiving it (mission rule
-1, `mission_plan.md:1943-1946`).
+1, `mission_plan.md:2293-2296`).
 
 **Four epsilons exist only for these gates (three from the start and a fourth
 measured at 13B), and they exist because an earlier
@@ -1877,7 +1877,7 @@ do.
     as a pure service.
 
     **Tightened 2026-09-01, under mission rule 1
-    (`mission_plan.md:1943-1946`), and the tightening is the whole point.**
+    (`mission_plan.md:2293-2296`), and the tightening is the whole point.**
     This clause read "`tests/stage9a`–`stage9c` unchanged". The shipped tree
     contradicts it: 13C's corpus family adds two public tasks, so stage9c's
     count pin had to move with them or "existing suites stay green" — the

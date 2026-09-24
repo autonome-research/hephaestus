@@ -205,16 +205,18 @@ def test_the_bundled_dfm_registry_loads_with_the_shipped_packs() -> None:
     assert registry.kind == "dfm"
     assert registry.manifest.license
     index = DfmIndex(registry)
-    assert index.processes() == ("cnc_router", "fdm", "laser_cut", "waterjet")
+    assert index.processes() == ("cnc_mill", "cnc_router", "fdm", "laser_cut", "waterjet")
     # Issue #28 inverted the cnc_router hole: heph init's default process is
     # cnc_router, so the bundled registry must carry that pack. Issue #30 adds
-    # waterjet as the 2D-cut sibling of laser_cut (named kerf_mm). cnc_mill is
-    # still unshipped (CAM.md §6 / parent #14).
+    # waterjet as the 2D-cut sibling of laser_cut (named kerf_mm). Stage 14A
+    # (CAM.md §6, amendment 2026-09-02) ships cnc_mill and owes this line the
+    # same inversion the router got: the pack is bundled, so has() is asserted
+    # true, not false.
     assert (
         index.has("laser_cut")
         and index.has("cnc_router")
         and index.has("waterjet")
-        and not index.has("cnc_mill")
+        and index.has("cnc_mill")
     )
 
 
@@ -366,9 +368,15 @@ def test_material_spec_resolves_to_the_registry_record_a_rule_measures_against(
 def test_the_dfm_registry_resolves_through_the_project_registry_set(tmp_path: Path) -> None:
     (tmp_path / "hephaestus.toml").write_text('name = "proj"\n', encoding="utf-8")
     registries = RegistrySet.open(tmp_path)
-    assert registries.dfm.processes() == ("cnc_router", "fdm", "laser_cut", "waterjet")
+    assert registries.dfm.processes() == ("cnc_mill", "cnc_router", "fdm", "laser_cut", "waterjet")
     listing = registries.dfm.listing()
-    assert [entry["process"] for entry in listing] == ["cnc_router", "fdm", "laser_cut", "waterjet"]
+    assert [entry["process"] for entry in listing] == [
+        "cnc_mill",
+        "cnc_router",
+        "fdm",
+        "laser_cut",
+        "waterjet",
+    ]
     assert all(entry["registry_digest"] for entry in listing)
 
 

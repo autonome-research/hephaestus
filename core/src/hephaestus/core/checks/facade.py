@@ -57,6 +57,8 @@ __all__ = [
     "PosedContextFactory",
     "PosedMeasurement",
     "PosedPlacement",
+    "ProgramFacts",
+    "ProgramResolver",
     "ScanFacts",
     "ScanTargetResolver",
     "SweepFacts",
@@ -109,6 +111,14 @@ ScanTargetResolver = Callable[
 #: snapshot. Injected like :data:`ImportResolver`; a named refusal it raises
 #: (unknown id, withdrawn entry, motion timeout) is the predicate's outcome.
 SweepResolver = Callable[[str], Mapping[str, JSONValue]]
+
+#: Resolves a declared setup id to its §5.9 ``ProgramStatus`` record
+#: (``CAM.md`` §9, the ``script_contract.md`` §6 amendment), evaluated
+#: against the run's frozen snapshot. Injected like :data:`SweepResolver` and
+#: for the same reason; a named refusal it raises (unknown setup, a CAM
+#: simulation timeout — which the checks engine records as *unverifiable*)
+#: is the predicate's outcome.
+ProgramResolver = Callable[[str], Mapping[str, JSONValue]]
 
 #: Density used for ``m.mass`` when neither the call nor the part supplies one.
 DEFAULT_DENSITY = 1.0
@@ -519,6 +529,57 @@ class ScanFacts:
 
 
 @dataclass(frozen=True)
+class ProgramFacts:
+    """One setup's §5.9 record as a CHECKS predicate reads it (``m.program``).
+
+    Flattened on the :class:`SweepFacts` rule: a predicate asserts
+    ``m.program("s-op1").coverage == "covered"`` without walking the record.
+    Every verdict is a spelling from the CAM.md §1.1 closed set — facts,
+    never re-decided here — and :attr:`raw` is the whole ``ProgramStatus``
+    record, which is what the check report records as the measured value.
+    """
+
+    setup: str
+    state: str
+    coverage: str | None
+    round_trip: str | None
+    simulation: str | None
+    collision: str | None
+    refusals: tuple[str, ...]
+    raw: Mapping[str, JSONValue]
+
+    @classmethod
+    def from_json(cls, raw: Mapping[str, JSONValue]) -> ProgramFacts:
+        """Flatten a ``ProgramStatus.to_json`` mapping."""
+
+        def verdict(section: str) -> str | None:
+            block = raw.get(section)
+            if not isinstance(block, dict):
+                return None
+            value = cast("Mapping[str, JSONValue]", block).get("verdict")
+            return value if isinstance(value, str) else None
+
+        refusals_raw = raw.get("refusals")
+        refusals: tuple[str, ...] = ()
+        if isinstance(refusals_raw, list):
+            refusals = tuple(
+                str(cast("Mapping[str, JSONValue]", item).get("reason", ""))
+                for item in cast("list[JSONValue]", refusals_raw)
+                if isinstance(item, dict)
+            )
+        return cls(
+            setup=str(raw.get("setup", "")),
+            state=str(raw.get("state", "")),
+            coverage=verdict("coverage"),
+            round_trip=verdict("round_trip"),
+            simulation=verdict("simulation"),
+            collision=verdict("collision"),
+            refusals=refusals,
+            raw=raw,
+        )
+
+
+@dataclass(frozen=True)
 class SweepFacts:
     """One motion-check result as a CHECKS predicate reads it (§4 ``m.sweep``).
 
@@ -623,6 +684,7 @@ class Measurement:
         scan: ScanTargetResolver | None = None,
         at_pose: PosedContextFactory | None = None,
         sweep: SweepResolver | None = None,
+        program: ProgramResolver | None = None,
     ) -> None:
         self._sources: dict[str, GeometrySource] = dict(sources)
         self._current = current_part
@@ -632,6 +694,7 @@ class Measurement:
         self._scan = scan
         self._at_pose = at_pose
         self._sweep = sweep
+        self._program = program
         self._trace: list[MeasurementEntry] = []
 
     @property
@@ -761,6 +824,30 @@ class Measurement:
         raw = self._sweep(check_id)
         facts = SweepFacts.from_json(raw)
         self._record("sweep", (check_id,), cast("JSONValue", dict(raw)))
+        return facts
+
+    def program(self, setup_id: str) -> ProgramFacts:
+        """One declared setup's §5.9 ``ProgramStatus`` record (``CAM.md`` §9).
+
+        Project scope only, the exact ``m.sweep`` rule: the resolver is
+        injected by the caller that owns the run's frozen snapshot, and a
+        facade without it — every part-scope facade — refuses by name at
+        evaluation (``kind="contract"``), recorded as that check's failure. A
+        CAM simulation timeout the resolver raises lands as the check's
+        **unverifiable** outcome. The facts, never a verdict of this facade's
+        own.
+        """
+        if self._program is None:
+            raise ValidationError(
+                f"m.program({setup_id!r}) cannot be resolved here: this measurement is "
+                "not bound to a project run's frozen snapshot — m.program is a "
+                "project-scope read surface, and part-scope CHECKS may not call it "
+                "(script_contract.md §6, CAM.md §9)",
+                kind="contract",
+            )
+        raw = self._program(setup_id)
+        facts = ProgramFacts.from_json(raw)
+        self._record("program", (setup_id,), cast("JSONValue", dict(raw)))
         return facts
 
     def _resolve_target(self, target: str) -> object:
@@ -966,13 +1053,15 @@ def project_measurement(
     imports: ImportResolver | None = None,
     at_pose: PosedContextFactory | None = None,
     sweep: SweepResolver | None = None,
+    program: ProgramResolver | None = None,
 ) -> Measurement:
     """Project-scoped facade: cross-part ``"<part>/<selector>"`` addressing enabled.
 
-    ``at_pose`` / ``sweep`` are the §4 motion read surfaces, injected by the
-    caller that owns the run's frozen snapshot (``KINEMATICS.md`` §2, last
-    bullet). Only this constructor accepts them: :func:`part_measurement`
-    deliberately has no such parameters, which IS the scope enforcement.
+    ``at_pose`` / ``sweep`` are the §4 motion read surfaces and ``program``
+    is the ``CAM.md`` §9 program read surface, injected by the caller that
+    owns the run's frozen snapshot (``KINEMATICS.md`` §2, last bullet). Only
+    this constructor accepts them: :func:`part_measurement` deliberately has
+    no such parameters, which IS the scope enforcement.
     """
     return Measurement(
         sources=sources,
@@ -982,4 +1071,5 @@ def project_measurement(
         imports=imports,
         at_pose=at_pose,
         sweep=sweep,
+        program=program,
     )

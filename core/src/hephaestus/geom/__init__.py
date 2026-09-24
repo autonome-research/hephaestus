@@ -18,7 +18,7 @@ Contract for this package (enforced by
   face records, packed layouts); manufacturability verdicts belong to the DFM
   rule packs and the checks engine that consume them.
 
-Ten services, nine of them re-exported here as one public surface:
+Eleven services, ten of them re-exported here as one public surface:
 
 * :mod:`hephaestus.geom.metrics` — the §8 ``Metrics`` record and the
   addressing-layer geometry index over a labeled part compound;
@@ -46,6 +46,13 @@ Ten services, nine of them re-exported here as one public surface:
   frames, applied to shapes as placed copies for posed measurement. No
   solver and no dynamics — posed evaluation only — and an out-of-limits
   parameter is a named refusal, never a clamp.
+* :mod:`hephaestus.geom.toolpath` — toolpath geometry (``CAM.md`` §4, Stage
+  14B): the iterated contour-offset ladder with its explicit termination rule
+  (collapse is a reported fact, never a refusal), self-intersection pruning of
+  inward offsets into disjoint rings, the closed move vocabulary and
+  ``MoveList`` record, and the tool solid (cutter/shank/holder envelopes from
+  declared numbers). Pure: stock resolution, feed transport, refusal filing
+  and every verdict live in :mod:`hephaestus.core.machining`, not here.
 * :mod:`hephaestus.geom.solve` — least-squares solving over declared
   residuals (``SOLVER.md`` §§3-6): the reformulated residuals of §3.3 with the
   closed-form identities back to the engine's own numbers, fixed-order
@@ -212,6 +219,25 @@ from hephaestus.geom.step_io import (
     shape_to_brep,
     write_step,
 )
+from hephaestus.geom.toolpath import (
+    MOVE_KINDS,
+    TOOLPATH_MIN_LOOP_AREA_MM2,
+    LadderResult,
+    LadderTermination,
+    Move,
+    MoveKind,
+    MoveList,
+    OffsetLoop,
+    ToolpathRefusal,
+    ToolSolid,
+    moves_for_rings,
+    offset_ladder,
+    profile_moves,
+    sample_count,
+    swept_solid,
+    tool_fits,
+    tool_solid,
+)
 from hephaestus.geom.topology import (
     OVERHANG_SAMPLES,
     PARALLEL_EPS,
@@ -259,6 +285,7 @@ __all__ = [
     "MIN_CURVE_SEGMENTS",
     "MIN_FACE_SAMPLES",
     "MOMENT_TIE_REL",
+    "MOVE_KINDS",
     "OPTIONAL_PARAMS",
     "OVERHANG_SAMPLES",
     "OVERLAP_EPS_MM3",
@@ -273,6 +300,7 @@ __all__ = [
     "SHAPE_REFUSALS",
     "SKEW_EPS",
     "STEP_SCHEMAS",
+    "TOOLPATH_MIN_LOOP_AREA_MM2",
     "VOLUME_UNIT",
     "WALL_FACE_LIMIT",
     "AlignMode",
@@ -296,9 +324,15 @@ __all__ = [
     "KerfDecision",
     "KerfRefusal",
     "KerfSource",
+    "LadderResult",
+    "LadderTermination",
     "Mark",
+    "Move",
+    "MoveKind",
+    "MoveList",
     "NestedLayout",
     "NestingRefusal",
+    "OffsetLoop",
     "OpposingPair",
     "Placement",
     "PlanarFaceRecord",
@@ -308,6 +342,8 @@ __all__ = [
     "SolidDiff",
     "StepReadError",
     "SurfaceDistance",
+    "ToolSolid",
+    "ToolpathRefusal",
     "TopologyCensus",
     "TopologyDiff",
     "Vec3",
@@ -346,16 +382,20 @@ __all__ = [
     "layout_to_svg",
     "mass",
     "metrics",
+    "moves_for_rings",
     "no_interference_residual",
+    "offset_ladder",
     "opposing_planar_pairs",
     "parallel_residual",
     "perpendicular_residual",
     "planar_faces",
     "plane_of",
     "principal_alignment",
+    "profile_moves",
     "read_step",
     "read_step_bytes",
     "resolve_kerf",
+    "sample_count",
     "section",
     "shape_from_brep",
     "shape_to_brep",
@@ -364,6 +404,9 @@ __all__ = [
     "solid_diff",
     "solid_z_min",
     "surface_distance",
+    "swept_solid",
+    "tool_fits",
+    "tool_solid",
     "topology_diff",
     "transform_point",
     "transformed_shape",

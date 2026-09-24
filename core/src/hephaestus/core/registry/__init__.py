@@ -137,6 +137,7 @@ from ._reference import (
 from ._set import RegistrySet
 from ._skills import SKILL_ARTIFACT_KIND as SKILL_ARTIFACT_KIND  # re-exported, not in __all__
 from ._skills import SkillEntry, SkillsIndex
+from ._tools import ToolFeedEntry, ToolHolder, ToolRecord, ToolsIndex, parse_tool_record
 
 __all__ = [
     "BIND_MARKER",
@@ -189,6 +190,10 @@ __all__ = [
     "SkillEntry",
     "SkillsIndex",
     "StorePart",
+    "ToolFeedEntry",
+    "ToolHolder",
+    "ToolRecord",
+    "ToolsIndex",
     "bundled_pins",
     "bundled_registries_root",
     "instance_name",
@@ -202,6 +207,7 @@ __all__ = [
     "parse_component",
     "parse_generator",
     "parse_manifest",
+    "parse_tool_record",
     "publication_drift",
     "publish_registry",
     "read_pins",

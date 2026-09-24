@@ -57,6 +57,16 @@ Thresholds do not live here. "iou ≥ 0.99 is a pass" is a claim owned by a
 `CHECKS` predicate, a DFM rule, or a bench task policy — cited like any
 other requirement under `VALIDATION.md` §1.
 
+One stated restriction on which fields may carry a threshold (added
+2026-09-02 with Stage 14C, `CAM.md` §5.3): **`iou` is not a legal CAM
+threshold.** IoU on a removal simulation is dominated by bulk material — a
+0.2 mm gouge into a 100 mm part barely moves it — which is exactly the
+volume-proxy anti-pattern `VALIDATION.md` §1 rule 3 bans. A CAM verdict keys
+on the **directed halves** `VolumeDiff` already separates (`a_only_mm3` for
+rest, `b_only_mm3` for gouge, localized by `surface_distance`
+max-deviation); `iou` stays reported, as a fact. `geom.compare` gains no
+function for this — the restriction is on the consumer.
+
 ## 2. Engine surface
 
 - **Model tool** (canonical pipeline, part + orchestrator profiles):

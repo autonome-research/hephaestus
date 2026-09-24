@@ -118,7 +118,7 @@ def test_an_unlicensed_tree_neither_loads_nor_publishes(tmp_path: Path) -> None:
         publish_registry(root)
 
 
-@pytest.mark.parametrize("kind", ["skills", "parts", "materials", "dfm"])
+@pytest.mark.parametrize("kind", ["skills", "parts", "materials", "dfm", "tools"])
 def test_every_shipped_registry_still_parses_unchanged(kind: str) -> None:
     registry = load_registry(SHIPPED_PARTS.parent / kind)
     assert registry.manifest.license, f"{kind} states its license"
@@ -134,11 +134,11 @@ def test_every_shipped_registry_still_parses_unchanged(kind: str) -> None:
 #: out in the clause itself: §8's own second bullet scheduled merged federation
 #: into G11C, C's clause 9 delivered it, so two ``parts`` trees now index
 #: together and a colliding id is a per-id ``ambiguous_component_id``. The
-#: refusal is *scoped*, not waived — ``skills``, ``materials`` and ``dfm`` each
-#: still read one registry, so a second one really would be the silent drop §8
-#: opens on. The ``parts`` half of the behaviour is
-#: ``tests/stage11c/test_g11c_federation.py``.
-UNFEDERATED_KINDS = ("skills", "materials", "dfm")
+#: refusal is *scoped*, not waived — ``skills``, ``materials``, ``dfm`` and
+#: ``tools`` (the fifth kind, Stage 14A, CAM.md §3.5) each still read one
+#: registry, so a second one really would be the silent drop §8 opens on. The
+#: ``parts`` half of the behaviour is ``tests/stage11c/test_g11c_federation.py``.
+UNFEDERATED_KINDS = ("skills", "materials", "dfm", "tools")
 
 BUNDLED_TREES = SHIPPED_PARTS.parent
 

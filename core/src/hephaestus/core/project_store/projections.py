@@ -38,6 +38,7 @@ __all__ = [
     "AssemblyProjection",
     "MotionProjection",
     "PartProjection",
+    "ProgramProjection",
     "ProjectSnapshot",
     "ProjectionState",
     "Projections",
@@ -89,6 +90,23 @@ def _restale_motion(
     if motion.parts[part] == artifact_ref or part in motion.stale:
         return motion
     return replace(motion, stale=tuple(sorted({*motion.stale, part})))
+
+
+def _restale_program(
+    program: ProgramProjection | None, part: str, artifact_ref: str
+) -> ProgramProjection | None:
+    """Mark the program-status projection stale when a setup's part rebuilds.
+
+    ``CAM.md`` §11 item 26, on the assembly/motion projection precedent word
+    for word: rebuilding any part a checked setup touched (stock anchor, WCS
+    datum, feature anchors, fixture members) marks the projection stale. Only
+    the touched parts matter, and only a *different* artifact ref counts.
+    """
+    if program is None or part not in program.parts:
+        return program
+    if program.parts[part] == artifact_ref or part in program.stale:
+        return program
+    return replace(program, stale=tuple(sorted({*program.stale, part})))
 
 
 def _same_value(a: JSONValue, b: JSONValue) -> bool:
@@ -328,6 +346,77 @@ class MotionProjection:
 
 
 @dataclass(frozen=True)
+class ProgramProjection:
+    """The last full ``check_program`` run, and what it was computed against.
+
+    ``CAM.md`` §11 item 26: the one piece of non-ledger persistence Stage 14
+    adds, on the :class:`AssemblyProjection`/:class:`MotionProjection`
+    precedent field for field. ``statuses_blob`` points at the canonical JSON
+    document of every setup's §5.9 ``ProgramStatus``; ``parts`` records the
+    artifact ref each touched part contributed at evaluation time, and
+    :attr:`stale` names every part whose current build has moved since — so a
+    stale status never reads as fresh, and (via the GC edge
+    :meth:`Projections._swap` records) never as "never evaluated" either.
+    """
+
+    statuses_blob: str
+    setup_generation: int
+    operation_generation: int
+    audit_revision: int
+    parts: Mapping[str, str] = field(default_factory=dict[str, str])
+    stale: tuple[str, ...] = ()
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "statuses_blob": self.statuses_blob,
+            "setup_generation": self.setup_generation,
+            "operation_generation": self.operation_generation,
+            "audit_revision": self.audit_revision,
+            "parts": {name: self.parts[name] for name in sorted(self.parts)},
+            "stale": list(self.stale),
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, JSONValue]) -> ProgramProjection:
+        statuses_blob = data.get("statuses_blob")
+        setup_generation = data.get("setup_generation")
+        operation_generation = data.get("operation_generation")
+        revision = data.get("audit_revision")
+        if (
+            not isinstance(statuses_blob, str)
+            or not isinstance(setup_generation, int)
+            or isinstance(setup_generation, bool)
+            or not isinstance(operation_generation, int)
+            or isinstance(operation_generation, bool)
+            or not isinstance(revision, int)
+            or isinstance(revision, bool)
+        ):
+            raise ValidationError("malformed program projection record", kind="contract")
+        parts_raw = data.get("parts", {})
+        if not isinstance(parts_raw, dict):
+            raise ValidationError("program projection parts must be an object", kind="contract")
+        parts: dict[str, str] = {}
+        for name, value in cast("Mapping[str, JSONValue]", parts_raw).items():
+            if not isinstance(value, str):
+                raise ValidationError("program projection refs must be strings", kind="contract")
+            parts[name] = value
+        stale_raw = data.get("stale", [])
+        stale: tuple[str, ...] = ()
+        if isinstance(stale_raw, list):
+            stale = tuple(
+                item for item in cast("list[JSONValue]", stale_raw) if isinstance(item, str)
+            )
+        return cls(
+            statuses_blob=statuses_blob,
+            setup_generation=setup_generation,
+            operation_generation=operation_generation,
+            audit_revision=revision,
+            parts=parts,
+            stale=stale,
+        )
+
+
+@dataclass(frozen=True)
 class ProjectionState:
     """The persisted projection state behind the ``project-state`` pointer."""
 
@@ -344,6 +433,9 @@ class ProjectionState:
     #: KINEMATICS.md §2: the projected motion status, or ``None`` before the
     #: first evaluation (an unevaluated joint set is not a resolved one).
     motion: MotionProjection | None = None
+    #: CAM.md §11 item 26: the projected program status, or ``None`` before
+    #: the first full ``check_program`` run (never evaluated is not a pass).
+    program: ProgramProjection | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -356,6 +448,7 @@ class ProjectionState:
             "import_state": {name: self.import_state[name] for name in sorted(self.import_state)},
             "assembly": None if self.assembly is None else self.assembly.to_json(),
             "motion": None if self.motion is None else self.motion.to_json(),
+            "program": None if self.program is None else self.program.to_json(),
         }
 
     @classmethod
@@ -401,6 +494,12 @@ class ProjectionState:
         motion: MotionProjection | None = None
         if isinstance(motion_raw, dict):
             motion = MotionProjection.from_json(cast("Mapping[str, JSONValue]", motion_raw))
+        # Same tolerance again for the Stage 14 field: a state blob written
+        # before it existed simply has no program projection yet.
+        program_raw = data.get("program")
+        program: ProgramProjection | None = None
+        if isinstance(program_raw, dict):
+            program = ProgramProjection.from_json(cast("Mapping[str, JSONValue]", program_raw))
         return cls(
             audit_revision=revision,
             hc_state=dict(hc_state),
@@ -409,6 +508,7 @@ class ProjectionState:
             import_state=import_state,
             assembly=assembly,
             motion=motion,
+            program=program,
         )
 
 
@@ -497,6 +597,12 @@ class Projections:
             # would read as "checks never evaluated" — the same false claim.
             if new_state.motion.results_blob is not None:
                 self._store.gc.link(blob, new_state.motion.results_blob)
+        # CAM.md §11 item 26: the program-status document rides the same edge
+        # for the same reason — a stale status that got collected would read
+        # as "never evaluated", a different (and false) claim about the
+        # project. This is the GC edge Gate G14C clause 17 pins.
+        if new_state.program is not None:
+            self._store.gc.link(blob, new_state.program.statuses_blob)
         self._store.blobs.cas_swap(STATE_POINTER, expected_pointer, blob)
         return blob
 
@@ -554,6 +660,7 @@ class Projections:
                     import_state=dict(state.import_state),
                     assembly=state.assembly,
                     motion=state.motion,
+                    program=state.program,
                 )
                 self._swap(new_state, pointer)
             finally:
@@ -611,6 +718,7 @@ class Projections:
                     import_state=dict(import_state),
                     assembly=state.assembly,
                     motion=state.motion,
+                    program=state.program,
                 )
                 self._swap(new_state, pointer)
             finally:
@@ -669,6 +777,7 @@ class Projections:
             import_state=import_state,
             assembly=_restale_assembly(state.assembly, part, artifact_ref),
             motion=_restale_motion(state.motion, part, artifact_ref),
+            program=_restale_program(state.program, part, artifact_ref),
         )
         self._swap(new_state, pointer)
         return new_state
@@ -695,6 +804,7 @@ class Projections:
                 import_state=dict(state.import_state),
                 assembly=projection,
                 motion=state.motion,
+                program=state.program,
             )
             # ``_swap`` records the status document's reachability edge (it has
             # to do so on every swap, not just this one) — see its comment.
@@ -728,9 +838,42 @@ class Projections:
                 import_state=dict(state.import_state),
                 assembly=state.assembly,
                 motion=projection,
+                program=state.program,
             )
             # ``_swap`` records the status document's reachability edge — see
             # its comment at the assembly edge; the motion edge shares it.
+            self._swap(new_state, pointer)
+            return new_state
+        finally:
+            if not already_held:
+                self._locks.release(PROJECT_CONFIG_LOCK)
+
+    def record_program(self, projection: ProgramProjection) -> ProjectionState:
+        """Project one full ``check_program`` run (``CAM.md`` §11 item 26).
+
+        The program twin of :meth:`record_motion`, deliberately the same
+        shape: replaces any previous projection, starts life fresh
+        (``stale=()``) because it was just measured against the refs it
+        records, and is marked stale again by publication when a part any
+        checked setup touched is rebuilt into different geometry.
+        """
+        already_held = self._locks.holds(PROJECT_CONFIG_LOCK)
+        if not already_held:
+            self._locks.acquire(PROJECT_CONFIG_LOCK)
+        try:
+            state, pointer = self._load()
+            new_state = ProjectionState(
+                audit_revision=state.audit_revision,
+                hc_state=dict(state.hc_state),
+                stale=dict(state.stale),
+                projections=dict(state.projections),
+                import_state=dict(state.import_state),
+                assembly=state.assembly,
+                motion=state.motion,
+                program=projection,
+            )
+            # ``_swap`` records the statuses document's reachability edge —
+            # see its comment at the assembly edge; the program edge shares it.
             self._swap(new_state, pointer)
             return new_state
         finally:

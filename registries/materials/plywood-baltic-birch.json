@@ -11,6 +11,11 @@
     12.0,
     18.0
   ],
+  "machining": {
+    "min_internal_radius_mm": 1.5,
+    "max_depth_diameter_ratio": 4.0,
+    "min_web_mm": 1.0
+  },
   "notes": "Void-free multi-ply birch; the standard sheet stock for laser-cut and CNC-routed joinery. Nominal thickness runs under size and varies batch to batch by roughly +/-0.3 mm, so drive every slot and finger width from one project-global sheet-thickness parameter and MEASURE the actual sheet before cutting a whole design. Laser kerf is about 0.15-0.25 mm per side at 6 mm; a 3 mm router bit removes its full width, so kerf compensation direction is opposite between the two processes. Edges char under laser cutting and want light sanding. Glue face-grain to face-grain with PVA for laminations; end-grain screwing splits.",
   "keywords": [
     "plywood",

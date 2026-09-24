@@ -423,6 +423,19 @@ it was never measured. A check whose grid timed out blocks on the same
 unchecked-claim terms, its partial per-sample facts on the record. Only the
 operator may waive any of these, and a waiver is recorded as a waiver.
 
+A CAM program-check state at termination review follows the same mechanism
+once more (added 2026-09-02 with Stage 14C, per `CAM.md` §9: the never-green
+invariant extended to `ProgramStatus`). The reviewer context carries every
+declared setup's §5.9 record, measured at review time by rule; each
+non-success verdict (`uncovered`, `round_trip_diverged`, `gouge_at_samples`,
+`rest_at_samples`, `collision_at_samples`), each `crash_risk` finding — the
+one severity that blocks emission by rule (`CAM.md` §1.3/§1.4) — and each
+`unresolvable` setup is a **blocking finding by rule**, stamped from the
+engine's status, never solicited from the reviewer. A reviewer-supplied
+verdict for a CAM id is filed as unknown and counts for nothing, exactly as a
+constraint id's is. Only the operator may waive, and a waiver is recorded as
+a waiver.
+
 The reviewer is a Pi child with the measurement/render tool subset, no
 mutation tools, no delegation, and its own budget; it cannot edit the project.
 

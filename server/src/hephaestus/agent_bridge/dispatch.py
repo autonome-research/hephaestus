@@ -48,7 +48,7 @@ import asyncio
 import base64
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, cast, runtime_checkable
 
@@ -200,6 +200,31 @@ CAD_TOOLS: frozenset[str] = frozenset(
         # generation stays readable). Neither applies anything.
         "propose_placement",
         "read_proposals",
+        # CAM.md §3/§9 (Stage 14B) — the five declared-state quartet families,
+        # on the 8C quartet decision unchanged: model-writable because
+        # declaring is cheap, reversible, generational and measured against
+        # geometry the model did not choose; never erasing. There is NO
+        # emission tool in this table or anywhere else (§1.4): emission is an
+        # operator CLI verb, deferred to 14D under the D2 mandate.
+        "declare_setup",
+        "update_setup",
+        "read_setups",
+        "declare_stock",
+        "update_stock",
+        "read_stock",
+        "declare_fixture",
+        "update_fixture",
+        "read_fixtures",
+        "declare_wcs",
+        "update_wcs",
+        "read_wcs",
+        "declare_operation",
+        "update_operation",
+        "read_operations",
+        # CAM.md §5.9/§9 (Stage 14C) — the one CAM measuring verb: simulate
+        # and verify. It writes no file and returns no program text; emission
+        # stays an operator CLI verb deferred to 14D (§1.4).
+        "check_program",
         "read_artifact",
         # INGEST.md §2 — read-only, freely retryable. There is deliberately no
         # `add_reference`: registration is operator-side, so the model's only
@@ -625,6 +650,22 @@ class ToolDispatcher:
             "solve_pose": self._solve_pose,
             "propose_placement": self._propose_placement,
             "read_proposals": self._read_proposals,
+            "declare_setup": self._cam_declare("setup"),
+            "update_setup": self._cam_update("setup"),
+            "read_setups": self._cam_read("setup"),
+            "declare_stock": self._cam_declare("stock"),
+            "update_stock": self._cam_update("stock"),
+            "read_stock": self._cam_read("stock"),
+            "declare_fixture": self._cam_declare("fixture"),
+            "update_fixture": self._cam_update("fixture"),
+            "read_fixtures": self._cam_read("fixture"),
+            "declare_wcs": self._cam_declare("wcs"),
+            "update_wcs": self._cam_update("wcs"),
+            "read_wcs": self._cam_read("wcs"),
+            "declare_operation": self._cam_declare("operation"),
+            "update_operation": self._cam_update("operation"),
+            "read_operations": self._cam_read("operation"),
+            "check_program": self._check_program,
             "read_artifact": self._read_artifact,
             "list_references": self._list_references,
             "read_reference": self._read_reference,
@@ -977,6 +1018,66 @@ class ToolDispatcher:
         elif raw is not None:
             raise DispatchError("invalid_params", "check_assembly ids must be an array")
         return cad.check_assembly(ids)
+
+    # -- CAM declared state (CAM.md §3/§9, Stage 14B) ----------------------
+    #
+    # Fifteen tools, one shape: the five quartet families share the ledger
+    # lifecycle exactly, so the handlers are three factories over the kind
+    # rather than fifteen restatements. The whole entry is the argument
+    # object (the declare_constraint rule): the wire shape and the stored
+    # shape are one shape, and nothing is re-assembled here.
+
+    def _cam_declare(
+        self, kind: str
+    ) -> Callable[[Principal, CadOps, dict[str, Any], Invocation], dict[str, Any]]:
+        def handler(
+            _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+        ) -> dict[str, Any]:
+            return cad.cam_declare(kind, cast("Mapping[str, Any]", arguments), op_id=inv.op_id)
+
+        return handler
+
+    def _cam_update(
+        self, kind: str
+    ) -> Callable[[Principal, CadOps, dict[str, Any], Invocation], dict[str, Any]]:
+        def handler(
+            _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+        ) -> dict[str, Any]:
+            raw = arguments.get("patch")
+            if not isinstance(raw, dict):
+                raise DispatchError("invalid_params", f"update_{kind} requires a patch object")
+            reason = arguments.get("reason")
+            if not isinstance(reason, str):
+                raise DispatchError("invalid_params", f"update_{kind} requires a reason")
+            return cad.cam_update(
+                kind, str(arguments["id"]), cast("Mapping[str, Any]", raw), reason, op_id=inv.op_id
+            )
+
+        return handler
+
+    def _cam_read(
+        self, kind: str
+    ) -> Callable[[Principal, CadOps, dict[str, Any], Invocation], dict[str, Any]]:
+        def handler(
+            _p: Principal, cad: CadOps, _arguments: dict[str, Any], _inv: Invocation
+        ) -> dict[str, Any]:
+            return cad.cam_read(kind)
+
+        return handler
+
+    def _check_program(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        # CAM.md §5.9/§9 `check_program(setup_ids?)`, Stage 14C: `setup_ids`
+        # narrows which setups run (the check_motion shape). Simulate and
+        # verify only — no file, no program text (§1.4, the D2 mandate).
+        raw = arguments.get("setup_ids")
+        ids: list[str] | None = None
+        if isinstance(raw, list):
+            ids = [str(item) for item in cast("list[Any]", raw)]
+        elif raw is not None:
+            raise DispatchError("invalid_params", "check_program setup_ids must be an array")
+        return cad.check_program(ids)
 
     # -- kinematics (KINEMATICS.md §6, Stage 9A) ---------------------------
 

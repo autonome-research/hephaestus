@@ -1,0 +1,10 @@
+[registry]
+name = "fixture-tools"
+kind = "tools"
+version = "0.0.1"
+license = "Apache-2.0"
+description = "Minimal tools tree for the G14A digest clauses (tamper AND rename)."
+
+[[tools]]
+id = "em_fixture"
+file = "em_fixture.json"

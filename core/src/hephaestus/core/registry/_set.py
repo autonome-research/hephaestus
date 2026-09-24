@@ -22,6 +22,7 @@ from ._materials import MaterialsIndex
 from ._parts import PartsIndex
 from ._pins import bundled_pins, read_pins
 from ._skills import SkillsIndex
+from ._tools import ToolsIndex
 
 __all__ = ["RegistrySet"]
 
@@ -74,6 +75,7 @@ class RegistrySet:
         self.parts = PartsIndex(self._by_kind.get("parts", ()))
         self.materials = MaterialsIndex(self._one("materials"))
         self.dfm = DfmIndex(self._one("dfm"))
+        self.tools = ToolsIndex(self._one("tools"))
 
     def _one(self, kind: str) -> Registry | None:
         """The single registry of an unfederated kind (refused above if two)."""

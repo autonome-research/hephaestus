@@ -8,17 +8,87 @@ not depend on :mod:`hephaestus.contract`.
 
 An explicit override is honoured via the ``HEPHAESTUS_BRIDGE_LIMITS``
 environment variable, matching the bridge and TypeScript loaders.
+
+Stage 14B adds the CAM sampling limits (CAM.md §5.3, §5.7) here as engine
+constants next to the loader, so the declaration path
+(:mod:`hephaestus.core.project_store.cam`), the resolution/generation path
+(:mod:`hephaestus.core.machining`) and their gates all read one definition:
+
+* :data:`CAM_SIM_SAMPLES_MAX` — the cap on the **computed total** simulation
+  samples across every move of a setup, checked at **generation** time
+  (``sample_cap_exceeded``), because the total is a function of generated
+  toolpath length and does not exist at declaration;
+* :data:`CAM_OP_PASS_BOUND_MAX` — the closed-form declaration-time sieve
+  (``op_sample_bound_exceeded``): ``levels x loops_bound`` from an operation
+  entry's own numbers and the named stock's extents, deliberately loose and
+  deliberately **not** the sample cap;
+* :func:`cam_min_resolvable_mm3` — the published §5.3 resolution-floor
+  formula over ``(step_mm, r, doc_mm)`` with its two frozen constants,
+  compared at **resolution** time (``budget_below_resolution``).
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 from importlib import resources
 from pathlib import Path
 from typing import Any, Final
 
-__all__ = ["limits_document", "limits_path"]
+__all__ = [
+    "CAM_KERNEL_NOISE_MM3",
+    "CAM_OP_PASS_BOUND_MAX",
+    "CAM_RESOLUTION_K",
+    "CAM_SIM_SAMPLES_MAX",
+    "cam_min_resolvable_mm3",
+    "limits_document",
+    "limits_path",
+]
+
+#: Cap on the computed per-setup simulation sample total (CAM.md §5.3/§5.7).
+#: Checked at generation, where the total exists; the refusal names the total
+#: and the operation whose moves pushed it over.
+CAM_SIM_SAMPLES_MAX: Final[int] = 200000
+
+#: Cap on the declaration-time ``levels x loops_bound`` pass product
+#: (CAM.md §4.3/§5.7) — a cheap arithmetic sieve over an operation entry's own
+#: declared numbers and the named stock's ``extents_mm``, with no registry, no
+#: artifact and no geometry in the loop. It bounds passes, not samples.
+CAM_OP_PASS_BOUND_MAX: Final[int] = 20000
+
+#: Margin factor inside the §5.3 resolution-floor formula: a budget is
+#: resolvable only an order of magnitude above the sampling artefact it must
+#: be distinguished from — the same 10x separation CAM.md §4.4 demands of
+#: every gate fixture.
+CAM_RESOLUTION_K: Final[float] = 10.0
+
+#: Absolute term inside that formula: three orders above ``OVERLAP_EPS_MM3 =
+#: 1e-9`` (``geom/measure.py:59``), the repo's existing "this is not a real
+#: overlap" epsilon. Neither constant is tuned.
+CAM_KERNEL_NOISE_MM3: Final[float] = 1e-6
+
+
+def cam_min_resolvable_mm3(step_mm: float, r_mm: float, doc_mm: float) -> float:
+    """The §5.3 resolution floor: the smallest volume a budget may claim to reject.
+
+    A swept solid is a union of discrete tool placements; between two
+    placements spaced ``step_mm`` apart along a straight move the union
+    under-fills a scallop whose maximum depth is the sagitta ``h`` over a
+    chord of ``step_mm`` and an axial height bounded by ``doc_mm``. The floor
+    is the frozen formula::
+
+        max(CAM_KERNEL_NOISE_MM3, CAM_RESOLUTION_K * step_mm * h * doc_mm)
+        where h = r - sqrt(max(0.0, r*r - (step_mm/2)**2))
+
+    Compared at **resolution** time only (``budget_below_resolution``): the
+    tool radius binds through an operation, and a setup entry names no tool.
+    """
+    for name, value in (("step_mm", step_mm), ("r_mm", r_mm), ("doc_mm", doc_mm)):
+        if value <= 0.0 or not math.isfinite(value):
+            raise ValueError(f"{name} must be a positive number (got {value})")
+    sagitta = r_mm - math.sqrt(max(0.0, r_mm * r_mm - (step_mm / 2.0) * (step_mm / 2.0)))
+    return max(CAM_KERNEL_NOISE_MM3, CAM_RESOLUTION_K * step_mm * sagitta * doc_mm)
 
 #: Where ``core/hatch_build.py`` stages the repo's ``schemas/bridge_limits.json``.
 _DATA_NAME: Final[str] = "_data/bridge_limits.json"

@@ -421,7 +421,7 @@ file is unsafe.
 
 ### 3.6 Registries client
 
-Four registry types, one format: a versioned directory with a `registry.toml`
+Five registry types, one format: a versioned directory with a `registry.toml`
 manifest, fetchable from a git URL or a local path, **pinned in
 `hephaestus.toml` by content hash** (a Merkle digest over the registry tree;
 `heph registry update` re-pins explicitly, nothing updates implicitly).
@@ -443,10 +443,16 @@ threat model (§7) rather than hand-waved.
   them, instancing returns a placed `Compound`.
 - **materials/** — JSON/TOML records: density, sheet thicknesses, cost hints,
   finish notes; `search_materials` queries them.
-- **dfm/** — per-process rule packs (laser_cut, cnc_router, fdm, waterjet): predicates
-  over geometry + material (min feature size, kerf, min internal radius, wall
-  thickness) that the checks engine can run when the part declares that
-  process. Powers the DFM mode.
+- **dfm/** — per-process rule packs (laser_cut, cnc_router, cnc_mill, fdm,
+  waterjet): predicates over geometry + material (min feature size, kerf, min
+  internal radius, wall thickness) that the checks engine can run when the part
+  declares that process. Powers the DFM mode.
+- **tools/** — the CAM tool library (`CAM.md` §3.5; the fifth kind, added by
+  the Stage 14A amendment, 2026-09-02): cutter records with a mandatory
+  `holder` envelope, sourced `feeds` entries and a `simplifications` list.
+  Pure data — no executable content — riding the same Merkle digest and pin
+  machinery with no new mechanism. A sixth kind, `posts` (controller
+  dialects, `CAM.md` §7), is specified but lands only with the deferred 14D.
 
 ## 4. agent/
 

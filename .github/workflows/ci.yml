@@ -373,6 +373,36 @@ jobs:
       - run: uv sync --dev
       - run: uv run pytest tests/stage13a tests/stage13b tests/stage13c -q
 
+  # ------------------------------------------------------ stage gates 14A-14B --
+  # Gates G14A (machining DFM packs and the tools registry, 10 clauses) and
+  # G14B (declared state and toolpath geometry, 24 clauses) - CAM.md "Gates",
+  # mission_plan.md Stage 14. The lane landed with 14A and was RENAMED here as
+  # 14B landed (the Stage 14 amendment's own rule, exactly as the 11-13 lanes
+  # were); it renames again when 14C lands.
+  #
+  # Prerequisites: bubblewrap plus unrestricted unprivileged user namespaces,
+  # because 14A clause 9 (predicate file IO denied) and the sandboxed halves
+  # of its clauses 6 and 10 run DFM predicates, which execute only under a
+  # probed secure sandbox. No Mesa: nothing here renders, and NOTHING here
+  # emits - G14B clause 24 is a filesystem assertion of exactly that. The 14B
+  # suite builds two real fixture parts through the executor and spawns
+  # second interpreters for its determinism clause, so the timeout carries
+  # headroom over the ~2 minutes the two suites take locally.
+  stages14:
+    name: stage gates 14A-14B
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: sandbox prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: uv sync --dev
+      - run: uv run pytest tests/stage14a tests/stage14b -q
+
   # ------------------------------------ stage 12 measurements (pinned image) --
   # The lane that RE-TAKES, in the image CI pulls by digest, the four Stage 12
   # measurements whose clauses say "in the pinned image": G12A.19, G12B.25,

@@ -146,6 +146,54 @@ export const proposePlacementResult: TSchema = Type.Object({ "status": Type.Lite
 export const readProposalsParams: TSchema = Type.Object({ "ids": Type.Optional(Type.Union([Type.Array(Type.String({"pattern": "^[a-z][a-z0-9_]{0,63}$"})), Type.Null()], {"default": null})), "include_documents": Type.Optional(Type.Boolean({"default": false})) }, {"additionalProperties": false});
 export const readProposalsResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "proposals": Type.Array(Type.Record(Type.String(), Type.Unknown())), "documents": Type.Optional(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
 
+export const declareSetupParams: TSchema = Type.Object({ "id": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "spindle_axis": Type.Union([Type.Literal("+X"), Type.Literal("-X"), Type.Literal("+Y"), Type.Literal("-Y"), Type.Literal("+Z"), Type.Literal("-Z")]), "order": Type.Integer(), "stock": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "fixture": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "wcs": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "tolerance": Type.Optional(Type.Union([Type.Object({ "gouge_budget_mm3": Type.Number(), "rest_budget_mm3": Type.Number(), "max_deviation_mm": Type.Number(), "rejects_mm3": Type.Optional(Type.Union([Type.Number(), Type.Null()])) }, {"additionalProperties": false}), Type.Null()], {"default": null})), "provenance": Type.Object({ "requirement": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$"}), Type.Null()], {"default": null})), "assumed": Type.Optional(Type.Union([Type.Boolean(), Type.Null()], {"default": null})), "reason": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false}), "note": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false});
+export const declareSetupResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const updateSetupParams: TSchema = Type.Object({ "id": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "patch": Type.Object({ "spindle_axis": Type.Optional(Type.Union([Type.Union([Type.Literal("+X"), Type.Literal("-X"), Type.Literal("+Y"), Type.Literal("-Y"), Type.Literal("+Z"), Type.Literal("-Z")]), Type.Null()])), "order": Type.Optional(Type.Union([Type.Integer(), Type.Null()])), "stock": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), Type.Null()])), "fixture": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), Type.Null()])), "wcs": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), Type.Null()])), "tolerance": Type.Optional(Type.Union([Type.Object({ "gouge_budget_mm3": Type.Number(), "rest_budget_mm3": Type.Number(), "max_deviation_mm": Type.Number(), "rejects_mm3": Type.Optional(Type.Union([Type.Number(), Type.Null()])) }, {"additionalProperties": false}), Type.Null()], {"default": null})), "provenance": Type.Optional(Type.Union([Type.Object({ "requirement": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$"}), Type.Null()], {"default": null})), "assumed": Type.Optional(Type.Union([Type.Boolean(), Type.Null()], {"default": null})), "reason": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false}), Type.Null()])), "note": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})), "withdrawn": Type.Optional(Type.Union([Type.Boolean(), Type.Null()])) }, {"additionalProperties": false}), "reason": Type.String() }, {"additionalProperties": false});
+export const updateSetupResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const readSetupsParams: TSchema = Type.Object({}, {"additionalProperties": false});
+export const readSetupsResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const declareStockParams: TSchema = Type.Object({ "id": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "kind": Type.Union([Type.Literal("rectangular")]), "extents_mm": Type.Array(Type.Number(), {"maxItems": 3, "minItems": 3}), "origin_anchor": Type.String({"pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$"}), "origin_offset_mm": Type.Optional(Type.Union([Type.Array(Type.Number(), {"maxItems": 3, "minItems": 3}), Type.Null()], {"default": null})), "material": Type.String(), "provenance": Type.Object({ "requirement": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$"}), Type.Null()], {"default": null})), "assumed": Type.Optional(Type.Union([Type.Boolean(), Type.Null()], {"default": null})), "reason": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false}), "note": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false});
+export const declareStockResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const updateStockParams: TSchema = Type.Object({ "id": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "patch": Type.Object({ "kind": Type.Optional(Type.Union([Type.Union([Type.Literal("rectangular")]), Type.Null()])), "extents_mm": Type.Optional(Type.Union([Type.Array(Type.Number(), {"maxItems": 3, "minItems": 3}), Type.Null()])), "origin_anchor": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$"}), Type.Null()])), "origin_offset_mm": Type.Optional(Type.Union([Type.Array(Type.Number(), {"maxItems": 3, "minItems": 3}), Type.Null()], {"default": null})), "material": Type.Optional(Type.Union([Type.String(), Type.Null()])), "provenance": Type.Optional(Type.Union([Type.Object({ "requirement": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$"}), Type.Null()], {"default": null})), "assumed": Type.Optional(Type.Union([Type.Boolean(), Type.Null()], {"default": null})), "reason": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false}), Type.Null()])), "note": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})), "withdrawn": Type.Optional(Type.Union([Type.Boolean(), Type.Null()])) }, {"additionalProperties": false}), "reason": Type.String() }, {"additionalProperties": false});
+export const updateStockResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const readStockParams: TSchema = Type.Object({}, {"additionalProperties": false});
+export const readStockResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const declareFixtureParams: TSchema = Type.Object({ "id": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "members": Type.Array(Type.Object({ "part": Type.String({"pattern": "^[a-z][a-z0-9_]{0,63}$"}), "anchor": Type.String({"pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$"}), "offset_mm": Type.Array(Type.Number(), {"maxItems": 3, "minItems": 3}) }, {"additionalProperties": false})), "provenance": Type.Object({ "requirement": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$"}), Type.Null()], {"default": null})), "assumed": Type.Optional(Type.Union([Type.Boolean(), Type.Null()], {"default": null})), "reason": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false}), "note": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false});
+export const declareFixtureResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const updateFixtureParams: TSchema = Type.Object({ "id": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "patch": Type.Object({ "members": Type.Optional(Type.Union([Type.Array(Type.Object({ "part": Type.String({"pattern": "^[a-z][a-z0-9_]{0,63}$"}), "anchor": Type.String({"pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$"}), "offset_mm": Type.Array(Type.Number(), {"maxItems": 3, "minItems": 3}) }, {"additionalProperties": false})), Type.Null()])), "provenance": Type.Optional(Type.Union([Type.Object({ "requirement": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$"}), Type.Null()], {"default": null})), "assumed": Type.Optional(Type.Union([Type.Boolean(), Type.Null()], {"default": null})), "reason": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false}), Type.Null()])), "note": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})), "withdrawn": Type.Optional(Type.Union([Type.Boolean(), Type.Null()])) }, {"additionalProperties": false}), "reason": Type.String() }, {"additionalProperties": false});
+export const updateFixtureResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const readFixturesParams: TSchema = Type.Object({}, {"additionalProperties": false});
+export const readFixturesResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const declareWcsParams: TSchema = Type.Object({ "id": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "code": Type.String(), "datum": Type.String({"pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$"}), "z_zero": Type.Union([Type.Literal("stock_top"), Type.Literal("part_top"), Type.Literal("datum")]), "provenance": Type.Object({ "requirement": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$"}), Type.Null()], {"default": null})), "assumed": Type.Optional(Type.Union([Type.Boolean(), Type.Null()], {"default": null})), "reason": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false}), "note": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false});
+export const declareWcsResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const updateWcsParams: TSchema = Type.Object({ "id": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "patch": Type.Object({ "code": Type.Optional(Type.Union([Type.String(), Type.Null()])), "datum": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$"}), Type.Null()])), "z_zero": Type.Optional(Type.Union([Type.Union([Type.Literal("stock_top"), Type.Literal("part_top"), Type.Literal("datum")]), Type.Null()])), "provenance": Type.Optional(Type.Union([Type.Object({ "requirement": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$"}), Type.Null()], {"default": null})), "assumed": Type.Optional(Type.Union([Type.Boolean(), Type.Null()], {"default": null})), "reason": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false}), Type.Null()])), "note": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})), "withdrawn": Type.Optional(Type.Union([Type.Boolean(), Type.Null()])) }, {"additionalProperties": false}), "reason": Type.String() }, {"additionalProperties": false});
+export const updateWcsResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const readWcsParams: TSchema = Type.Object({}, {"additionalProperties": false});
+export const readWcsResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const declareOperationParams: TSchema = Type.Object({ "id": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "setup": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "kind": Type.Union([Type.Literal("drill"), Type.Literal("pocket"), Type.Literal("profile"), Type.Literal("face")]), "feature": Type.String({"pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$"}), "tool": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "depth_mm": Type.Number(), "stepdown_mm": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "stepover_mm": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "climb": Type.Optional(Type.Boolean({"default": true})), "tabs": Type.Optional(Type.Union([Type.Object({ "count": Type.Integer(), "width_mm": Type.Number(), "height_mm": Type.Number() }, {"additionalProperties": false}), Type.Null()], {"default": null})), "feed_mm_min": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "rpm": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "plunge_mm_min": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "doc_mm": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "woc_mm": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "provenance": Type.Object({ "requirement": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$"}), Type.Null()], {"default": null})), "assumed": Type.Optional(Type.Union([Type.Boolean(), Type.Null()], {"default": null})), "reason": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false}), "note": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false});
+export const declareOperationResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const updateOperationParams: TSchema = Type.Object({ "id": Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), "patch": Type.Object({ "setup": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), Type.Null()])), "kind": Type.Optional(Type.Union([Type.Union([Type.Literal("drill"), Type.Literal("pocket"), Type.Literal("profile"), Type.Literal("face")]), Type.Null()])), "feature": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$"}), Type.Null()])), "tool": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"}), Type.Null()])), "depth_mm": Type.Optional(Type.Union([Type.Number(), Type.Null()])), "stepdown_mm": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "stepover_mm": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "climb": Type.Optional(Type.Union([Type.Boolean({"default": true}), Type.Null()])), "tabs": Type.Optional(Type.Union([Type.Object({ "count": Type.Integer(), "width_mm": Type.Number(), "height_mm": Type.Number() }, {"additionalProperties": false}), Type.Null()], {"default": null})), "feed_mm_min": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "rpm": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "plunge_mm_min": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "doc_mm": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "woc_mm": Type.Optional(Type.Union([Type.Number(), Type.Null()], {"default": null})), "provenance": Type.Optional(Type.Union([Type.Object({ "requirement": Type.Optional(Type.Union([Type.String({"pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$"}), Type.Null()], {"default": null})), "assumed": Type.Optional(Type.Union([Type.Boolean(), Type.Null()], {"default": null})), "reason": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})) }, {"additionalProperties": false}), Type.Null()])), "note": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})), "withdrawn": Type.Optional(Type.Union([Type.Boolean(), Type.Null()])) }, {"additionalProperties": false}), "reason": Type.String() }, {"additionalProperties": false});
+export const updateOperationResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const readOperationsParams: TSchema = Type.Object({}, {"additionalProperties": false});
+export const readOperationsResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "generation": Type.Integer(), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()])), "change": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])), "entries": Type.Array(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+
+export const checkProgramParams: TSchema = Type.Object({ "setup_ids": Type.Optional(Type.Union([Type.Array(Type.String({"pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"})), Type.Null()], {"default": null})) }, {"additionalProperties": false});
+export const checkProgramResult: TSchema = Type.Object({ "status": Type.Literal("ok"), "programs": Type.Array(Type.Record(Type.String(), Type.Unknown())), "partial": Type.Boolean() }, {"additionalProperties": true});
+
 export const loadSkillParams: TSchema = Type.Object({ "name": Type.String(), "offset_line": Type.Optional(Type.Integer({"default": 1, "minimum": 1})), "limit_lines": Type.Optional(Type.Integer({"default": 2000, "minimum": 1})) }, {"additionalProperties": false});
 export const loadSkillResult: TSchema = Type.Object({ "content": Type.String(), "artifact_ref": Type.String(), "truncated": Type.Boolean(), "oversized_line": Type.Optional(Type.Boolean()), "oversized_line_offset_bytes": Type.Optional(Type.Integer()), "next_offset_bytes": Type.Optional(Type.Integer()) }, {"additionalProperties": true});
 
@@ -402,6 +450,86 @@ export const TOOLS: Readonly<Record<string, ToolSchema>> = {
     params: readProposalsParams,
     result: readProposalsResult,
   },
+  "declare_setup": {
+    meta: { name: "declare_setup", summary: "Declare one machining setup (CAM.md \u00a73.1); advances one generation.", profiles: ["part", "orchestrator"], sequential: true, idempotent: true, maxUtf8Fields: {} },
+    params: declareSetupParams,
+    result: declareSetupResult,
+  },
+  "update_setup": {
+    meta: { name: "update_setup", summary: "Revise or withdraw one setup with a recorded reason; one generation.", profiles: ["part", "orchestrator"], sequential: true, idempotent: true, maxUtf8Fields: {} },
+    params: updateSetupParams,
+    result: updateSetupResult,
+  },
+  "read_setups": {
+    meta: { name: "read_setups", summary: "Read the setup ledger, withdrawn entries included (CAM.md \u00a73.1).", profiles: ["part", "orchestrator"], sequential: false, idempotent: false, maxUtf8Fields: {} },
+    params: readSetupsParams,
+    result: readSetupsResult,
+  },
+  "declare_stock": {
+    meta: { name: "declare_stock", summary: "Declare one stock record (CAM.md \u00a73.2); advances one generation.", profiles: ["part", "orchestrator"], sequential: true, idempotent: true, maxUtf8Fields: {} },
+    params: declareStockParams,
+    result: declareStockResult,
+  },
+  "update_stock": {
+    meta: { name: "update_stock", summary: "Revise or withdraw one stock record with a recorded reason; one generation.", profiles: ["part", "orchestrator"], sequential: true, idempotent: true, maxUtf8Fields: {} },
+    params: updateStockParams,
+    result: updateStockResult,
+  },
+  "read_stock": {
+    meta: { name: "read_stock", summary: "Read the stock ledger, withdrawn entries included (CAM.md \u00a73.2).", profiles: ["part", "orchestrator"], sequential: false, idempotent: false, maxUtf8Fields: {} },
+    params: readStockParams,
+    result: readStockResult,
+  },
+  "declare_fixture": {
+    meta: { name: "declare_fixture", summary: "Declare one fixture as placed member parts (CAM.md \u00a73.3); one generation.", profiles: ["part", "orchestrator"], sequential: true, idempotent: true, maxUtf8Fields: {} },
+    params: declareFixtureParams,
+    result: declareFixtureResult,
+  },
+  "update_fixture": {
+    meta: { name: "update_fixture", summary: "Revise or withdraw one fixture with a recorded reason; one generation.", profiles: ["part", "orchestrator"], sequential: true, idempotent: true, maxUtf8Fields: {} },
+    params: updateFixtureParams,
+    result: updateFixtureResult,
+  },
+  "read_fixtures": {
+    meta: { name: "read_fixtures", summary: "Read the fixture ledger, withdrawn entries included (CAM.md \u00a73.3).", profiles: ["part", "orchestrator"], sequential: false, idempotent: false, maxUtf8Fields: {} },
+    params: readFixturesParams,
+    result: readFixturesResult,
+  },
+  "declare_wcs": {
+    meta: { name: "declare_wcs", summary: "Declare one work coordinate system (CAM.md \u00a73.4); advances one generation.", profiles: ["part", "orchestrator"], sequential: true, idempotent: true, maxUtf8Fields: {} },
+    params: declareWcsParams,
+    result: declareWcsResult,
+  },
+  "update_wcs": {
+    meta: { name: "update_wcs", summary: "Revise or withdraw one WCS with a recorded reason; one generation.", profiles: ["part", "orchestrator"], sequential: true, idempotent: true, maxUtf8Fields: {} },
+    params: updateWcsParams,
+    result: updateWcsResult,
+  },
+  "read_wcs": {
+    meta: { name: "read_wcs", summary: "Read the WCS ledger, withdrawn entries included (CAM.md \u00a73.4).", profiles: ["part", "orchestrator"], sequential: false, idempotent: false, maxUtf8Fields: {} },
+    params: readWcsParams,
+    result: readWcsResult,
+  },
+  "declare_operation": {
+    meta: { name: "declare_operation", summary: "Declare one machining operation over a tagged feature (CAM.md \u00a73.7).", profiles: ["part", "orchestrator"], sequential: true, idempotent: true, maxUtf8Fields: {} },
+    params: declareOperationParams,
+    result: declareOperationResult,
+  },
+  "update_operation": {
+    meta: { name: "update_operation", summary: "Revise or withdraw one operation with a recorded reason; one generation.", profiles: ["part", "orchestrator"], sequential: true, idempotent: true, maxUtf8Fields: {} },
+    params: updateOperationParams,
+    result: updateOperationResult,
+  },
+  "read_operations": {
+    meta: { name: "read_operations", summary: "Read the operation ledger, withdrawn entries included (CAM.md \u00a73.7).", profiles: ["part", "orchestrator"], sequential: false, idempotent: false, maxUtf8Fields: {} },
+    params: readOperationsParams,
+    result: readOperationsResult,
+  },
+  "check_program": {
+    meta: { name: "check_program", summary: "Simulate and verify declared setups now (CAM.md \u00a75); ProgramStatus per setup.", profiles: ["part", "orchestrator"], sequential: false, idempotent: false, maxUtf8Fields: {} },
+    params: checkProgramParams,
+    result: checkProgramResult,
+  },
   "load_skill": {
     meta: { name: "load_skill", summary: "Load a bounded skill page inside provenance delimiters (reference only).", profiles: ["part", "orchestrator", "quick_edit"], sequential: false, idempotent: false, maxUtf8Fields: {} },
     params: loadSkillParams,
@@ -479,4 +607,4 @@ export const TOOLS: Readonly<Record<string, ToolSchema>> = {
   },
 };
 
-export const TOOL_NAMES = ["create_part", "read_part", "edit_part", "write_part", "build_part", "set_params", "read_globals", "edit_globals", "list_project_checks", "create_project_check", "read_project_check", "edit_project_check", "inspect_part", "query_snapshot", "read_artifact", "measure", "compare_solids", "compare_to_scan", "run_checks", "record_requirements", "read_requirements", "update_requirement", "declare_constraint", "update_constraint", "read_constraints", "check_assembly", "declare_joint", "update_joint", "read_joints", "declare_pose", "update_pose", "read_poses", "declare_motion_check", "update_motion_check", "read_motion_checks", "check_motion", "declare_coupling", "update_coupling", "read_couplings", "solve_pose", "propose_placement", "read_proposals", "load_skill", "list_skills", "list_references", "read_reference", "search_parts_store", "instance_store_part", "search_materials", "delegate_part_agent", "get_delegation_status", "cancel_delegation", "ask_user", "export_part", "run_dfm", "generate_drawing", "generate_doc"] as const;
+export const TOOL_NAMES = ["create_part", "read_part", "edit_part", "write_part", "build_part", "set_params", "read_globals", "edit_globals", "list_project_checks", "create_project_check", "read_project_check", "edit_project_check", "inspect_part", "query_snapshot", "read_artifact", "measure", "compare_solids", "compare_to_scan", "run_checks", "record_requirements", "read_requirements", "update_requirement", "declare_constraint", "update_constraint", "read_constraints", "check_assembly", "declare_joint", "update_joint", "read_joints", "declare_pose", "update_pose", "read_poses", "declare_motion_check", "update_motion_check", "read_motion_checks", "check_motion", "declare_coupling", "update_coupling", "read_couplings", "solve_pose", "propose_placement", "read_proposals", "declare_setup", "update_setup", "read_setups", "declare_stock", "update_stock", "read_stock", "declare_fixture", "update_fixture", "read_fixtures", "declare_wcs", "update_wcs", "read_wcs", "declare_operation", "update_operation", "read_operations", "check_program", "load_skill", "list_skills", "list_references", "read_reference", "search_parts_store", "instance_store_part", "search_materials", "delegate_part_agent", "get_delegation_status", "cancel_delegation", "ask_user", "export_part", "run_dfm", "generate_drawing", "generate_doc"] as const;

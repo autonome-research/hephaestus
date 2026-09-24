@@ -366,6 +366,124 @@ def _steps() -> list[Step]:
             },
         ),
         ("read_proposals", lambda seen: {}),
+        # -- CAM declared state (CAM.md §3, Stage 14B). Declaration is
+        # structural, exactly like a constraint's: whether the anchors resolve,
+        # whether the tool record exists, and whether the stock fits are
+        # RESOLUTION questions with their own named refusals. Nothing on this
+        # surface emits a program (§1.4) — these five families are the whole
+        # of what Stage 14B put on the wire.
+        (
+            "declare_stock",
+            lambda seen: {
+                "id": "st-plate",
+                "kind": "rectangular",
+                "extents_mm": [200.0, 200.0, 60.0],
+                "origin_anchor": "widget",
+                "material": "plywood-baltic-birch",
+                "provenance": {"requirement": "R1"},
+            },
+        ),
+        (
+            "update_stock",
+            lambda seen: {
+                "id": "st-plate",
+                "patch": {"note": "shop stock, measured"},
+                "reason": "recorded where the numbers came from",
+            },
+        ),
+        ("read_stock", lambda seen: {}),
+        (
+            "declare_fixture",
+            lambda seen: {
+                "id": "fx-vise",
+                "members": [{"part": "widget", "anchor": "widget", "offset_mm": [0.0, 0.0, 0.0]}],
+                "provenance": {"assumed": True, "reason": "shop standard vise"},
+            },
+        ),
+        (
+            "update_fixture",
+            lambda seen: {
+                "id": "fx-vise",
+                "patch": {"note": "jaws at datum"},
+                "reason": "recorded the jaw position",
+            },
+        ),
+        ("read_fixtures", lambda seen: {}),
+        (
+            "declare_wcs",
+            lambda seen: {
+                "id": "w-g54",
+                "code": "G54",
+                "datum": "widget",
+                "z_zero": "stock_top",
+                "provenance": {"requirement": "R1"},
+            },
+        ),
+        (
+            "update_wcs",
+            lambda seen: {
+                "id": "w-g54",
+                "patch": {"note": "touched off the stock top"},
+                "reason": "recorded the touch-off",
+            },
+        ),
+        ("read_wcs", lambda seen: {}),
+        (
+            "declare_setup",
+            lambda seen: {
+                "id": "s-op1",
+                "spindle_axis": "+Z",
+                "order": 1,
+                "stock": "st-plate",
+                "fixture": "fx-vise",
+                "wcs": "w-g54",
+                "tolerance": {
+                    "gouge_budget_mm3": 0.5,
+                    "rest_budget_mm3": 40.0,
+                    "max_deviation_mm": 0.1,
+                    "rejects_mm3": 2.0,
+                },
+                "provenance": {"requirement": "R1"},
+            },
+        ),
+        (
+            "update_setup",
+            lambda seen: {
+                "id": "s-op1",
+                "patch": {"note": "first op, top face up"},
+                "reason": "recorded the op orientation",
+            },
+        ),
+        ("read_setups", lambda seen: {}),
+        (
+            "declare_operation",
+            lambda seen: {
+                "id": "op-1",
+                "setup": "s-op1",
+                "kind": "pocket",
+                "feature": "widget:pocket_demo",
+                "tool": "em_6mm_3fl_carbide",
+                "depth_mm": 6.0,
+                "stepdown_mm": 3.0,
+                "stepover_mm": 2.4,
+                "provenance": {"requirement": "R1"},
+            },
+        ),
+        (
+            "update_operation",
+            lambda seen: {
+                "id": "op-1",
+                "patch": {"note": "roughing pass only"},
+                "reason": "recorded the pass intent",
+            },
+        ),
+        ("read_operations", lambda seen: {}),
+        # CAM.md §5.9/§9 (Stage 14C): the one CAM measuring verb — simulate
+        # and verify. The widget carries no pocket_demo tag, so the setup
+        # comes back `unresolvable` with its named refusal — which is itself
+        # the §5.9 contract (never conflated with a failing check), and the
+        # result still validates against the declared schema.
+        ("check_program", lambda seen: {}),
         ("run_checks", lambda seen: {"scope": "part", "name": "widget"}),
         (
             "read_artifact",

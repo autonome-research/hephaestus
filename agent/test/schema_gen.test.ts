@@ -4,7 +4,7 @@ import { TOOLS, TOOL_NAMES } from "../src/tools/schema.gen.js";
 import { PROMPT_MAX_UTF8_BYTES } from "../src/limits.js";
 
 describe("generated tool surface", () => {
-  it("declares the Stage 2 surface, the Stage 2V ledger, Stage 6, Stage 8A references, Stage 8B compare_solids, the Stage 8C constraint quartet, the KINEMATICS.md Stage 9A/9B/9C kinematics tools, the MESH_INGEST.md Stage 12C compare_to_scan and the SOLVER.md Stage 13 propose-only trio (57 tools)", () => {
+  it("declares the Stage 2 surface, the Stage 2V ledger, Stage 6, Stage 8A references, Stage 8B compare_solids, the Stage 8C constraint quartet, the KINEMATICS.md Stage 9A/9B/9C kinematics tools, the MESH_INGEST.md Stage 12C compare_to_scan, the SOLVER.md Stage 13 propose-only trio and the CAM.md Stage 14B/14C declared-state quartet families plus check_program (73 tools)", () => {
     // Tool count repointed for KINEMATICS.md Stage 9A (§6): +7 for the joint
     // and pose quartets plus check_motion; repointed again for KINEMATICS.md
     // Stage 9B (§4/§6): +3 for the motion-check triplet; repointed again for
@@ -13,11 +13,43 @@ describe("generated tool surface", () => {
     // for MESH_INGEST.md §7.2 (Stage 12C): +1 for compare_to_scan, the one new
     // tool of mesh ingest; repointed again for SOLVER.md Stage 13: +3 for the
     // propose-only trio (solve_pose / propose_placement / read_proposals) —
-    // and nothing that applies a proposal, which is the stage's whole mandate.
-    expect(TOOL_NAMES).toHaveLength(57);
+    // and nothing that applies a proposal, which is the stage's whole mandate;
+    // repointed again for CAM.md §9 / tool_schema.md "Manufacturing setups"
+    // (Stage 14B): +15 for the five CAM declare/update/read quartet families
+    // (setups, stock, fixtures, WCS, operations); repointed again for CAM.md
+    // §5.9/§9 (Stage 14C): +1 for check_program, the one CAM measuring verb —
+    // simulate and verify, no file written, no program text in any result.
+    // NOTHING on this surface emits a program (CAM.md §1.4): 14D adds zero,
+    // and `emit_program` stays a refused reservation.
+    expect(TOOL_NAMES).toHaveLength(73);
     for (const solver of ["solve_pose", "propose_placement", "read_proposals"]) {
       expect(TOOL_NAMES).toContain(solver);
     }
+    // CAM.md §3 (Stage 14B): declared machining state, model-writable and
+    // never erasable — and no emission tool, structurally.
+    for (const cam of [
+      "declare_setup",
+      "update_setup",
+      "read_setups",
+      "declare_stock",
+      "update_stock",
+      "read_stock",
+      "declare_fixture",
+      "update_fixture",
+      "read_fixtures",
+      "declare_wcs",
+      "update_wcs",
+      "read_wcs",
+      "declare_operation",
+      "update_operation",
+      "read_operations",
+    ]) {
+      expect(TOOL_NAMES).toContain(cam);
+    }
+    expect(TOOL_NAMES).not.toContain("emit_program");
+    // CAM.md §5.9/§9 (Stage 14C): simulate and verify — the one CAM
+    // measuring verb, and still no emission tool anywhere.
+    expect(TOOL_NAMES).toContain("check_program");
     for (const ledger of ["record_requirements", "read_requirements", "update_requirement"]) {
       expect(TOOL_NAMES).toContain(ledger);
     }

@@ -30,6 +30,11 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 __all__ = [
+    "CAM_ID_PATTERN",
+    "CAM_OPERATION_KINDS",
+    "CAM_SPINDLE_AXES",
+    "CAM_STOCK_KINDS",
+    "CAM_Z_ZERO_MODES",
     "CONSTRAINT_ANCHOR_PATTERN",
     "CONSTRAINT_ID_PATTERN",
     "CONSTRAINT_KINDS",
@@ -3452,6 +3457,390 @@ def _read_proposals() -> ToolDecl:
     )
 
 
+# --------------------------------------------------------------------------
+# CAM.md §3/§9 — the Stage 14B manufacturing-setup quartet families
+#
+# The vocabulary below is RESTATED here, not invented, on the 8C/9A rule: the
+# authority is ``hephaestus.core.project_store.cam`` (``SPINDLE_AXES`` /
+# ``STOCK_KINDS`` / ``Z_ZERO_MODES`` / ``OPERATION_KINDS`` / ``CAM_ID_PATTERN``
+# and the shared 8C anchor grammar). This module may not import it, so the
+# equality is asserted by a drift test instead (``tests/stage14b``).
+#
+# Sixteen tools was ARGUED, not assumed (CAM.md §9; tool_schema.md
+# "Manufacturing setups"): the cheaper ``declare_cam(kind, entry)`` shape is
+# refused because a kind-discriminated ``entry`` would be the one field on the
+# surface a closed ``additionalProperties: false`` schema cannot refuse
+# foreign fields from by construction — and structural refusal by closed
+# schema is the mechanism the D2 posture rests on. 14B lands the five
+# quartet families (15 tools); ``check_program`` is 14C's one addition.
+# **No tool on this surface emits a program, and none ever will** (§1.4):
+# ``emit_program`` is a refused reservation in tool_schema.md's Deferred
+# section.
+
+#: The six declared spindle directions (CAM.md §3.1).
+CAM_SPINDLE_AXES: Final[tuple[str, ...]] = ("+X", "-X", "+Y", "-Y", "+Z", "-Z")
+#: Stage 14 stock kinds (CAM.md §3.2); later kinds are contract amendments.
+CAM_STOCK_KINDS: Final[tuple[str, ...]] = ("rectangular",)
+#: Declared Z-zero modes (CAM.md §3.4) — never guessed.
+CAM_Z_ZERO_MODES: Final[tuple[str, ...]] = ("stock_top", "part_top", "datum")
+#: The Stage 14 operation kinds (CAM.md §3.7).
+CAM_OPERATION_KINDS: Final[tuple[str, ...]] = ("drill", "pocket", "profile", "face")
+#: CAM entry ids: the constraint-id pattern verbatim.
+CAM_ID_PATTERN: Final[str] = r"^[A-Za-z][A-Za-z0-9._-]{0,63}$"
+
+_CAM_ID: Final[JsonSchema] = {"type": "string", "pattern": CAM_ID_PATTERN}
+
+#: The VALIDATION.md §1 rule-2 budget block. Nullable at the schema level on
+#: the 9A ``_JOINT_LIMITS`` precedent: the SHAPE rules (`no_declared_tolerance`
+#: for an absent block, `budget_missing_rejects` for a budget with no
+#: ``rejects_mm3``) are the ledger's own refusals — one authority, the store's
+#: tables — so the schema deliberately does not preempt them.
+_CAM_TOLERANCE: Final[JsonSchema] = {
+    "anyOf": [
+        _obj(
+            {
+                "gouge_budget_mm3": _NUM,
+                "rest_budget_mm3": _NUM,
+                "max_deviation_mm": _NUM,
+                "rejects_mm3": {"anyOf": [_NUM, {"type": "null"}]},
+            },
+            ["gouge_budget_mm3", "rest_budget_mm3", "max_deviation_mm"],
+        ),
+        {"type": "null"},
+    ],
+    "default": None,
+}
+
+_MM_TRIPLE: Final[JsonSchema] = {
+    "type": "array",
+    "items": _NUM,
+    "minItems": 3,
+    "maxItems": 3,
+}
+
+_CAM_TABS: Final[JsonSchema] = {
+    "anyOf": [
+        _obj(
+            {"count": _INT, "width_mm": _NUM, "height_mm": _NUM},
+            ["count", "width_mm", "height_mm"],
+        ),
+        {"type": "null"},
+    ],
+    "default": None,
+}
+
+_FIXTURE_MEMBER: Final[JsonSchema] = _obj(
+    {"part": _ident(), "anchor": _CONSTRAINT_ANCHOR, "offset_mm": _MM_TRIPLE},
+    ["part", "anchor", "offset_mm"],
+)
+
+#: The result every CAM ledger tool shares (the 8C constraint-set shape):
+#: the generation now current, its immutable ref, what changed, and every
+#: entry — withdrawn ones included, with their reasons, because generational
+#: state is honest only if every generation stays readable.
+_CAM_SET_RESULT: Final[JsonSchema] = _ok(
+    {
+        "status": {"const": "ok"},
+        "generation": _INT,
+        "artifact_ref": {"anyOf": [_STR, {"type": "null"}]},
+        "change": {"anyOf": [_dict(), {"type": "null"}]},
+        "entries": {"type": "array", "items": _dict()},
+    },
+    ["status", "generation", "entries"],
+)
+
+_OPT_NUM: Final[JsonSchema] = {"anyOf": [_NUM, {"type": "null"}], "default": None}
+_OPT_STR: Final[JsonSchema] = {"anyOf": [_STR, {"type": "null"}], "default": None}
+
+_SETUP_ENTRY: Final[JsonSchema] = _obj(
+    {
+        "id": _CAM_ID,
+        "spindle_axis": _enum(list(CAM_SPINDLE_AXES)),
+        "order": _INT,
+        "stock": _CAM_ID,
+        "fixture": _CAM_ID,
+        "wcs": _CAM_ID,
+        "tolerance": _CAM_TOLERANCE,
+        "provenance": _CONSTRAINT_PROVENANCE,
+        "note": _OPT_STR,
+    },
+    ["id", "spindle_axis", "order", "stock", "fixture", "wcs", "provenance"],
+)
+
+_STOCK_ENTRY: Final[JsonSchema] = _obj(
+    {
+        "id": _CAM_ID,
+        "kind": _enum(list(CAM_STOCK_KINDS)),
+        "extents_mm": _MM_TRIPLE,
+        "origin_anchor": _CONSTRAINT_ANCHOR,
+        "origin_offset_mm": {"anyOf": [_MM_TRIPLE, {"type": "null"}], "default": None},
+        "material": _STR,
+        "provenance": _CONSTRAINT_PROVENANCE,
+        "note": _OPT_STR,
+    },
+    ["id", "kind", "extents_mm", "origin_anchor", "material", "provenance"],
+)
+
+_FIXTURE_ENTRY: Final[JsonSchema] = _obj(
+    {
+        "id": _CAM_ID,
+        "members": {"type": "array", "items": _FIXTURE_MEMBER},
+        "provenance": _CONSTRAINT_PROVENANCE,
+        "note": _OPT_STR,
+    },
+    ["id", "members", "provenance"],
+)
+
+_WCS_ENTRY: Final[JsonSchema] = _obj(
+    {
+        "id": _CAM_ID,
+        "code": _STR,
+        "datum": _CONSTRAINT_ANCHOR,
+        "z_zero": _enum(list(CAM_Z_ZERO_MODES)),
+        "provenance": _CONSTRAINT_PROVENANCE,
+        "note": _OPT_STR,
+    },
+    ["id", "code", "datum", "z_zero", "provenance"],
+)
+
+_OPERATION_ENTRY: Final[JsonSchema] = _obj(
+    {
+        "id": _CAM_ID,
+        "setup": _CAM_ID,
+        "kind": _enum(list(CAM_OPERATION_KINDS)),
+        "feature": _CONSTRAINT_ANCHOR,
+        "tool": _CAM_ID,
+        "depth_mm": _NUM,
+        "stepdown_mm": _OPT_NUM,
+        "stepover_mm": _OPT_NUM,
+        "climb": {"type": "boolean", "default": True},
+        "tabs": _CAM_TABS,
+        "feed_mm_min": _OPT_NUM,
+        "rpm": _OPT_NUM,
+        "plunge_mm_min": _OPT_NUM,
+        "doc_mm": _OPT_NUM,
+        "woc_mm": _OPT_NUM,
+        "provenance": _CONSTRAINT_PROVENANCE,
+        "note": _OPT_STR,
+    },
+    ["id", "setup", "kind", "feature", "tool", "depth_mm", "provenance"],
+)
+
+
+def _cam_patch(entry: JsonSchema) -> JsonSchema:
+    """The update-tool patch: every entry field nullable, plus ``withdrawn``.
+
+    Merged onto the stored entry and revalidated as a whole by the ledger, so
+    a patch cannot produce an entry that could not have been declared —
+    ``patch: {"withdrawn": true}`` is the withdrawal path (nothing erased).
+    """
+    props: dict[str, JsonSchema] = {}
+    for name, schema in cast("dict[str, JsonSchema]", entry["properties"]).items():
+        if name == "id":
+            continue
+        already_nullable = "anyOf" in schema and any(
+            variant.get("type") == "null"
+            for variant in cast("list[JsonSchema]", schema["anyOf"])
+        )
+        props[name] = schema if already_nullable else {"anyOf": [schema, {"type": "null"}]}
+    props["withdrawn"] = {"anyOf": [_BOOL, {"type": "null"}]}
+    return _obj(props, [])
+
+
+def _cam_declare(name: str, entry: JsonSchema, section: str, summary: str) -> ToolDecl:
+    del section  # the CAM.md section rides the docstring in tool_schema.md
+    return ToolDecl(
+        name=name,
+        summary=summary,
+        params=entry,
+        result=_CAM_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _cam_update(name: str, entry: JsonSchema, summary: str) -> ToolDecl:
+    return ToolDecl(
+        name=name,
+        summary=summary,
+        params=_obj(
+            {"id": _CAM_ID, "patch": _cam_patch(entry), "reason": _STR},
+            ["id", "patch", "reason"],
+        ),
+        result=_CAM_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _cam_read(name: str, summary: str) -> ToolDecl:
+    return ToolDecl(
+        name=name,
+        summary=summary,
+        params=_obj({}, []),
+        result=_CAM_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
+def _declare_setup() -> ToolDecl:
+    return _cam_declare(
+        "declare_setup",
+        _SETUP_ENTRY,
+        "§3.1",
+        "Declare one machining setup (CAM.md §3.1); advances one generation.",
+    )
+
+
+def _update_setup() -> ToolDecl:
+    return _cam_update(
+        "update_setup",
+        _SETUP_ENTRY,
+        "Revise or withdraw one setup with a recorded reason; one generation.",
+    )
+
+
+def _read_setups() -> ToolDecl:
+    return _cam_read(
+        "read_setups", "Read the setup ledger, withdrawn entries included (CAM.md §3.1)."
+    )
+
+
+def _declare_stock() -> ToolDecl:
+    return _cam_declare(
+        "declare_stock",
+        _STOCK_ENTRY,
+        "§3.2",
+        "Declare one stock record (CAM.md §3.2); advances one generation.",
+    )
+
+
+def _update_stock() -> ToolDecl:
+    return _cam_update(
+        "update_stock",
+        _STOCK_ENTRY,
+        "Revise or withdraw one stock record with a recorded reason; one generation.",
+    )
+
+
+def _read_stock() -> ToolDecl:
+    return _cam_read(
+        "read_stock", "Read the stock ledger, withdrawn entries included (CAM.md §3.2)."
+    )
+
+
+def _declare_fixture() -> ToolDecl:
+    return _cam_declare(
+        "declare_fixture",
+        _FIXTURE_ENTRY,
+        "§3.3",
+        "Declare one fixture as placed member parts (CAM.md §3.3); one generation.",
+    )
+
+
+def _update_fixture() -> ToolDecl:
+    return _cam_update(
+        "update_fixture",
+        _FIXTURE_ENTRY,
+        "Revise or withdraw one fixture with a recorded reason; one generation.",
+    )
+
+
+def _read_fixtures() -> ToolDecl:
+    return _cam_read(
+        "read_fixtures", "Read the fixture ledger, withdrawn entries included (CAM.md §3.3)."
+    )
+
+
+def _declare_wcs() -> ToolDecl:
+    return _cam_declare(
+        "declare_wcs",
+        _WCS_ENTRY,
+        "§3.4",
+        "Declare one work coordinate system (CAM.md §3.4); advances one generation.",
+    )
+
+
+def _update_wcs() -> ToolDecl:
+    return _cam_update(
+        "update_wcs",
+        _WCS_ENTRY,
+        "Revise or withdraw one WCS with a recorded reason; one generation.",
+    )
+
+
+def _read_wcs() -> ToolDecl:
+    return _cam_read(
+        "read_wcs", "Read the WCS ledger, withdrawn entries included (CAM.md §3.4)."
+    )
+
+
+def _declare_operation() -> ToolDecl:
+    return _cam_declare(
+        "declare_operation",
+        _OPERATION_ENTRY,
+        "§3.7",
+        "Declare one machining operation over a tagged feature (CAM.md §3.7).",
+    )
+
+
+def _update_operation() -> ToolDecl:
+    return _cam_update(
+        "update_operation",
+        _OPERATION_ENTRY,
+        "Revise or withdraw one operation with a recorded reason; one generation.",
+    )
+
+
+def _read_operations() -> ToolDecl:
+    return _cam_read(
+        "read_operations",
+        "Read the operation ledger, withdrawn entries included (CAM.md §3.7).",
+    )
+
+
+def _check_program() -> ToolDecl:
+    # CAM.md §5.9/§9 `check_program(setup_ids?)`, Stage 14C: the ONE measuring
+    # verb on the CAM surface (72 -> 73, the amendment's per-sub-stage pin
+    # move). Simulate and verify only — coverage, round-trip, sampled removal
+    # simulation, declared-scene collision — every universal verdict in its
+    # `_at_samples` spelling and every collision result carrying the
+    # `in_process_stock_not_modelled` stamp (§5.5). It writes no file and
+    # returns no program text (§1.4, the D2 mandate): emission is a deferred
+    # operator CLI verb, and `emit_program` stays a refused reservation.
+    # `setup_ids` narrows which setups run (the check_motion shape); a full
+    # run is recorded onto the program-status projection, a named subset is
+    # evaluated but not projected (`partial: true`, the check_assembly rule).
+    return ToolDecl(
+        name="check_program",
+        summary="Simulate and verify declared setups now (CAM.md §5); ProgramStatus per setup.",
+        params=_obj(
+            {
+                "setup_ids": {
+                    "anyOf": [{"type": "array", "items": _CAM_ID}, {"type": "null"}],
+                    "default": None,
+                },
+            },
+            [],
+        ),
+        result=_ok(
+            {
+                "status": {"const": "ok"},
+                "programs": {"type": "array", "items": _dict()},
+                "partial": _BOOL,
+            },
+            ["status", "programs", "partial"],
+        ),
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
 TOOLS: Final[tuple[ToolDecl, ...]] = (
     _create_part(),
     _read_part(),
@@ -3505,6 +3894,27 @@ TOOLS: Final[tuple[ToolDecl, ...]] = (
     _solve_pose(),
     _propose_placement(),
     _read_proposals(),
+    # CAM.md §3/§9 (Stage 14B): the five declare/update/read quartet families,
+    # on the 8C quartet decision unchanged — declaring is cheap, reversible,
+    # generational, and measured against geometry the model did not choose.
+    # No tool here emits a program (§1.4); `check_program` is 14C's one
+    # addition (72 -> 73) and is simulate-and-verify only.
+    _declare_setup(),
+    _update_setup(),
+    _read_setups(),
+    _declare_stock(),
+    _update_stock(),
+    _read_stock(),
+    _declare_fixture(),
+    _update_fixture(),
+    _read_fixtures(),
+    _declare_wcs(),
+    _update_wcs(),
+    _read_wcs(),
+    _declare_operation(),
+    _update_operation(),
+    _read_operations(),
+    _check_program(),
     _load_skill(),
     _list_skills(),
     _list_references(),

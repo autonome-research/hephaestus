@@ -26,6 +26,11 @@ mixin per domain so each domain reads independently:
 ``_assembly``    the ``ASSEMBLY.md`` §3 constraint quartet: thin ops over the
                  project's generational constraint set and the engine evaluator,
                  keeping the tool surface's refusal vocabulary and nothing else.
+``_cam``         the ``CAM.md`` §3 declared-state quartet families (Stage 14B):
+                 thin ops over the five generational CAM ledgers (setups,
+                 stock, fixtures, WCS, operations), keeping the declaration
+                 refusal vocabulary and nothing else. No emission tool exists,
+                 structurally (§1.4).
 ``_solve``       the ``SOLVER.md`` §11 solving tools: ``solve_pose`` (13A),
                  ``propose_placement`` and ``read_proposals`` (13B) — thin ops
                  over ``hephaestus.core.placement``. ``solve_pose`` writes
@@ -100,6 +105,7 @@ from ._base import (
     params_pointer,
 )
 from ._build import BuildOps
+from ._cam import CamOps
 from ._checks import (
     CHECK_DESCRIPTION_SENTINEL,
     CHECK_TEMPLATE_HEADER,
@@ -231,6 +237,7 @@ __all__ = [
     "BomRow",
     "CadOpError",
     "CadOps",
+    "CamOps",
     "ClarificationGate",
     "ClarificationOutcome",
     "CompareOps",
@@ -314,6 +321,7 @@ class CadOps(
     ExportOps,
     RequirementOps,
     AssemblyOps,
+    CamOps,
     MotionOps,
     SolveOps,
     ReferenceOps,

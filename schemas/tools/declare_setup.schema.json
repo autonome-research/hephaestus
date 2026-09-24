@@ -1,0 +1,194 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/declare_setup.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Declare one machining setup (CAM.md §3.1); advances one generation.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "fixture": {
+        "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+        "type": "string"
+      },
+      "id": {
+        "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+        "type": "string"
+      },
+      "note": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "order": {
+        "type": "integer"
+      },
+      "provenance": {
+        "additionalProperties": false,
+        "properties": {
+          "assumed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "requirement": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "spindle_axis": {
+        "enum": [
+          "+X",
+          "-X",
+          "+Y",
+          "-Y",
+          "+Z",
+          "-Z"
+        ],
+        "type": "string"
+      },
+      "stock": {
+        "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+        "type": "string"
+      },
+      "tolerance": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "gouge_budget_mm3": {
+                "type": "number"
+              },
+              "max_deviation_mm": {
+                "type": "number"
+              },
+              "rejects_mm3": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rest_budget_mm3": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "gouge_budget_mm3",
+              "rest_budget_mm3",
+              "max_deviation_mm"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "wcs": {
+        "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "spindle_axis",
+      "order",
+      "stock",
+      "fixture",
+      "wcs",
+      "provenance"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "change": {
+        "anyOf": [
+          {
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "entries": {
+        "items": {
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "generation": {
+        "type": "integer"
+      },
+      "status": {
+        "const": "ok"
+      }
+    },
+    "required": [
+      "status",
+      "generation",
+      "entries"
+    ],
+    "type": "object"
+  },
+  "title": "declare_setup",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "declare_setup",
+    "profiles": [
+      "part",
+      "orchestrator"
+    ],
+    "sequential": true
+  }
+}

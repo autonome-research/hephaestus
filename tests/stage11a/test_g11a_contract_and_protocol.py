@@ -512,9 +512,13 @@ def test_the_pinned_worker_protocol_suite_passes_with_the_new_field() -> None:
 
 def test_the_shipped_parts_tree_is_still_indexed_by_the_same_index() -> None:
     """Rule 6: one store. The component record is a richer ``parts`` entry, not
-    a second registry kind — ``BUNDLED_KINDS`` and ``RegistryKind`` are
-    untouched, which is what makes that claim checkable."""
+    a second registry kind — no *component* kind was added, which is what makes
+    that claim checkable. The kind tuple itself moved once since: Stage 14A
+    (CAM.md §3.5 amendment, 2026-09-02) added ``tools``, the CAM tool library —
+    a dated operator amendment, not a component store, so this clause's subject
+    (components ride the ``parts`` index) is unchanged."""
     from hephaestus.core.registry import BUNDLED_KINDS
 
-    assert BUNDLED_KINDS == ("skills", "parts", "materials", "dfm")
+    assert BUNDLED_KINDS == ("skills", "parts", "materials", "dfm", "tools")
+    assert "components" not in BUNDLED_KINDS
     assert load_registry(SHIPPED_PARTS).kind == "parts"

@@ -266,6 +266,21 @@ class CheckOps(CadOpsState):
             motion = SnapshotMotionContext(
                 self._layout, self._store, snapshot_ref=resolved_ref, scratch=Path(scratch)
             )
+            # CAM.md §9: the m.program read surface, bound to the SAME frozen
+            # snapshot on the m.at_pose/m.sweep rule — evaluated lazily, one
+            # memoized check_setup per first-asked id, so a run that never
+            # asks never pays for a removal simulation.
+            from hephaestus.core.cam_check import SnapshotProgramContext
+
+            registries = self.registries()
+            program = SnapshotProgramContext(
+                self._layout,
+                self._store,
+                snapshot_ref=resolved_ref,
+                scratch=Path(scratch),
+                tools=registries.tools,
+                materials=registries.materials,
+            )
             try:
                 report = run_bundle(
                     bundle,
@@ -276,6 +291,7 @@ class CheckOps(CadOpsState):
                     at_pose=motion.at_pose,
                     sweep=motion.sweep,
                     motion_generations=motion.generations,
+                    program=program.program,
                 )
             except InvalidCheckGenerationError as exc:  # pragma: no cover - captured above
                 raise CadOpError("invalid_check_generation", exc.message) from exc

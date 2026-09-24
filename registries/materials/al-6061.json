@@ -17,6 +17,11 @@
     20.0,
     25.0
   ],
+  "machining": {
+    "min_internal_radius_mm": 1.5,
+    "max_depth_diameter_ratio": 4.0,
+    "min_web_mm": 1.0
+  },
   "notes": "The general-purpose structural aluminium: machines cleanly, anodises well, and is stiff enough that a 6 mm bracket usually beats a 20 mm printed one. Design for the tool, not the shape you want: internal corners need a radius of at least half the pocket depth's worth of tool clearance (3 mm end mill => 1.5 mm minimum internal radius), pockets deeper than about 4x the tool diameter chatter, and thin webs below roughly 1 mm distort. Tapped M3 threads want 4.5-6 mm of engagement; through-bolting with clearance holes plus nuts is more forgiving than tapping thin plate.",
   "keywords": [
     "aluminium",

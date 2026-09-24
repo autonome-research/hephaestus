@@ -283,6 +283,23 @@ A tag name without the infix keeps last-wins and keeps the warning,
 byte-for-byte as before. A declared component interface name may not contain
 `__`, so the form has exactly one producer.
 
+**The machine-readable tag-prefix vocabulary** (amended 2026-09-02, Stage 14B
+— `CAM.md` §3.7; the `cutfile.layer_for_tag` prefixes stated here as the one
+closed list both consumers read). A tag prefix routes tagged topology to a
+manufacturing consumer, always by lookup and never by heuristic, and the
+prefix must be followed by something — a bare prefix names no feature:
+
+- `engrave_` / `score_` — the 2D cut-file layers
+  (`core/src/hephaestus/core/cutfile.py`, `LAYER_TAG_PREFIXES`), unchanged.
+- `drill_` / `pocket_` / `profile_` / `face_` — CAM operation features, each
+  claimable only by the matching operation kind (`tag_prefix_mismatch`
+  otherwise); `mill_` — the generic CAM prefix any operation kind may claim;
+  `keepout_` — a §5.5 collision keep-out volume, never an operation feature.
+
+§5.2 is deliberately **not** amended: the nine assignable `part.*` fields
+stay nine, and no CAM state enters a part script — a setup spans the part,
+the stock and the fixture, so it lives in project state (`CAM.md` §3).
+
 ## 6. Persistent checks — EXTENSION
 
 ```python
@@ -396,6 +413,21 @@ scope rule) at evaluation, recorded as that check's failure — no load-time
 inspection of predicate bodies anywhere. An in-predicate motion timeout makes
 that check **unverifiable** in the report, its partial per-sample facts
 attached, exactly as a `COMPARE.md` §5 diff timeout does.
+
+`m.program(setup_id)` (`CAM.md` §5.9/§9; amendment dated 2026-09-02 with
+Stage 14C) joins them on identical terms: a **project-scope-only** read
+surface returning the named setup's `ProgramStatus`, flattened so a predicate
+reads what it asserts on (`state`, `coverage`, `round_trip`, `simulation`,
+`collision` — each a spelling from the `CAM.md` §1.1 closed set —
+`refusals`, and `raw`, the whole §5.9 record, which is what the check report
+records as the measured value). An acceptance check can therefore assert
+`m.program("s-op1").coverage == "covered"`. It resolves through the engine
+path against the run's **frozen** snapshot, never CURRENT mid-run; a
+part-scope predicate calling it raises the same named refusal
+(`kind="contract"`) at evaluation, recorded as that check's failure; and an
+in-predicate CAM simulation timeout (`cam_sim_timeout`) makes that check
+**unverifiable**, the cheap facts and per-op progress attached. Nothing on
+this surface carries program text.
 
 This is the load-bearing difference from the reference product: Smith's
 `Measure Overlap` verifies once, in-loop, and the evidence evaporates;

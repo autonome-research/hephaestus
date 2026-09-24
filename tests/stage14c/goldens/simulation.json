@@ -1,0 +1,35 @@
+{
+ "a_only_mm3": 0.4474893636770746,
+ "b_only_mm3": 0.0,
+ "budgets": {
+  "gouge_budget_mm3": 1.5,
+  "max_deviation_mm": 0.5,
+  "rejects_mm3": 1.5,
+  "rest_budget_mm3": 8.0
+ },
+ "common_mm3": 3364.3805509807657,
+ "findings": [],
+ "iou": 0.9998670097377008,
+ "max_deviation_mm": 0.014823468456432069,
+ "min_resolvable_inputs": {
+  "doc_mm": 25.0,
+  "operation": "op-drill",
+  "r_mm": 2.5,
+  "step_mm": 0.25
+ },
+ "min_resolvable_mm3": 0.19543472313923727,
+ "per_op": [
+  {
+   "moves": 29,
+   "op": "op-pocket",
+   "samples": 103
+  },
+  {
+   "moves": 3,
+   "op": "op-drill",
+   "samples": 37
+  }
+ ],
+ "samples_evaluated": 140,
+ "verdict": "matches_at_samples"
+}

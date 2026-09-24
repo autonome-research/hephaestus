@@ -1936,7 +1936,357 @@ and the `cnc_router`/`waterjet` DFM packs shipped as issue-driven engine work
 outside any stage heading (issues #28/#30, commits `f318dbd`/`9a68bb2`). They
 are ordinary tested engine code, not gate evidence. `CAM.md` §2 blesses the 2D
 substance and its §1.4 records the prior claim on the `heph cam emit` verb
-name, which the Stage 14 landing must reconcile.
+name, which the Stage 14 landing must reconcile. (Reconciliation status is
+recorded in the Stage 14 block below, 2026-09-02: milling emission is deferred
+in full, so no verb conflict arises in that stage's first landing and the
+obligation stands for 14D.)
+
+## Stage 14 — Computer-aided manufacturing: 3-axis milling and drilling (amendment 2026-09-02, operator-directed)
+
+Frontier-capability work under the engine-first decision recorded for Stage 8,
+on the operator's 2026-08-29 approval of the recommended build order in
+`docs/frontier-staging-proposal.md`, which puts computer-aided manufacturing
+**fourth** of the five frontier capabilities, and opens it as its own gated
+stage under rule 5 — CAM was never on rule 5's deferred list, and a new gated
+stage is the whole mechanism rule 5 prescribes. Normative spec: `CAM.md`
+(document **16**), promoted from DRAFT to normative by this amendment after the
+adversarial pass its header records. Stage 14 lands in **four** gated
+sub-stages, strictly ordered, and the ordering is itself the safety decision:
+**the harness must be able to check a program before it is able to produce
+one.** Existing suites stay green at every sub-stage.
+
+**This stage is not like the others either, and its difference is a blast
+radius, not a rule reversal.** Every artifact Hephaestus has ever produced is
+inert — a wrong DXF wastes a sheet. A machine program is the first artifact
+this project could produce that, handed to a machine, moves a tonne of metal at
+speed under its own power. That asymmetry is why the D2 decision below is in
+the plan's own text, why the gate ordering is the safety argument, and why
+`CAM.md` §1 (safety and honesty discipline) governs every other section of its
+own spec.
+
+### D2, decided (operator, via `docs/frontier-staging-proposal.md` §4's D2, lines 748–779)
+
+D2 put four postures to the operator: (a) stop at the 2D cut-file half; (b)
+generate and verify, never emit; (c) emit under operator consent, as drafted;
+(d) a model-facing emit tool. The decision: **option (b) is this stage's first
+landing, (c) is held as its own explicit later decision, and (d) is refused
+permanently.** In this plan's own words, so a later drafter must reverse a
+dated operator amendment rather than a paragraph:
+
+**THIS LANDING VERIFIES PROGRAMS AND NEVER EMITS ONE.** No runnable machine
+program — G-code or otherwise — is written to disk by any code path shipped in
+this stage's first landing (14A–14C). No model tool writes one, and the milling
+emission operator verb is **not shipped either**: `CAM.md` §1.4's consent
+machinery, §1.5's in-band header, §7's `posts` registry and §9's emission
+surface are **specified and explicitly deferred** to 14D, which lands only by
+the operator's later approval of (c) and is recorded here as
+specified-not-shipped. `check_program` — simulate and verify — IS in scope, and
+is where the whole engineering value and gate substance live. The refusal is
+structural as well as stated: no tool result carries program text, clause
+G14B-24 is a filesystem assertion that no 14A–14C code path writes under
+`.heph/exports/` (extended over the 14C paths by the round-trip note below),
+`export_part` gains no program format (G14D-12 pins that it never does), and
+`emit_program` sits in `tool_schema.md`'s Deferred section as a reserved slot
+that is refused, not a tool. D2's two preconditions for later approving (c) are
+**already gate clauses**, not promises: the `SAFETY_PARAGRAPH` byte-for-byte
+clause (G14D-9/16) and the `in_process_stock_not_modelled` stamp on every
+collision result including clean ones (G14C-11). 14D additionally requires the
+operator sheet reviewed by someone who runs a machine, per D2's own text.
+
+**The `heph cam emit` prior claim, reconciled.** The shipped 2D laser/waterjet
+path (issues #28/#30, the signpost above) owns the verb today: `cli_cam.py`
+takes `<part>` not `<setup>`, no consent gate, DXF-only, and
+`cam.py`'s `CUT2D_PROCESSES = ('laser_cut', 'waterjet')` excludes `cnc_router`
+— a router bit is not a beam. An inert cut-file, not a machine program.
+Because milling emission is deferred in full, **no verb conflict arises in this
+landing**: the 2D behaviour is byte-for-byte unchanged, `CAM.md` §1.4 carries
+the dated reconciliation status, and the obligation — the `<setup>` form,
+consent gate and refusal set applying when the named setup is a milling
+process, never silently changing the 2D form — is discharged by the 14D
+landing, not by this amendment. `CAM.md` §10 freezes `geom.kerf`,
+`geom.nesting` and `core.cutfile`, which the 2D path depends on, unchanged.
+
+### The sub-stages and their gates
+
+- **14A — machining DFM packs and the tools registry, no CAM code** (`CAM.md`
+  §3.5, §6).
+
+  **Gate G14A** (Tier 1): `uv run pytest tests/stage14a -q` exits 0 per
+  `CAM.md` "Gates" — **10 clauses**. The fifth registry kind `tools` loads and
+  validates, refusing malformed records and unknown kinds by name; the Merkle
+  digest catches tamper AND rename (path bound into the leaf); a tool record
+  without a `holder` block, or with a `feeds` entry lacking `source`, is
+  refused at load by name — the holder is load-bearing, because without it
+  there is no collision claim to make at all. Both `cnc_mill` and `cnc_router`
+  packs load under the existing loader invariants (unique `<process>.<name>`
+  rule ids, every `reads` name in `[params]`), with a deliberately broken fork
+  refused. Each of the five §6.2 rules fires on a known-violation fixture and
+  not on a compliant one, with correct rule_id/tag/descriptor/
+  `source_artifact_ref` (the G6 shape); the accessibility rule proves its
+  computability from the existing `DfmContext` accessors or asserts the
+  extension it needed. The materials machining block resolves to declared
+  numbers, not prose. The `cnc_mill` index inversion is **owed** — `cnc_router`
+  shipped as issue #28 and `core/tests/test_dfm_packs.py` already asserts
+  `has('cnc_router')` at line 215 while line 217 asserts NOT `has('cnc_mill')` — and
+  `heph init`'s default process resolves end to end. Predicate file IO is
+  sandbox-denied. Two-process determinism of `DfmEvaluation` including
+  `registry_digest`.
+
+- **14B — declared state and toolpath geometry, nothing emitted** (`CAM.md`
+  §3, §4).
+
+  **Gate G14B** (Tier 1): `uv run pytest tests/stage14b -q` exits 0 per
+  `CAM.md` "Gates" — **24 clauses**. Geom boundary tests admit `toolpath` as a
+  tenth pure service. Offset-ladder hand-computed fixtures terminate normally
+  with `loops_emitted` and an **empty refusal list**; the termination rule
+  (`TOOLPATH_MIN_LOOP_AREA_MM2`) and self-intersection pruning (an L-shaped
+  pocket splitting into disjoint rings) each on its own fixture, with
+  `feature_below_tool_radius` decided **before** the ladder; the closed move
+  vocabulary and no arc fitting of linearized paths; tool solid
+  volumes/extents hand-computable. Five ledger quartets with generational
+  withdraw and provenance compulsion; anchor-grammar refusals;
+  `stock_too_small` both sides per axis; `axis_not_parallel_to_spindle` both
+  sides of `CAM_AXIS_EPS_DEG`; WCS resolution with each 8C unresolvable reason
+  named; the tag-prefix table (`layer_for_tag` generalized);
+  `duplicate_feature_claim`; feed resolution with **no third branch**, asserted
+  by exhausting the branches; `doc_exceeds_tool_limit` refuses, never clamps;
+  six generation refusals each on its own fixture. `toolpath_offset_failed`
+  fires ONLY on a fault-injected kernel error and **zero times** on normal
+  collapse — the clause that holds §4.1's separation of collapse-as-fact from
+  refusal. `sample_cap_exceeded` at generation only and
+  `op_sample_bound_exceeded` at declaration only (asserted against an unbuilt
+  project); `CAM_MIN_RESOLVABLE_MM3` equals the §5.3 formula on both sides of
+  the `max`, plus the largest-floor rule; `budget_below_resolution` at
+  resolution time, **unraisable at declaration**. Byte-identical `MoveList`
+  across processes; both tool profiles dispatch, with contract-drift artifacts
+  regenerated and the pinned tool count updated (57 → 72, below); `heph cam`
+  human and `--json`; and clause 24 — **nothing is emitted**: a filesystem
+  assertion that no 14B path writes under `.heph/exports/` and no tool
+  produces program text.
+
+  **14B landed 2026-09-02, and three decisions inside it are recorded here
+  rather than absorbed silently.** (1) `geom/toolpath.py` reaches the offset
+  primitive one level below `wire.offset_2d` — `BRepOffsetAPI_MakeOffset`
+  with the `Kind.INTERSECTION` join, the same kernel call `kerf.py:228`
+  wraps — because a **split** inward offset comes back as several wires and
+  `offset_2d` refuses that shape outright ("Unexpected result type"), which
+  would have made §4.1's self-intersection pruning unimplementable on the
+  wrapped call; the module-level `_kernel_offset` seam is what G14B-16's
+  fault injection replaces, the `offset_2d` except-branch shape one level
+  down. (2) `toolpath` landed as the **eleventh** `geom` module, not the
+  tenth — `CAM.md` §4.1 was drafted before `SOLVER.md`'s `solve` joined the
+  package — and `CAM.md` carries the dated counting note; the clause binds
+  to the boundary contract, which is unchanged. (3) The declaration-time
+  pass sieve skips silently when the operation's named setup or stock is not
+  yet declared: refusing there would make the five ledgers order-dependent
+  (the 8C "declaring before building" rationale), the reference itself is a
+  resolution-time question, and the sieve is a deliberately loose early
+  kill, not a gate — G14B-18 exercises it with both entries present, on an
+  unbuilt project.
+
+- **14C — verification: `check_program`'s whole substance** (`CAM.md` §5).
+
+  **Gate G14C** (Tier 1): `uv run pytest tests/stage14c -q` exits 0 per
+  `CAM.md` "Gates" — **22 clauses**. Coverage `covered`/`uncovered` naming
+  every uncovered tag and reason; `feature_occluded_by_order`. Round-trip:
+  identical on the reference setup and diverged under two fault-injected
+  emitters (a dropped block; `I/J`-vs-`R`), with the round-trip parser and the
+  simulator's parser asserted to be **the same object** — see the round-trip
+  landing decision below. Removal simulation with every directed volume, step
+  and `samples_evaluated` reported, and the reported floor asserted **equal to
+  the §5.3 formula** at the run's own `(step_mm, r, doc_mm)`;
+  `gouge_at_samples` driven by `b_only_mm3` with the same fixture's `iou`
+  asserted > 0.99 — the clause that proves `iou` is not a legal threshold;
+  `rest_at_samples` via `a_only_mm3`; every fixture 10×
+  (`CAM_VERDICT_MARGIN`) from its threshold. Collision against fixture members
+  and keepouts ONLY, with a deep pocket whose shank sits inside the
+  undisturbed stock raising NO finding — the clause that pins §5.5's
+  narrowing; `undeclared_scene` as `unresolvable`, asserted **not equal** to
+  the clean verdict; the `in_process_stock_not_modelled` stamp on every result
+  including clean ones, plus the `holder_below_stock_top_at_samples` advisory,
+  never `crash_risk`. The collision boolean count asserted **exactly** equal
+  to samples × bodies × scene at two sample counts; a coarser subsample
+  override refused, an override to 1 accepted;
+  `collision_sample_cap_exceeded` at generation. `cam_sim_timeout` with
+  partial cheap facts and a dead subprocess; `removal_boolean_failed` never a
+  partial solid. `m.program` on the project-scope facade with the part-scope
+  evaluation-time refusal, and a timeout inside a predicate landing as
+  `unverifiable`. Determinism within the pinned CI image with a matched
+  (image, OCCT) sidecar; the program-status projection restales on rebuild
+  with the GC edge. The whole-token case-insensitive banned-claim lint over
+  result/CLI surfaces, with the three mandated negative-control strings
+  passing and every universal verdict suffixed `_at_samples`; CAM and DFM
+  severity sets disjoint **as sets**; the reviewer never-green rule stamped
+  from engine status, with reviewer-supplied CAM verdicts counting for
+  nothing; `heph cam check` CLI; and Tier 1 performance — `check_program`
+  ≤ 120 s on the reference setup, read together with the counted-curve
+  clause 12 so the number bounds a curve, not one fixture.
+
+  **The round-trip landing decision, stated because the drift was found before
+  the code exists.** G14C clauses 3–4 need the emitter and the parser that
+  `CAM.md` §11 filed under 14D (items 31–32), and a no-emission landing must
+  either build them early or defer those clauses — this amendment **states
+  which**: they land **at 14C, as in-memory machinery**. Pure functions from a
+  `MoveList` plus a post record to program bytes and back, exercised against
+  fixture post records (the two fault-injected emitters included), with no
+  disk write, no consent path, no CLI verb, and no program text in any tool
+  result. D2 bans a runnable program *reaching the filesystem*, not program
+  bytes in memory, and G14B-24's filesystem assertion extends over the 14C
+  paths. What stays 14D, unmoved: the `posts` registry kind and its digest
+  machinery, the §1.5 header, the consent gate, `heph cam emit` /
+  `heph cam sheet`, and every path that writes program bytes anywhere.
+  `CAM.md` §11 carries the same note, dated.
+
+  **14C landed 2026-09-02, and three decisions inside it are recorded here
+  rather than absorbed silently.** (1) The 14C verification engine is
+  `core/cam_check.py`, a sibling of `machining.py`, NOT an absorption of the
+  byte-frozen 2D `core/cam.py` (§10's freeze stands); the in-memory
+  emitter/parser pair is `core/cam_text.py`, and the parser-identity clause
+  binds `cam_check.PARSER` to `cam_text.parse_program` by object identity.
+  (2) The collision-subsample override travels as a `check_program`
+  engine/CLI parameter rather than a new ledger field: the 14B entry schemas
+  are closed (`additionalProperties: false` is the D2 mechanism), so widening
+  a ledger record for a per-run knob would have re-opened the very surface
+  the shape argument closed — refused upward as
+  `invalid_collision_subsample`, accepted at `1`. (3) The gate's
+  fault-injection seams (`fault={slow_boolean_s, null_boolean}` through the
+  simulation child's `_removal_boolean`; the fault emitters through
+  `round_trip`'s `emitter` parameter) are declared parameters on the
+  engine's own functions, the `on_between_scans` test-seam precedent —
+  injected by the gate, reachable by no tool argument.
+
+- **14D — emission under operator consent: DEFERRED** (`CAM.md` §1.4, §1.5,
+  §7; specified, not shipped, per D2 above).
+
+  **Gate G14D** (Tier 1 + Tier 3): `uv run pytest tests/stage14d -q` exits 0
+  per `CAM.md` "Gates" — **16 clauses** — **when and only when 14D lands,
+  which this amendment does not authorize**; it enters by the operator's (c)
+  decision as its own dated landing. The clauses are binding text now so the
+  deferral defers machinery, never scrutiny: the sixth registry kind `posts`
+  with digest/rename detection and mandatory `simplifications`; byte-identical
+  emitter output across processes; `post_lacks_capability` never substituting
+  a sequence; two posts over one move list giving different bytes and the
+  SAME round-tripped moves; `consent_not_recorded` writing nothing, with every
+  model-facing write refusing the consent fields per tool;
+  `program_never_simulated` on absent and stale results; `crash_risk_open`
+  blocking, an operator waiver recorded as a waiver in the header;
+  `stale_source_artifact` and `registry_unpinned`; the header byte-for-byte
+  against a golden in §1.5 region order with `SAFETY_PARAGRAPH` **first**; one
+  mutated header byte moving the content hash; create-only confined
+  `.heph/exports/` targets with idempotency replay and traversal/symlink
+  refusal; `export_part` still rejecting any CAM format against the canonical
+  schema; no new subprocess outside the executor; the emit/sheet CLI with
+  first-run discipline text; the `machining-*` corpus family as its own
+  Tier 3 split; and the four-part header lint clause — total disjoint region
+  decomposition, `SAFETY_PARAGRAPH` byte-equal to §0.1 and
+  `quoted_simplifications` byte-equal to pinned records under attribution
+  lines, the whole-token lint over `lintable_remainder` finding no banned
+  token, and the explicit assertion that the same lint over the WHOLE header
+  fires on `safely` — making the exemption a tested fact.
+
+**Tier 3, stated so no matrix can round it up.** The `machining-*` family
+(G14D-15) follows the `VALIDATION.md` §1 split rule as G9C restates it: its
+own split, baselined on its own first measurement with the reference model at
+≥ 3 seeds, neither compared against nor averaged into the v1/v2/v3 baselines,
+the 0.70 prose bar undiluted. Its Tier 1 half — reference solutions passing
+their own acceptance through the engine path — is a CI clause; its
+**measurement is Tier 3 and outstanding**, named, never skipped and never
+fabricated: it stays UNCOVERED until an archived detached bench measurement
+with the epoch's reference model exists, the same *machinery closed,
+measurement outstanding* disposition G11C.12, G12C.51 and G13C.55 each
+record. Since the family lands with 14D, the whole row is deferred with it;
+no bench is run for this amendment and no baseline artifact exists or is
+written.
+
+**Findings discipline (D5), satisfied before this block landed.** The
+adversarial pass against `CAM.md` returned **four blocking findings**, and
+each is closed in the spec's own text with the closure pinned by gate clauses
+rather than prose: offset-ladder termination is a fact, not a refusal
+(§4.1/§4.3, pinned by G14B-2/3/16); the lint/header contradiction is resolved
+by typed regions, whole-token matching and `lintable_remainder`
+(§0.1/§1.1/§1.5, pinned by G14C-18 + G14D-16); the two mis-filed refusals
+moved to their lifecycle points — `budget_below_resolution` to resolution
+time, `sample_cap_exceeded` to generation time with the
+`op_sample_bound_exceeded` declaration sieve (§3.1/§4.3/§5.3, pinned by
+G14B-17/18/20); and the collision check no longer claims in-process stock
+machinery §11 never named — stock removed as a target, the
+`in_process_stock_not_modelled` stamp, the holder advisory (§5.5, §11 items
+22–24, pinned by G14C-9/11). Each fix tightened a clause; none waived one.
+`CAM.md` is promoted from DRAFT to normative by this amendment.
+
+**Three pieces of non-blocking drift, found by the promotion audit and carried
+here rather than left for an implementer to trip over.** (1) The round-trip
+clause dependency above, resolved by the stated 14C in-memory decision.
+(2) `CAM.md` §9's tool-count pin was stale — "exactly 53 tools", the number
+the draft was written against, while the live pin is **57**
+(`contract/tests/test_toolgen.py` `test_full_tool_surface_is_57_tools`,
+`tests/stage2/test_g2_contract_drift.py` line 362); fixed in §9 with the history
+stated, and the movement this stage owes is recorded below. (3) `CAM.md`'s
+numbering paragraph ended "This is 13" under its own "# 16" title — a pre-D4
+leftover; fixed, with the sequence brought current through `SOLVER.md` 15.
+The stale `tool_schema.md:1487-1491` citations for the `run_fea` precedent
+were re-resolved in the same pass. All three are dated in `CAM.md` itself;
+nothing was struck silently.
+
+**The document amendments this stage carries, each landing with its own
+machinery** (`CAM.md` "Amendment manifest" is the normative table; this
+paragraph is the plan's record of it, on the Stage 13 precedent that a doc
+amended before its machinery exists is doc drift). Landing **with this
+amendment**: this block; `CAM.md`'s promotion and the three drift fixes; and
+`tool_schema.md`'s "Manufacturing setups" section **in reserved form** — the
+surface specified and dated, the five quartet families and `check_program`
+named with their sub-stages, the Deferred `emit_program` slot added on the
+`run_fea` precedent — with the per-tool headings and `tools_decl.py`
+declarations landing at 14B/14C so the drift gates keep asserting only tools
+that exist. Landing at **14A**: `architecture.md` §3.6's fifth registry kind
+`tools`; the `cnc_mill` DFM pack (`cnc_router` shipped as issue #28 and
+satisfies its manifest row); the materials machining blocks. At **14B**:
+`script_contract.md` §5.3's CAM tag prefixes (§5.2 stays nine fields — no CAM
+state enters a part script). At **14C**: `script_contract.md` §6's
+project-scope `m.program`; `VALIDATION.md` §5's never-green extension for
+`ProgramStatus`; `COMPARE.md` §1's stated restriction that `iou` is not a
+legal CAM threshold; `verification.md`'s ≤ 120 s `check_program` budget. At
+**14D**: the sixth registry kind `posts`, and the rest of the emission
+surface. `EXTERNAL_EVAL.md` and `INTERFACE.md` are unchanged, and the
+silence is a claim, not an omission.
+
+**The tool-surface pin moves per sub-stage: 57 → 72 at 14B, 72 → 73 at 14C,
+and 14D adds none.** Sixteen tools land — five declare/update/read quartet
+families plus `check_program` — and the shape is **argued, as `CAM.md` §9
+demands, not assumed**: the cheaper `declare_cam(kind, entry)` alternative is
+refused because every tool input schema in this repository is
+`additionalProperties: false` and the five entry kinds carry disjoint closed
+records with disjoint refusal sets; a kind-discriminated `entry` would be the
+one field a closed per-kind schema cannot refuse foreign fields from by
+construction, and structural refusal by closed schema is the mechanism this
+stage's D2 posture and Stage 13's writeback refusal both rest on. Because
+both pins are literal `assert len(...) == N` on existing suites, **each
+sub-stage repoints them as it lands** (the Stage 13 rule), and this block
+edits no other stage's gate text. Emission, whenever 14D lands, adds **zero**
+tools: `heph cam emit` is an operator CLI verb and `emit_program` stays a
+refused reservation.
+
+**Tier 3 clauses are never fabricated** (restating rule 2 where this stage
+can feel the temptation): no live reference-model bench measurement exists
+for any Stage 14 clause, none is fabricated, and the `machining-*` row above
+stays UNCOVERED until an archived measurement exists. Live simulation runs on
+non-reference endpoints are not gate evidence.
+
+**Gates are commands here too, and the lane lands with the first sub-stage
+that has a suite to run.** No Stage 14 suite exists yet — this block is the
+amendment, not the machinery — so `.github/workflows/ci.yml` is unchanged by
+it and `release.yml`'s prior-gate list is unchanged with it. **14A adds both,
+in one change**: a lane named `stage gate 14A` on the pattern the Stage
+11–13 lanes established, plus that check name in `release.yml`'s prior-gate
+list, because `tests/stage7h::test_the_prior_gate_check_names_every_ci_job`
+asserts set equality between the two. 14B and 14C rename the lane as their
+suites land, exactly as 12C and 13B/13C did; 14D's lane, if it lands, rides
+the operator's (c) decision.
+
+**Numbering, unchanged from the Stage 11 block that settled it.** D4 option
+(a) holds: `CAM.md` is document **16** and **Stage 14**, with the gate names
+G14A–G14D and the suites this block names. Structural analysis (`PHYSICS.md`)
+remains Stage 15 and document 17.
 
 ## Mission-wide rules
 

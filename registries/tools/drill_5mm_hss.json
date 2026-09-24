@@ -1,0 +1,38 @@
+{
+  "id": "drill_5mm_hss",
+  "kind": "drill",
+  "diameter_mm": 5.0,
+  "corner_radius_mm": 0.0,
+  "flutes": 2,
+  "flute_length_mm": 52.0,
+  "shank_diameter_mm": 5.0,
+  "overall_length_mm": 86.0,
+  "stickout_mm": 60.0,
+  "holder": {
+    "kind": "drill_chuck",
+    "envelope": "cylinder",
+    "diameter_mm": 43.0,
+    "length_mm": 80.0,
+    "taper_deg": 0.0
+  },
+  "max_doc_mm": 25.0,
+  "max_woc_mm": 5.0,
+  "feeds": [
+    {
+      "material": "al-6061",
+      "op": "drill",
+      "rpm": 3000,
+      "feed_mm_min": 180.0,
+      "plunge_mm_min": 180.0,
+      "doc_mm": 25.0,
+      "woc_mm": 5.0,
+      "source": "HSS jobber drill handbook table, 118 deg point, 2025 ed."
+    }
+  ],
+  "simplifications": [
+    "holder is a straight cylinder envelope, not the real body",
+    "point geometry is not modelled - the drill is a cylinder",
+    "feeds are handbook numbers, not a measured result"
+  ],
+  "license": "Apache-2.0"
+}

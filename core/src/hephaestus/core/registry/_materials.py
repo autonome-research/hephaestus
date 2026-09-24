@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Final, cast
 
 from hephaestus.core.errors import ValidationError
@@ -28,7 +28,16 @@ _WORD_RE: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]+")
 
 @dataclass(frozen=True)
 class Material:
-    """One materials record (``search_materials``)."""
+    """One materials record (``search_materials``).
+
+    ``machining`` is the **declared** machining block (CAM.md §6.2, Stage 14A):
+    the numbers the free-text ``notes`` used to carry as prose ("3 mm end mill
+    => 1.5 mm minimum internal radius", "about 4x the tool diameter", "roughly
+    1 mm"), now typed so a DFM predicate reads a number and never the prose.
+    Every value is a finite float by construction — a non-numeric entry is
+    refused at load, because contextual notes are never machine-checkable
+    (architecture.md §3.6) and that is exactly the defect the block closes.
+    """
 
     id: str
     name: str
@@ -37,6 +46,7 @@ class Material:
     thicknesses: tuple[float, ...]
     notes: str
     keywords: tuple[str, ...] = ()
+    machining: Mapping[str, float] = field(default_factory=dict[str, float])
     registry: str = ""
     digest: str = ""
 
@@ -48,6 +58,7 @@ class Material:
             "forms": list(self.forms),
             "thicknesses": list(self.thicknesses),
             "notes": self.notes,
+            "machining": {name: value for name, value in sorted(self.machining.items())},
             "registry": self.registry,
             "registry_digest": self.digest,
         }
@@ -77,6 +88,22 @@ class MaterialsIndex:
                 raise ValidationError(
                     f"{path}: 'density' must be a number (kg/m^3)", kind="contract"
                 )
+            machining_raw = meta.get("machining")
+            machining: dict[str, float] = {}
+            if machining_raw is not None:
+                if not isinstance(machining_raw, dict):
+                    raise ValidationError(
+                        f"{path}: 'machining' must be an object of declared numbers",
+                        kind="contract",
+                    )
+                for key, value in cast("Mapping[str, Any]", machining_raw).items():
+                    if isinstance(value, bool) or not isinstance(value, int | float):
+                        raise ValidationError(
+                            f"{path}: machining.{key} must be a declared number, not prose "
+                            "(CAM.md §6.2: the block exists so a predicate never reads notes)",
+                            kind="contract",
+                        )
+                    machining[str(key)] = float(value)
             self._materials[material_id] = Material(
                 id=material_id,
                 name=opt_str(meta, "name", material_id),
@@ -85,6 +112,7 @@ class MaterialsIndex:
                 thicknesses=num_tuple(meta, "thicknesses"),
                 notes=opt_str(meta, "notes"),
                 keywords=str_tuple(meta, "keywords"),
+                machining=machining,
                 registry=registry.name,
                 digest=registry.digest,
             )

@@ -1,0 +1,65 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/read_stock.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Read the stock ledger, withdrawn entries included (CAM.md §3.2).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "change": {
+        "anyOf": [
+          {
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "entries": {
+        "items": {
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "generation": {
+        "type": "integer"
+      },
+      "status": {
+        "const": "ok"
+      }
+    },
+    "required": [
+      "status",
+      "generation",
+      "entries"
+    ],
+    "type": "object"
+  },
+  "title": "read_stock",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "read_stock",
+    "profiles": [
+      "part",
+      "orchestrator"
+    ],
+    "sequential": false
+  }
+}

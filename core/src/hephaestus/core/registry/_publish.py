@@ -34,6 +34,7 @@ from ._layout import MANIFEST_FILENAME, Registry, load_registry
 from ._materials import MaterialsIndex
 from ._parts import PartsIndex
 from ._skills import SkillsIndex
+from ._tools import ToolsIndex
 
 __all__ = [
     "PUBLICATION_VERSION",
@@ -127,6 +128,8 @@ def validate_content(registry: Registry) -> dict[str, int]:
         return {"parts": len(index.ids()), "components": len(index.component_ids())}
     if kind == "materials":
         return {"materials": len(MaterialsIndex(registry).ids())}
+    if kind == "tools":
+        return {"tools": len(ToolsIndex(registry).ids())}
     index = DfmIndex(registry)
     return {
         "packs": len(index.processes()),

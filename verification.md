@@ -238,7 +238,17 @@ overhead ≤ 2 s (this is the test that keeps per-statement checkpointing
 honest — see the lazy-metrics note in the mission plan); 4-view rgb+mask
 render of the shelf ≤ 10 s; `measure interference` across all shelf pairs
 ≤ 5 s; **parse + canonicalize + quality for the reference fixture scan**
-(Stage 12A, `MESH_INGEST.md` §1.5/§3, gate G12A clause 19). Budgets tighten
+(Stage 12A, `MESH_INGEST.md` §1.5/§3, gate G12A clause 19); **`check_program`
+on the CAM reference setup ≤ 120 s** (Stage 14C, `CAM.md` §5.8 — the first
+budget in the mission that is not sub-30 s, and an honest one: a removal
+simulation is thousands of booleans, not one). §5.8 states plainly that if
+the reference setup cannot meet it, the gate is tightened by **shrinking the
+reference setup**, never by raising the budget. The number is paired with
+Gate G14C clause 12, which asserts the collision check's OCCT boolean count
+equals `collision_samples_evaluated × |checked bodies| × |scene bodies|`
+exactly at two sample counts — so the 120 s bounds a **counted curve** rather
+than one fixture, with both boolean loops capped in their own dimensions
+(`CAM_SIM_SAMPLES_MAX`, `CAM_COLLISION_SAMPLES_MAX`). Budgets tighten
 (never loosen) by amendment.
 
 **The mesh budget: ≤ 18.4 s, and where that number comes from.** It was

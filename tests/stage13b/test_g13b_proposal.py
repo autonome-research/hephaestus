@@ -430,7 +430,9 @@ def test_all_fifty_seven_tool_input_schemas_are_closed() -> None:
     """
     root = Path(__file__).resolve().parents[2]
     schemas = sorted((root / "schemas" / "tools").glob("*.schema.json"))
-    assert len(schemas) == 57, [path.name for path in schemas]
+    # 57 -> 72 by Stage 14B's CAM quartet families (CAM.md §9, 2026-09-02);
+    # the pin repoints with the sub-stage that adds tools (SOLVER.md §11).
+    assert len(schemas) == 72, [path.name for path in schemas]
     for path in schemas:
         document = json.loads(path.read_text(encoding="utf-8"))
         assert document["parameters"]["additionalProperties"] is False, path.name

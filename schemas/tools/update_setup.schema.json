@@ -1,0 +1,252 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/update_setup.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Revise or withdraw one setup with a recorded reason; one generation.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+        "type": "string"
+      },
+      "patch": {
+        "additionalProperties": false,
+        "properties": {
+          "fixture": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "assumed": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "reason": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "requirement": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  }
+                },
+                "required": [],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spindle_axis": {
+            "anyOf": [
+              {
+                "enum": [
+                  "+X",
+                  "-X",
+                  "+Y",
+                  "-Y",
+                  "+Z",
+                  "-Z"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stock": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tolerance": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "gouge_budget_mm3": {
+                    "type": "number"
+                  },
+                  "max_deviation_mm": {
+                    "type": "number"
+                  },
+                  "rejects_mm3": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "rest_budget_mm3": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "gouge_budget_mm3",
+                  "rest_budget_mm3",
+                  "max_deviation_mm"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "wcs": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "withdrawn": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "reason": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "patch",
+      "reason"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "change": {
+        "anyOf": [
+          {
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "entries": {
+        "items": {
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "generation": {
+        "type": "integer"
+      },
+      "status": {
+        "const": "ok"
+      }
+    },
+    "required": [
+      "status",
+      "generation",
+      "entries"
+    ],
+    "type": "object"
+  },
+  "title": "update_setup",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "update_setup",
+    "profiles": [
+      "part",
+      "orchestrator"
+    ],
+    "sequential": true
+  }
+}

@@ -133,6 +133,7 @@ from .cad_ops import (
     AssemblyOps,
     CadOpError,
     CadOps,
+    CamOps,
     DimensionFinding,
     DimensionFindingOps,
     DimensionFindingState,
@@ -533,6 +534,14 @@ class ReviewContext:
     #: suggestion nobody has acted on. Empty means no proposal is recorded,
     #: never "the placements are fine".
     proposals: tuple[Mapping[str, JSONValue], ...] = ()
+    #: ``CAM.md`` §9 (Stage 14C): every declared setup's §5.9 ``ProgramStatus``
+    #: record, measured at review time by rule (:func:`program_status`). Each
+    #: non-success verdict, each ``crash_risk`` finding and each
+    #: ``unresolvable`` setup is a blocking finding stamped from the engine's
+    #: status (:func:`program_review_findings`) — never solicited from the
+    #: reviewer, waivable only by the operator. Empty means no setup is
+    #: declared, never "the programs are fine".
+    programs: tuple[Mapping[str, JSONValue], ...] = ()
 
     def __post_init__(self) -> None:
         self.assert_excludes_agent_checks()
@@ -572,6 +581,7 @@ class ReviewContext:
             "posed_renders": [render.to_json() for render in self.posed_renders],
             "scans": [scan.to_json() for scan in self.scans],
             "proposals": [dict(entry) for entry in self.proposals],
+            "programs": [dict(entry) for entry in self.programs],
         }
 
     def prompt(self) -> str:
@@ -619,7 +629,13 @@ class ReviewContext:
             "constraint verdict. A proposal clears nothing — a violated "
             "constraint with a converged proposal against it is still blocking "
             "— and no verdict is solicited or accepted for a proposal id, so "
-            "do not return a finding for one. You have no "
+            "do not return a finding for one. Any entries under 'programs' are "
+            "CAM program-check records (CAM.md): every verdict is already "
+            "judged by rule — a non-success verdict, a crash_risk finding or "
+            "an unresolvable setup blocks termination whatever anyone says "
+            "about it — so treat them as evidence about the requirements you "
+            "judge, not as findings to return; no verdict is solicited or "
+            "accepted for a CAM id. You have no "
             "other tools and cannot change the project.\n\n"
             f"{json.dumps(self.to_json(), indent=2, sort_keys=True)}\n\n"
             "Return ONE JSON object and nothing else:\n"
@@ -698,6 +714,7 @@ def build_review_context(
     motion: MotionStatus | None = None,
     motion_checks: Sequence[SweepResult] | None = None,
     motion_timeouts: Sequence[Mapping[str, JSONValue]] = (),
+    programs: Sequence[Mapping[str, JSONValue]] | None = None,
 ) -> ReviewContext:
     """Assemble the §5 context from what the run actually published.
 
@@ -747,6 +764,9 @@ def build_review_context(
         posed_renders=posed_scene_renders(cad, kinematics, checks),
         scans=scan_evidence(cad, names),
         proposals=open_proposals(cad),
+        # CAM.md §9, on the assembly/motion terms: measured by rule, or passed
+        # in by the §5 service so one evaluation serves context and rule alike.
+        programs=tuple(programs) if programs is not None else program_status(cad),
     )
 
 
@@ -945,6 +965,135 @@ def motion_status(cad: object) -> MotionStatus | None:
     if not evaluator.joints.state().active:
         return None
     return evaluator.evaluate()
+
+
+def program_status(cad: object) -> tuple[Mapping[str, JSONValue], ...]:
+    """Evaluate every declared setup's program checks now (``CAM.md`` §5/§9).
+
+    Measured at review time from the parts' current build artifacts, for
+    exactly the reason :func:`assembly_status` and :func:`motion_status` are:
+    whatever the run said it checked, this is what the declared programs
+    verify against the delivered geometry, and a stale pass is the one
+    outcome §5 must never produce.
+
+    ``()`` means the project declares no active setup — there is no program
+    claim to verify. It never means "the programs are fine": an unresolvable
+    setup comes back as its named state, which blocks. A removal-simulation
+    ceiling kill is FILED in that setup's record (the named
+    ``cam_sim_timeout`` refusal with the cheap facts present), so one killed
+    simulation costs that record's simulation half, never the review.
+
+    The argument is loose because the review layer is routinely driven by
+    test doubles: a seam that cannot carry setups degrades to "none
+    declared", never to an attribute error at termination.
+    """
+    if not isinstance(cad, CamOps):
+        return ()
+    if not cad.cam_state().setups.state().active:
+        return ()
+    result = cad.check_program(None)
+    programs = result.get("programs")
+    if not isinstance(programs, list):  # pragma: no cover - our own op shape
+        return ()
+    return tuple(
+        cast("Mapping[str, JSONValue]", entry) for entry in programs if isinstance(entry, dict)
+    )
+
+
+def program_review_findings(
+    programs: Sequence[Mapping[str, JSONValue]],
+) -> tuple[ReviewFinding, ...]:
+    """The §5 never-green rule extended to CAM programs (``CAM.md`` §9).
+
+    Stamped from the ``ProgramStatus`` records the engine produced, exactly
+    as :func:`assembly_review_findings` and :func:`motion_review_findings`
+    stamp from their statuses: no verdict is solicited for a setup or finding
+    id and none is accepted (one supplied is filed as unknown and counts for
+    nothing), because the program was measured against declarations and
+    geometry nobody in this conversation gets to reinterpret. Blocking, by
+    rule:
+
+    * every non-success verdict — ``uncovered``, ``round_trip_diverged``,
+      ``gouge_at_samples``, ``rest_at_samples``, ``collision_at_samples`` —
+      of any check half;
+    * every ``crash_risk`` finding (the only severity that blocks emission by
+      rule, §1.3/§1.4);
+    * every ``unresolvable`` setup — a declared setup that was never checked
+      is not a checked one (the ``VALIDATION.md`` §5 rule verbatim).
+
+    Only the operator may waive any of these, and doing so is recorded as a
+    waiver rather than as a pass.
+    """
+    success = {
+        "covered",
+        "round_trip_identical",
+        "matches_at_samples",
+        "no_collision_at_samples_in_declared_scene",
+    }
+    findings: list[ReviewFinding] = []
+    for program in programs:
+        setup = str(program.get("setup", ""))
+        state = program.get("state")
+        if state == "unresolvable":
+            findings.append(
+                ReviewFinding(
+                    id=setup or "*setup*",
+                    verdict="fail",
+                    evidence=(
+                        f"setup {setup} could NOT be checked: {program.get('reason')} — "
+                        f"{program.get('detail') or 'no detail'}. An unchecked program claim "
+                        "is not a passing one (CAM.md §5.9, VALIDATION.md §5), so it blocks "
+                        "until it can be measured."
+                    ),
+                    channel="numeric",
+                    harness=True,
+                )
+            )
+            continue
+        for section in ("coverage", "round_trip", "simulation", "collision"):
+            block = program.get(section)
+            if not isinstance(block, dict):
+                continue
+            verdict = cast("Mapping[str, JSONValue]", block).get("verdict")
+            if not isinstance(verdict, str) or verdict in success:
+                continue
+            findings.append(
+                ReviewFinding(
+                    id=f"{setup}:{section}",
+                    verdict="fail",
+                    evidence=(
+                        f"setup {setup}: the {section} check came back {verdict!r} "
+                        "(CAM.md §5) — judged by rule from the engine's own record, "
+                        "and blocking until the declared program is fixed or the "
+                        "operator records a waiver."
+                    ),
+                    channel="numeric",
+                    harness=True,
+                )
+            )
+        raw_findings = program.get("findings")
+        if isinstance(raw_findings, list):
+            for item in cast("list[JSONValue]", raw_findings):
+                if not isinstance(item, dict):
+                    continue
+                entry = cast("Mapping[str, JSONValue]", item)
+                if entry.get("severity") != "crash_risk":
+                    continue
+                findings.append(
+                    ReviewFinding(
+                        id=str(entry.get("id", f"{setup}:crash_risk")),
+                        verdict="fail",
+                        evidence=(
+                            f"setup {setup}: crash_risk finding "
+                            f"{entry.get('reason')!r} — the one severity that blocks "
+                            "emission by rule (CAM.md §1.3/§1.4); only the operator may "
+                            "waive it, and a waiver is recorded as a waiver."
+                        ),
+                        channel="numeric",
+                        harness=True,
+                    )
+                )
+    return tuple(findings)
 
 
 def _motion_ref(cad: object) -> str | None:
@@ -1270,6 +1419,9 @@ class ReviewReport:
     #: when the project declares no joint / no motion check.
     motion: MotionStatus | None = None
     motion_checks: tuple[SweepResult, ...] = ()
+    #: ``CAM.md`` §9: the program-status records this cycle was judged against,
+    #: on exactly the motion terms. ``()`` when the project declares no setup.
+    programs: tuple[Mapping[str, JSONValue], ...] = ()
 
     @property
     def by_id(self) -> dict[str, ReviewFinding]:
@@ -1313,6 +1465,7 @@ class ReviewReport:
             "assembly": None if self.assembly is None else self.assembly.to_json(),
             "motion": None if self.motion is None else self.motion.to_json(),
             "motion_checks": [result.to_json() for result in self.motion_checks],
+            "programs": [dict(entry) for entry in self.programs],
         }
 
 
@@ -1623,6 +1776,7 @@ def normalize_findings(
     motion: MotionStatus | None = None,
     motion_checks: Sequence[SweepResult] = (),
     motion_timeouts: Sequence[Mapping[str, JSONValue]] = (),
+    programs: Sequence[Mapping[str, JSONValue]] = (),
 ) -> ReviewReport:
     """Turn whatever the reviewer said into one verdict per ledger entry, by rule.
 
@@ -1649,7 +1803,13 @@ def normalize_findings(
       ``not_reached_at_samples`` or ``unresolvable``, and every timeout of
       ``motion_timeouts`` — is appended as a blocking ``fail`` by rule
       (:func:`motion_review_findings`, ``KINEMATICS.md`` §6), on the same terms
-      again.
+      again;
+    * every non-success program state of ``programs`` — an ``unresolvable``
+      setup, a non-success check verdict, a ``crash_risk`` finding — is
+      appended as a blocking ``fail`` by rule (:func:`program_review_findings`,
+      ``CAM.md`` §9), on the same terms once more; a reviewer-supplied verdict
+      for a CAM id is not in the ledger, so it is filed as unknown and counts
+      for nothing.
     """
     supplied: dict[str, Mapping[str, Any]] = {}
     unknown: list[str] = []
@@ -1679,12 +1839,14 @@ def normalize_findings(
             + dimension_review_findings(dimensions)
             + assembly_review_findings(assembly)
             + motion_review_findings(motion, motion_checks, motion_timeouts)
+            + program_review_findings(programs)
         ),
         unknown_ids=tuple(sorted(set(unknown))),
         error=error,
         assembly=assembly,
         motion=motion,
         motion_checks=tuple(motion_checks),
+        programs=tuple(programs),
     )
 
 
@@ -1942,6 +2104,7 @@ class TerminationReviewService:
         motion: MotionStatus | None = None,
         motion_checks: Sequence[SweepResult] | None = None,
         motion_timeouts: Sequence[Mapping[str, JSONValue]] = (),
+        programs: Sequence[Mapping[str, JSONValue]] | None = None,
     ) -> ReviewContext:
         """The §5 context for the current published state of the project."""
         return build_review_context(
@@ -1952,6 +2115,7 @@ class TerminationReviewService:
             motion=motion,
             motion_checks=motion_checks,
             motion_timeouts=motion_timeouts,
+            programs=programs,
         )
 
     def review(
@@ -1986,6 +2150,9 @@ class TerminationReviewService:
         # check's bounded grid, and any sweep-ceiling timeout, measured ONCE.
         motion = motion_status(self._cad)
         motion_checks, motion_timeouts = motion_check_results(self._cad)
+        # CAM.md §9, on the same terms once more: every declared setup's
+        # program checks, measured ONCE for context and blocking rule alike.
+        programs = program_status(self._cad)
         assembled = (
             context
             if context is not None
@@ -1996,6 +2163,7 @@ class TerminationReviewService:
                 motion=motion,
                 motion_checks=motion_checks,
                 motion_timeouts=motion_timeouts,
+                programs=programs,
             )
         )
         review_request = ReviewRequest(
@@ -2021,6 +2189,7 @@ class TerminationReviewService:
                 motion=motion,
                 motion_checks=motion_checks,
                 motion_timeouts=motion_timeouts,
+                programs=programs,
             )
         elapsed = time.monotonic() - started
         # Re-enforce the reviewer's budget Python-side, whatever the child claims.
@@ -2036,6 +2205,7 @@ class TerminationReviewService:
                 motion=motion,
                 motion_checks=motion_checks,
                 motion_timeouts=motion_timeouts,
+                programs=programs,
             )
         if response.turns > self._max_turns:
             return normalize_findings(
@@ -2049,6 +2219,7 @@ class TerminationReviewService:
                 motion=motion,
                 motion_checks=motion_checks,
                 motion_timeouts=motion_timeouts,
+                programs=programs,
             )
         if response.output_tokens > self._max_output_tokens:
             return normalize_findings(
@@ -2065,6 +2236,7 @@ class TerminationReviewService:
                 motion=motion,
                 motion_checks=motion_checks,
                 motion_timeouts=motion_timeouts,
+                programs=programs,
             )
         return normalize_findings(
             state.entries,
@@ -2076,6 +2248,7 @@ class TerminationReviewService:
             motion=motion,
             motion_checks=motion_checks,
             motion_timeouts=motion_timeouts,
+            programs=programs,
         )
 
 
@@ -2172,6 +2345,30 @@ class TerminalReport:
                 for pose in report.motion.poses:
                     by_motion[pose.id] = pose
             by_sweep = {result.id: result for result in report.motion_checks}
+        # CAM.md §9: the same rule for the program state the report was judged
+        # against — an open program finding names its setup and what the
+        # engine measured, so the terminal is legible without re-measuring.
+        by_program: dict[str, str] = {}
+        if report is not None:
+            for program in report.programs:
+                setup = str(program.get("setup", ""))
+                by_program[setup] = f"declared setup {setup} is {program.get('state')}"
+                for section in ("coverage", "round_trip", "simulation", "collision"):
+                    block = program.get(section)
+                    if isinstance(block, dict):
+                        verdict = cast("Mapping[str, JSONValue]", block).get("verdict")
+                        if isinstance(verdict, str):
+                            by_program[f"{setup}:{section}"] = (
+                                f"declared setup {setup}: {section} is {verdict}"
+                            )
+                raw_findings = program.get("findings")
+                if isinstance(raw_findings, list):
+                    for item in cast("list[JSONValue]", raw_findings):
+                        if isinstance(item, dict) and "id" in item:
+                            entry_map = cast("Mapping[str, JSONValue]", item)
+                            by_program[str(entry_map["id"])] = (
+                                f"declared setup {setup}: {entry_map.get('reason')}"
+                            )
         counts = dict(repeats or {})
         unresolved: list[UnresolvedItem] = []
         if report is None:
@@ -2210,8 +2407,14 @@ class TerminalReport:
                         verdict=finding.verdict,
                         evidence=finding.evidence,
                         channel=finding.channel,
-                        text=_open_text(entry, dimension, constraint, motion_outcome, sweep),
-                        source=_open_source(entry, dimension, constraint, motion_outcome, sweep),
+                        text=(
+                            _open_text(entry, dimension, constraint, motion_outcome, sweep)
+                            or by_program.get(finding.id, "")
+                        ),
+                        source=(
+                            _open_source(entry, dimension, constraint, motion_outcome, sweep)
+                            or ("program" if finding.id in by_program else "")
+                        ),
                         asked=_open_asked(entry, dimension),
                         repeats=counts.get(finding.signature, 1),
                     )

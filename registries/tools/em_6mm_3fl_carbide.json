@@ -1,0 +1,38 @@
+{
+  "id": "em_6mm_3fl_carbide",
+  "kind": "end_mill",
+  "diameter_mm": 6.0,
+  "corner_radius_mm": 0.0,
+  "flutes": 3,
+  "flute_length_mm": 20.0,
+  "shank_diameter_mm": 6.0,
+  "overall_length_mm": 57.0,
+  "stickout_mm": 25.0,
+  "holder": {
+    "kind": "er32_collet",
+    "envelope": "cylinder",
+    "diameter_mm": 40.0,
+    "length_mm": 60.0,
+    "taper_deg": 0.0
+  },
+  "max_doc_mm": 3.0,
+  "max_woc_mm": 3.0,
+  "feeds": [
+    {
+      "material": "al-6061",
+      "op": "pocket",
+      "rpm": 9000,
+      "feed_mm_min": 1200.0,
+      "plunge_mm_min": 300.0,
+      "doc_mm": 3.0,
+      "woc_mm": 2.4,
+      "source": "tool vendor datasheet rev C, 2026-03"
+    }
+  ],
+  "simplifications": [
+    "holder is a straight cylinder envelope, not the real body",
+    "no helix, no flute geometry - the cutter is a cylinder",
+    "feeds are the vendor's numbers, not a measured result"
+  ],
+  "license": "Apache-2.0"
+}

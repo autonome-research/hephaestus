@@ -64,18 +64,21 @@ part.blank_size = "One 120 x 90 x 6 mm blank"
 
 @pytest.fixture
 def cut(tmp_path: Path) -> Iterator[Project]:
-    """A project with ``laser`` (pack kerf), ``router`` (pack, no kerf), ``mill`` (no pack)."""
+    """A project with ``laser`` (pack kerf), ``router`` (pack, no kerf), ``lathe`` (no pack)."""
     project = make_project(tmp_path / "proj")
     parts = project.root / "parts"
     (parts / "laser.py").write_text(PLATE.format(process="laser_cut"), encoding="utf-8")
     # ``cnc_router`` has a DFM pack that does not declare kerf_mm: a router bit
     # removes its full diameter, so this is the "pack exists, no kerf" path.
     (parts / "router.py").write_text(PLATE.format(process="cnc_router"), encoding="utf-8")
-    # ``cnc_mill`` is a real process with no published rule pack: a legitimate
+    # ``cnc_lathe`` is a real process with no published rule pack: a legitimate
     # design that simply declares no kerf, and the "nothing resolved" path.
-    (parts / "mill.py").write_text(PLATE.format(process="cnc_mill"), encoding="utf-8")
+    # (This part declared ``cnc_mill`` until Stage 14A shipped that pack -
+    # CAM.md §6.2, 2026-09-02 - which moved cnc_mill to the router's
+    # "pack exists, no kerf" branch below.)
+    (parts / "lathe.py").write_text(PLATE.format(process="cnc_lathe"), encoding="utf-8")
     try:
-        for name in ("laser", "router", "mill"):
+        for name in ("laser", "router", "lathe"):
             assert project.call("build_part", {"name": name})["status"] == "ok"
         yield project
     finally:
@@ -147,15 +150,15 @@ def test_an_explicit_kerf_overrides_the_pack(cut: Project, tmp_path: Path) -> No
 def test_a_process_with_no_pack_compensates_nothing_and_says_so(
     cut: Project, tmp_path: Path
 ) -> None:
-    result = _export(cut, name="mill")
+    result = _export(cut, name="lathe")
     assert result["kerf"] == {
         "applied_mm": None,
         "source": "none",
-        "process": "cnc_mill",
+        "process": "cnc_lathe",
         "note": "kerf_uncompensated",
         "reason": "no_dfm_pack",
     }
-    outer, hole = _outer_and_hole(_bytes(cut, result), tmp_path / "mill.dxf")
+    outer, hole = _outer_and_hole(_bytes(cut, result), tmp_path / "lathe.dxf")
     assert outer == (pytest.approx(60.0), pytest.approx(40.0))
     assert hole[0] == pytest.approx(12.0, abs=0.01)
 

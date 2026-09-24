@@ -34,11 +34,13 @@ __all__ = [
 #: Manifest filename inside every registry directory.
 MANIFEST_FILENAME: Final[str] = "registry.toml"
 
-#: Registry kinds Hephaestus ships.
-BUNDLED_KINDS: Final[tuple[str, ...]] = ("skills", "parts", "materials", "dfm")
+#: Registry kinds Hephaestus ships. ``tools`` is the fifth kind — the CAM tool
+#: library (CAM.md §3.5, Stage 14A amendment, 2026-09-02): pure data records
+#: riding the existing digest/pin/verify machinery with no new mechanism.
+BUNDLED_KINDS: Final[tuple[str, ...]] = ("skills", "parts", "materials", "dfm", "tools")
 
-RegistryKind = Literal["skills", "parts", "materials", "dfm"]
-_KINDS: Final[frozenset[str]] = frozenset({"skills", "parts", "materials", "dfm"})
+RegistryKind = Literal["skills", "parts", "materials", "dfm", "tools"]
+_KINDS: Final[frozenset[str]] = frozenset({"skills", "parts", "materials", "dfm", "tools"})
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,7 @@ class RegistryManifest:
     parts: tuple[Mapping[str, JSONValue], ...] = ()
     materials: tuple[Mapping[str, JSONValue], ...] = ()
     packs: tuple[Mapping[str, JSONValue], ...] = ()
+    tools: tuple[Mapping[str, JSONValue], ...] = ()
 
 
 def parse_manifest(text: str, *, source: str = MANIFEST_FILENAME) -> RegistryManifest:
@@ -98,6 +101,7 @@ def parse_manifest(text: str, *, source: str = MANIFEST_FILENAME) -> RegistryMan
             "tuple[Mapping[str, JSONValue], ...]", entries(data, "materials", source=source)
         ),
         packs=cast("tuple[Mapping[str, JSONValue], ...]", entries(data, "packs", source=source)),
+        tools=cast("tuple[Mapping[str, JSONValue], ...]", entries(data, "tools", source=source)),
     )
 
 

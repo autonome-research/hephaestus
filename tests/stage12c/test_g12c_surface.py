@@ -58,6 +58,24 @@ TOOLS_DECLARED_AFTER_STAGE_12: tuple[str, ...] = (
     "solve_pose",
     "propose_placement",
     "read_proposals",
+    # CAM.md §9, Stage 14B (57 -> 72): the five CAM declared-state quartet
+    # families, dated 2026-09-02 — recorded here per this clause's own rule
+    # (a later stage that adds tools extends this list with its citation).
+    "declare_setup",
+    "update_setup",
+    "read_setups",
+    "declare_stock",
+    "update_stock",
+    "read_stock",
+    "declare_fixture",
+    "update_fixture",
+    "read_fixtures",
+    "declare_wcs",
+    "update_wcs",
+    "read_wcs",
+    "declare_operation",
+    "update_operation",
+    "read_operations",
 )
 
 

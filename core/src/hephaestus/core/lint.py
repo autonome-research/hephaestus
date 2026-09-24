@@ -59,6 +59,47 @@ Severity = Literal["warning", "error"]
 #: Nothing cites an empty ledger: this never matches.
 _NO_CITATION_RE: re.Pattern[str] = re.compile(r"(?!)")
 
+#: The frozen CAM banned-claim token list (CAM.md §1.1, §11 item 34): these
+#: are banned AS CLAIMS from every CAM result serialization, CLI string and
+#: tool response this project emits. Frozen — the list grows only by contract
+#: amendment, because the lint is a command with an exactly-defined subject.
+CAM_BANNED_CLAIM_TOKENS: tuple[str, ...] = (
+    "verified",
+    "safe",
+    "collision-free",
+    "validated",
+    "ready to run",
+)
+
+#: Whole-token, case-insensitive matchers — NEVER substring containment. A
+#: token matches only between non-word boundaries, so ``safely`` is not the
+#: token ``safe``, ``unverifiable`` is not ``verified``, and
+#: ``collision_at_samples`` is not ``collision-free`` — three strings the
+#: spec MANDATES, which is exactly why a substring sweep would ban the spec
+#: (CAM.md §1.1). Multi-word and hyphenated tokens match as whole phrases
+#: under the same boundary rule.
+_CAM_BANNED_RES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (
+        token,
+        re.compile(
+            r"(?<![A-Za-z0-9_])" + re.escape(token).replace(r"\ ", r"\s+") + r"(?![A-Za-z0-9_])",
+            re.IGNORECASE,
+        ),
+    )
+    for token in CAM_BANNED_CLAIM_TOKENS
+)
+
+
+def cam_banned_claims(text: str) -> tuple[str, ...]:
+    """Every banned CAM claim token ``text`` carries, whole-token matched.
+
+    The CAM.md §1.1 lint over one surface string: returns the matched tokens
+    in frozen-list order (empty means the surface is clean). Callers sweep it
+    over every CAM result serialization and CLI string (Gate G14C clause 18);
+    the 14D header lint runs the same matcher over ``lintable_remainder``.
+    """
+    return tuple(token for token, pattern in _CAM_BANNED_RES if pattern.search(text))
+
 #: build123d names whose call results seed the geometry taint analysis.
 GEOMETRY_CALLS: frozenset[str] = frozenset(
     {

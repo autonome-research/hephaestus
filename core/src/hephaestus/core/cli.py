@@ -41,10 +41,14 @@
 - ``heph motion [--json]`` / ``heph motion check [IDS]`` show and re-evaluate
   the declared motion checks with their §4 sweep results (``KINEMATICS.md``
   §6, Stage 9B); see ``hephaestus.core.cli_motion``.
+- ``heph cam [--json]`` shows the five CAM declared-state ledgers (setups,
+  stock, fixtures, WCS, operations — ``CAM.md`` §3/§9, Stage 14B), withdrawn
+  entries included with their reasons. Read-only, and it emits nothing.
 - ``heph cam emit <part> [--out FILE] [--kerf-mm N] [--json]`` emits a
   laser/waterjet cut-file (ordered toolpath + DXF) from the part's current
   build, using the in-tree flat-pattern and kerf path. Not an export and not
-  Stage 14 milling CAM; see ``hephaestus.core.cli_cam``.
+  Stage 14 milling CAM (which emits nothing in this landing — CAM.md §1.4);
+  see ``hephaestus.core.cli_cam``.
 - ``heph export list [PART]`` / ``heph export unpin BLOB`` show the committed
   exports with their GC-root pins and drop one of those pins (``INTERFACE.md``
   §19.40, §22.6 — the verbs the workspace's "unpin it from the command line"

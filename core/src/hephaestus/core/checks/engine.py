@@ -45,6 +45,7 @@ from hephaestus.core.checks.facade import (
     Measurement,
     PosedContextFactory,
     PosedPlacement,
+    ProgramResolver,
     SweepResolver,
     project_measurement,
 )
@@ -249,13 +250,16 @@ def run_checks(
     the named refusal (with whatever partial facts arrived) under
     ``measured.unverifiable`` instead of an ``error``. Not a pass, and not a
     crash: the report says the measurement was cut short, not that it failed.
-    The three classes are ``compare_timeout`` (``COMPARE.md`` §5, an
+    The four classes are ``compare_timeout`` (``COMPARE.md`` §5, an
     ``m.diff``), ``motion_timeout`` (``KINEMATICS.md`` §4, an ``m.sweep`` whose
-    grid was ceiling-killed — the partial per-sample facts ride the refusal) and
+    grid was ceiling-killed — the partial per-sample facts ride the refusal),
     ``scan_timeout`` (``MESH_INGEST.md`` §7.3, an ``m.scan_diff`` whose distance
     computation was ceiling-killed — the §3 quality record, both bboxes and
-    whichever direction completed ride the refusal).
+    whichever direction completed ride the refusal) and ``cam_sim_timeout``
+    (``CAM.md`` §5.8, an ``m.program`` whose removal simulation was
+    ceiling-killed — the per-op progress and the cheap facts ride the refusal).
     """
+    from hephaestus.core.cam_check import CamSimTimeout
     from hephaestus.core.motion import MotionTimeout
     from hephaestus.core.project_compare import CompareTimeout
     from hephaestus.core.scan_compare import ScanTimeout
@@ -267,7 +271,7 @@ def run_checks(
         try:
             passed = bool(predicate(measurement))
             measured = measurement.measured_json()
-        except (CompareTimeout, MotionTimeout, ScanTimeout) as exc:
+        except (CamSimTimeout, CompareTimeout, MotionTimeout, ScanTimeout) as exc:
             passed = False
             measured = {"unverifiable": cast("JSONValue", exc.to_json())}
         except HephaestusError as exc:
@@ -394,6 +398,7 @@ def run_bundle(
     at_pose: PosedContextFactory | None = None,
     sweep: SweepResolver | None = None,
     motion_generations: Mapping[str, int] | None = None,
+    program: ProgramResolver | None = None,
 ) -> CheckReport:
     """Execute a frozen bundle's cross-part checks and build the CheckReport.
 
@@ -470,6 +475,11 @@ def run_bundle(
             imports=imports,
             at_pose=None if at_pose is None else _at_pose,
             sweep=None if sweep is None else _sweep,
+            # CAM.md §9: the m.program read surface, threaded on exactly the
+            # imports/at_pose rule — the caller that owns the run builds it
+            # over the SAME frozen snapshot, and when it is absent a predicate
+            # calling m.program keeps its discriminated facade refusal.
+            program=program,
         )
 
     results = run_checks(checks, _factory)
@@ -844,6 +854,7 @@ class CheckSet:
         at_pose: PosedContextFactory | None = None,
         sweep: SweepResolver | None = None,
         motion_generations: Mapping[str, int] | None = None,
+        program: ProgramResolver | None = None,
     ) -> CheckReport:
         """Capture under the lock, release, then execute (architecture §3.4)."""
         bundle = self.capture()
@@ -858,4 +869,5 @@ class CheckSet:
             at_pose=at_pose,
             sweep=sweep,
             motion_generations=motion_generations,
+            program=program,
         )

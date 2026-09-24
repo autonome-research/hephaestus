@@ -9,23 +9,43 @@ The number is the next free one in the repo's sequence: `architecture.md` is 00,
 `script_contract.md` 01, `tool_schema.md` 02, `verification.md` 03,
 `mission_plan.md` 04, `repo_conventions.md` 05, `VALIDATION.md` 06, `INGEST.md`
 07, `COMPARE.md` 08, `ASSEMBLY.md` 09, `EXTERNAL_EVAL.md` 10, `KINEMATICS.md`
-11, `INTERFACE.md` 12. This is 13.
+11, `INTERFACE.md` 12, `PARTS_STORE.md` 13 (Stage 11, landed), `MESH_INGEST.md`
+14 (Stage 12, landed), `SOLVER.md` 15 (Stage 13, landed). This is 16, and
+`PHYSICS.md` holds 17. (This paragraph read "This is 13" until 2026-09-02 — a
+pre-D4 drafting leftover under the correct "# 16" title, fixed with the
+promotion below and recorded in the plan's Stage 14 block.)
 
-**DRAFT — pending a `mission_plan.md` amendment.** Revised after an adversarial
-pass against the codebase: four blocking findings folded in — the offset
-ladder's termination (§4.1, §4.3), the lint/header contradiction (§1.1, §1.5,
-§0.1), two refusals filed at a lifecycle point that could not compute them
-(§3.1, §4.3, §5.3), and a collision check that claimed machinery §11 never named
-(§5.5). Each fix tightened a clause or named new work; none waived one.
-Nothing in this document is binding. Promotion follows the
-`ASSEMBLY.md` / `COMPARE.md` / `KINEMATICS.md` pattern exactly: an adversarial
-pass against the codebase, then a dated `mission_plan.md` amendment carrying a
-Stage 14 heading with the G14A–G14D gate summaries and citing this spec. Until
-that amendment lands, CAM is not in mission scope at all — mission rule 5
-(`mission_plan.md` "Mission-wide rules" 5) names the deferred set (FEA, STEP
-import, community sharing, kerf-aware auto-nesting) and CAM is not in it, so
-CAM enters *only* by amending the plan with a new gated stage. This document is
-the proposal for that stage, not the stage.
+**Normative** (promoted 2026-09-02 with the `mission_plan.md` Stage 14
+amendment — a dated Stage 14 heading naming 14A–14D, carrying the G14A–G14D
+gate summaries and citing this spec, on the
+`ASSEMBLY.md` / `COMPARE.md` / `KINEMATICS.md` / `SOLVER.md` pattern exactly,
+and written **after** an adversarial pass against the codebase). That review
+returned **four blocking findings**, each folded into this text before
+promotion and each pinned by gate clauses rather than by prose: the offset
+ladder's termination is a fact, never a refusal (§4.1, §4.3 — pinned by
+G14B-2/3/16); the lint/header contradiction is resolved by typed regions,
+whole-token matching and `lintable_remainder` (§0.1, §1.1, §1.5 — pinned by
+G14C-18 and G14D-16); two refusals were re-filed at the lifecycle point that
+can compute their operands — `budget_below_resolution` at resolution time,
+`sample_cap_exceeded` at generation time with the `op_sample_bound_exceeded`
+declaration sieve (§3.1, §4.3, §5.3 — pinned by G14B-17/18/20); and the
+collision check no longer claims in-process stock machinery §11 never named —
+stock removed as a target, the `in_process_stock_not_modelled` stamp, the
+holder advisory (§5.5, §11 items 22–24 — pinned by G14C-9/11). Each fix
+tightened a clause or named new work; none waived one.
+
+**The D2 operator mandate binds this document's first landing**
+(`docs/frontier-staging-proposal.md` §D2, option **(b)** approved:
+generate-and-verify): no runnable machine program is written to disk by any
+code path Stage 14's first landing ships — no model tool, and the milling form
+of the `heph cam emit` operator verb is not shipped either. `check_program`
+(simulate and verify) IS in scope. §1.4's consent machinery, §1.5's header,
+§7's `posts` registry and §9's emission surface are **specified here and
+deferred to 14D**, which lands only by the operator's later (c) decision;
+option (d) — a model-facing emit tool — is refused permanently. The shipped 2D
+`heph cam emit` (laser/waterjet DXF, an inert cut-file) is prior art with the
+prior claim recorded in §1.4; its behaviour is unchanged by this stage's first
+landing.
 
 ## Amendment manifest
 
@@ -36,16 +56,16 @@ it — amending a document before its machinery exists is doc drift
 
 | document | change | lands with |
 |---|---|---|
-| `mission_plan.md` | New dated **Stage 14** heading naming 14A–14D and carrying gates G14A–G14D, citing this spec. Mission rule 5's deferred list is **not** touched: CAM was never on it, and a new gated stage is the whole mechanism rule 5 prescribes. | 14A |
-| `tool_schema.md` | New heading **"Manufacturing setups"** with the declare/update/read quartets of §3 and `check_program` (§9). `export_part`'s format enum is **not** extended — a program is not an export (§1.4); emission is the separate operator verb `heph cam emit`. The Deferred section gains a reserved `emit_program` slot naming this spec, on the `run_fea` precedent (`tool_schema.md:1487-1491`). | 14B (quartets), 14C (`check_program`), 14D (Deferred slot) |
-| `script_contract.md` §5.3 | The closed §5.3 tag-prefix vocabulary that `cutfile.layer_for_tag` already reads (`core/src/hephaestus/core/cutfile.py:117-144`) gains the CAM prefixes `mill_`, `drill_`, `pocket_`, `profile_`, `face_`, `keepout_` (§3.7). §5.2 is **not** amended: the nine assignable `part.*` fields stay nine (`script_contract.md:115-144`), and no CAM state enters a part script. | 14B |
-| `script_contract.md` §6 | The project-scope `CHECKS` measurement facade gains `m.program(setup_id)` — the read surface of §5.9's result record — on the `m.sweep` precedent (`KINEMATICS.md` §4). The part-scope facade does not carry it. | 14C |
-| `VALIDATION.md` §5 | The termination reviewer receives `ProgramStatus` (§5.9); a CAM check in any non-success state, and any `unresolvable` setup, is a **blocking finding by rule**, stamped from the engine's status and never solicited from the reviewer — the never-green invariant extended a third time, the same mechanism as the constraint rule (`VALIDATION.md:308-315`) and the motion rule (`:317-330`). | 14C |
-| `COMPARE.md` §1 | `solid_diff` gains no new function. The **amendment is a stated restriction**: for material-removal verification the `iou` field of `VolumeDiff` is not a legal threshold (§5.3), and §1's "thresholds do not live here" sentence gains the CAM-side owner. `COMPARE.md` §4's "no mesh-based comparison path" is unchanged and this spec adds none. | 14C |
-| `architecture.md` §3.6 (registries) | A **fifth registry kind**, `tools`, added to `BUNDLED_KINDS` / `RegistryKind` (`core/src/hephaestus/core/registry/_layout.py:38-41`), and a **sixth**, `posts`, for controller dialects (§7). Both are content-hash-pinned by the existing Merkle digest (`registry/_digest.py:53-71`) and the existing `[registries]` pin table (`registry/_pins.py:41-52`); neither adds a fetch, verify or pin mechanism. | 14A (`tools`), 14D (`posts`) |
-| `registries/dfm/registry.toml` | Two new packs, `cnc_mill` and `cnc_router` (§6), closing the documented hole that `cnc_router` is the default `part.process` written by `heph init` (`core/src/hephaestus/core/cli_init.py:64`). **`cnc_router` shipped as issue #28** (existing DFM machinery, no CAM, no mill pack). `cnc_mill` remains 14A. | 14A |
-| `registries/materials/*.json` | `al-6061.json` and `plywood-baltic-birch.json` gain a **declared** machining block (§6.2). The prose in `al-6061.json`'s `notes` — "3 mm end mill => 1.5 mm minimum internal radius", "pockets deeper than about 4x the tool diameter chatter", "thin webs below roughly 1 mm distort" — stays as prose *and* becomes numbers a predicate reads. Contextual notes are never machine-checkable (`architecture.md:406-410`); that is exactly the defect this closes. | 14A |
-| `verification.md` "Performance budgets (Tier 1)" (`verification.md:210-218`) | One new budget, and an honest one: **`check_program` on the reference setup ≤ 120 s wall clock**, which is 4× the reference-shelf full-build budget and is the first budget in the mission that is not sub-30 s. §5.8 states why, and states plainly that if the reference setup cannot meet it the *gate is tightened by shrinking the reference setup*, never by raising the budget — budgets tighten, never loosen, by amendment (`verification.md:218`). The budget is paired with clause (G14C-12), which counts the collision check's OCCT booleans as a function of sample count, so the number bounds a curve rather than one fixture. | 14C |
+| `mission_plan.md` | New dated **Stage 14** heading naming 14A–14D and carrying gates G14A–G14D, citing this spec. Mission rule 5's deferred list is **not** touched: CAM was never on it, and a new gated stage is the whole mechanism rule 5 prescribes. *(Landed 2026-09-02 with the promotion itself — the amendment IS this row, ahead of 14A's machinery, exactly as the header's promotion pattern prescribes.)* | landed 2026-09-02 |
+| `tool_schema.md` | New heading **"Manufacturing setups"** with the declare/update/read quartets of §3 and `check_program` (§9). `export_part`'s format enum is **not** extended — a program is not an export (§1.4); emission is the separate operator verb `heph cam emit`. The Deferred section gains a reserved `emit_program` slot naming this spec, on the `run_fea` precedent (`tool_schema.md:2087-2100`). *(Landed 2026-09-02 with the amendment, in reserved form: the section text and the Deferred slot are in, marked "specified, declarations land with 14B/14C"; the per-tool headings and `tools_decl.py` declarations land with their sub-stages, so the drift gates keep asserting only tools that exist. The quartets landed with 14B and `check_program` landed with 14C, both 2026-09-02, each with its per-tool heading, declaration, dispatch and pin move — 57 → 72 → 73.)* | 14B (quartets, landed 2026-09-02), 14C (`check_program`, landed 2026-09-02), 14D (Deferred slot); reserved text landed 2026-09-02 |
+| `script_contract.md` §5.3 | The closed §5.3 tag-prefix vocabulary that `cutfile.layer_for_tag` already reads (`core/src/hephaestus/core/cutfile.py:117-144`) gains the CAM prefixes `mill_`, `drill_`, `pocket_`, `profile_`, `face_`, `keepout_` (§3.7). §5.2 is **not** amended: the nine assignable `part.*` fields stay nine (`script_contract.md:115-144`), and no CAM state enters a part script. *(Landed 2026-09-02 with 14B: the §5.3 vocabulary paragraph is in, the engine lookup is `project_store/cam.py`'s `CAM_TAG_PREFIXES`, and `SOLVER.md`'s two §8 citations were re-resolved for the insertion.)* | 14B (landed 2026-09-02) |
+| `script_contract.md` §6 | The project-scope `CHECKS` measurement facade gains `m.program(setup_id)` — the read surface of §5.9's result record — on the `m.sweep` precedent (`KINEMATICS.md` §4). The part-scope facade does not carry it. *(Landed 2026-09-02 with 14C: `ProgramFacts` on the facade, the `SnapshotProgramContext` frozen-snapshot resolver, the part-scope evaluation-time refusal, and `cam_sim_timeout` → unverifiable.)* | 14C (landed 2026-09-02) |
+| `VALIDATION.md` §5 | The termination reviewer receives `ProgramStatus` (§5.9); a CAM check in any non-success state, and any `unresolvable` setup, is a **blocking finding by rule**, stamped from the engine's status and never solicited from the reviewer — the never-green invariant extended a third time, the same mechanism as the constraint rule (`VALIDATION.md:308-315`) and the motion rule (`:317-330`). *(Landed 2026-09-02 with 14C: `program_status` / `program_review_findings` in the review layer, the context's `programs` field, and reviewer-supplied CAM verdicts filed as unknown.)* | 14C (landed 2026-09-02) |
+| `COMPARE.md` §1 | `solid_diff` gains no new function. The **amendment is a stated restriction**: for material-removal verification the `iou` field of `VolumeDiff` is not a legal threshold (§5.3), and §1's "thresholds do not live here" sentence gains the CAM-side owner. `COMPARE.md` §4's "no mesh-based comparison path" is unchanged and this spec adds none. *(Landed 2026-09-02 with 14C: the stated restriction sits in `COMPARE.md` §1 under the "thresholds do not live here" sentence, and the two line citations the insertion moved were re-resolved.)* | 14C (landed 2026-09-02) |
+| `architecture.md` §3.6 (registries) | A **fifth registry kind**, `tools`, added to `BUNDLED_KINDS` / `RegistryKind` (`core/src/hephaestus/core/registry/_layout.py:38-41`), and a **sixth**, `posts`, for controller dialects (§7). Both are content-hash-pinned by the existing Merkle digest (`registry/_digest.py:53-71`) and the existing `[registries]` pin table (`registry/_pins.py:41-52`); neither adds a fetch, verify or pin mechanism. *(The `tools` half landed 2026-09-02 with 14A: the fifth kind is in `BUNDLED_KINDS`/`RegistryKind`, the bundled `registries/tools/` tree ships, and `architecture.md` §3.6 carries the bullet. `posts` remains 14D, deferred.)* | 14A (`tools`, landed 2026-09-02), 14D (`posts`) |
+| `registries/dfm/registry.toml` | Two new packs, `cnc_mill` and `cnc_router` (§6), closing the documented hole that `cnc_router` is the default `part.process` written by `heph init` (`core/src/hephaestus/core/cli_init.py:64`). **`cnc_router` shipped as issue #28** (existing DFM machinery, no CAM, no mill pack). *(`cnc_mill` landed 2026-09-02 with 14A: five §6.2 rules on the existing machinery, and the `core/tests/test_dfm_packs.py` index inversion is paid.)* | 14A (landed 2026-09-02) |
+| `registries/materials/*.json` | `al-6061.json` and `plywood-baltic-birch.json` gain a **declared** machining block (§6.2). The prose in `al-6061.json`'s `notes` — "3 mm end mill => 1.5 mm minimum internal radius", "pockets deeper than about 4x the tool diameter chatter", "thin webs below roughly 1 mm distort" — stays as prose *and* becomes numbers a predicate reads. Contextual notes are never machine-checkable (`architecture.md:406-410`); that is exactly the defect this closes. *(Landed 2026-09-02 with 14A: both records carry the block, `Material.machining` parses it as typed floats and refuses prose, and the mill predicates read the material's declared numbers over the pack defaults.)* | 14A (landed 2026-09-02) |
+| `verification.md` "Performance budgets (Tier 1)" (`verification.md:210-218`) | One new budget, and an honest one: **`check_program` on the reference setup ≤ 120 s wall clock**, which is 4× the reference-shelf full-build budget and is the first budget in the mission that is not sub-30 s. §5.8 states why, and states plainly that if the reference setup cannot meet it the *gate is tightened by shrinking the reference setup*, never by raising the budget — budgets tighten, never loosen, by amendment (`verification.md:218`). The budget is paired with clause (G14C-12), which counts the collision check's OCCT booleans as a function of sample count, so the number bounds a curve rather than one fixture. *(Landed 2026-09-02 with 14C: the budget row is in `verification.md`'s Tier 1 list, paired in its own text with the counted-curve clause.)* | 14C (landed 2026-09-02) |
 | `EXTERNAL_EVAL.md` | Unchanged. CAM produces no CADGenBench submission and no external score. | — |
 | `INTERFACE.md` | Unchanged in this spec. A workspace CAM panel is a later amendment; nothing here adds a web surface, and §1.4's operator gate is a CLI verb precisely so that it does not acquire one by default. | — |
 
@@ -282,7 +302,13 @@ A runnable machine program is the opposite of cheap and reversible. So:
   program). The Stage 14 landing must reconcile the two contracts under one
   verb (the `<setup>` argument, consent gate, and refusal set apply when the
   setup names a milling process) or give the milling form its own verb; it
-  may not silently change the shipped 2D behaviour. Milling emission
+  may not silently change the shipped 2D behaviour. *(Reconciliation status,
+  2026-09-02 amendment: milling emission is deferred to 14D in full under the
+  D2 mandate, so no verb conflict arises in this landing — the 2D form
+  (`cli_cam.py`, `<part>` argument, DXF-only, no consent gate;
+  `CUT2D_PROCESSES` excludes `cnc_router`) is byte-for-byte unchanged, and the
+  reconciliation obligation stands, to be discharged by the 14D landing on the
+  rule stated here.)* Milling emission
   additionally requires
   **runtime-recorded operator consent** on the `ask_user` pattern: consent is
   stored in fields the model-facing writes refuse, exactly as `asked` and
@@ -644,9 +670,13 @@ to infer where a number came from. A declared `doc_mm` exceeding the tool's
 
 ### 4.1 What `hephaestus.geom.toolpath` owns
 
-A tenth service under the standing `hephaestus.geom` contract — "pure geometry
-services over build123d/OCP shapes … no executor, no project store, no
-`opstore` runtime … measurement never decides"
+A tenth service under the standing `hephaestus.geom` contract *(counting
+note, 2026-09-02 14B landing: drafted before `SOLVER.md`'s `solve` joined the
+package as the tenth module, so `toolpath` landed as the **eleventh** — the
+ordinal was stale, the contract below was not, and G14B-1 binds to the
+contract, not the count)* — "pure geometry services over build123d/OCP
+shapes … no executor, no project store, no `opstore` runtime … measurement
+never decides"
 (`core/src/hephaestus/geom/__init__.py:1-21`), enforced by the AST allowlist and
 subprocess import-closure test at `core/tests/test_geom_import_boundary.py:45-78`.
 
@@ -1079,7 +1109,7 @@ that check `unverifiable` — "not a pass and not a crash" (`COMPARE.md` §5).
 **The open risk, stated rather than hidden.** `COMPARE.md` §5 records the
 measurement: "one editing sample held a core for ~19 h; five of six live-run
 infrastructure deaths in the 2026-07-29 sweep ended on an unanswered
-`compare_solids`" (`COMPARE.md:108-111`). A removal simulation is thousands of
+`compare_solids`" (`COMPARE.md:165-167`). A removal simulation is thousands of
 booleans, not one. Meanwhile mission rule 4 says performance is gated, and
 `verification.md`'s Tier 1 ceilings are 30 s / 10 s / 5 s
 (`verification.md:210-218`) with no plausible removal-simulation analogue.
@@ -1298,19 +1328,31 @@ simplifications = [
   `check_program(setup_ids?)`. Every quartet follows the 8C lifecycle contract:
   update is revise/withdraw with a recorded reason, generational, nothing erased,
   and `read_*` returns withdrawn entries with their reasons.
-  **Tool-count discipline is a design constraint**: the surface is pinned at
-  exactly 53 tools in two places (`contract/tests/test_toolgen.py:98,109` and
-  `tests/stage2/test_g2_contract_drift.py:354`), and each tool costs five
-  generated drift-tested artifacts plus a per-profile dispatch decision. Five
-  quartets plus one check verb is 16 tools, which is a real cost and must be
-  argued for in the amendment rather than assumed. A cheaper shape — one
-  namespaced `declare_cam(kind, entry)` quartet — is a legitimate alternative
-  this spec does not foreclose; what it does foreclose is putting any of it on
-  `export_part`.
+  **Tool-count discipline is a design constraint**: the surface is pinned in
+  two places (`contract/tests/test_toolgen.py:98-199` and
+  `tests/stage2/test_g2_contract_drift.py:368`; this paragraph said 53
+  until 2026-09-02 — the number this spec was drafted against, moved 53 → 57 by
+  Stage 13's three solver tools, then **57 → 72 by 14B's landing the same
+  day**, then **72 → 73 by 14C's `check_program` landing**, both pins
+  repointed with each per `SOLVER.md` §11's discipline), and
+  each tool costs five generated
+  drift-tested artifacts plus a per-profile dispatch decision. Five quartets
+  plus one check verb is 16 tools, which is a real cost and must be argued for
+  in the amendment rather than assumed. A cheaper shape — one namespaced
+  `declare_cam(kind, entry)` quartet — is a legitimate alternative this spec
+  does not foreclose; what it does foreclose is putting any of it on
+  `export_part`. *(Argued and decided, 2026-09-02 amendment: the 16-tool shape
+  is taken — 57 → 72 at 14B, 72 → 73 at 14C, 14D adds none. The
+  `declare_cam(kind, entry)` shape would make `entry` the one field on the
+  surface a closed per-kind `additionalProperties: false` schema cannot refuse
+  foreign fields from by construction, and structural refusal by closed schema
+  is the mechanism the D2 posture and the Stage 13 writeback refusal both rest
+  on. See `tool_schema.md` "Manufacturing setups" and the plan's Stage 14
+  block.)*
 - **No model tool emits a program.** §1.4. `tool_schema.md`'s Deferred section
   gains a reserved `emit_program` slot naming this spec, on the `run_fea`
-  precedent (`tool_schema.md:1487-1491`) — reserved, and deliberately not
-  implemented as a model tool.
+  precedent (`tool_schema.md:2087-2100`; slot landed 2026-09-02 with the
+  amendment) — reserved, and deliberately not implemented as a model tool.
 - **Operator CLI**: `heph cam` (setup/stock/fixture/wcs/operation tables,
   `--json`), `heph cam check [setups]`, `heph cam emit <setup> --post <id>`
   (consent-gated, §1.4), `heph cam sheet <setup>` (the operator sheet).
@@ -1485,6 +1527,20 @@ assuming it.
 32. The **program parser** used by §5.2's round-trip, which must be the
     simulator's parser. *(New. Note this is a second consumer of the same parser
     and the gate asserts they are the same object, not two implementations.)*
+
+    *(Landing note, 2026-09-02 amendment — where items 31 and 32 actually land,
+    stated because clauses (G14C-3) and (G14C-4) need both and this list filed
+    them under 14D.* **They land at 14C, as in-memory machinery**: pure
+    functions from a `MoveList` plus a post record to program bytes and back,
+    exercised at 14C against fixture post records — including the two
+    fault-injected emitters clause (G14C-3) names — with **no disk write, no
+    consent path, no CLI verb and no program text in any tool result**. The D2
+    mandate bans a runnable program *reaching the filesystem*, not program
+    bytes in memory, and clause (G14B-24)'s filesystem assertion extends over
+    the 14C paths. What stays 14D, unmoved: the `posts` **registry kind** and
+    its digest machinery (item 30), the §1.5 header (item 33), the consent
+    gate (item 35), `heph cam emit` / `heph cam sheet` (items 36–37), and
+    every path that writes program bytes anywhere.)*
 33. The in-band header as an **ordered list of typed regions** (§1.5), the frozen
     `SAFETY_PARAGRAPH` constant, the `quoted_simplifications` regions with their
     attribution lines, the derived `lintable_remainder`, and the whole header's
@@ -1659,8 +1715,8 @@ sub-stage.
 21. Determinism: two processes, byte-identical `MoveList` serialization.
 22. The tool surface through dispatch on **both** profiles, and the contract
     drift artifacts regenerate clean with the pinned tool count updated and this
-    stage cited (`contract/tests/test_toolgen.py:98,109`,
-    `tests/stage2/test_g2_contract_drift.py:354`).
+    stage cited (`contract/tests/test_toolgen.py:98-199`,
+    `tests/stage2/test_g2_contract_drift.py:368`; 57 → 72 at 14B).
 23. `heph cam` human and `--json`.
 24. **Nothing is emitted**: a filesystem assertion that no sub-stage-14B code
     path writes any file under `.heph/exports/`, and that no tool in the surface

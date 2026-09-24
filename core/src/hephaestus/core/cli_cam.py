@@ -1,19 +1,27 @@
 # Copyright 2026 The Hephaestus Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""``heph cam emit`` — 2D CAM cut-file from a built part (laser / waterjet).
+"""``heph cam`` — the CAM CLI: declared-state tables, and the 2D cut-file emit.
 
-This is not Stage 14 milling CAM and it is not ``export_part``. A program is
-not an export: the write-ahead table, the GC-root pin, and the workspace
-panel stay where they are. This verb reads the current published artifact,
-runs the in-tree flat-pattern + kerf path, and writes a DXF plus a toolpath
-record the operator can inspect headless.
+Two verbs with two histories, deliberately kept apart:
 
-Kerf is never invented. An explicit ``--kerf-mm`` wins; otherwise the DFM
-pack's ``kerf_mm`` for the part's declared process is used; otherwise the
-file is the nominal path and the record says ``kerf_uncompensated``.
+* ``heph cam`` (bare, Stage 14B — CAM.md §9, Gate G14B clause 23) prints the
+  five declared-state ledgers (setups, stock, fixtures, WCS, operations) as
+  human tables or ``--json``. It reads the ledgers and nothing else: no
+  resolution, no generation, no kernel, and **no emission of any kind** — the
+  D2 mandate is a filesystem assertion over this path (clause 24).
+* ``heph cam emit`` is the **prior claim** on the verb (CAM.md §1.4): the 2D
+  laser/waterjet cut-file from a built part. It is not Stage 14 milling CAM
+  and it is not ``export_part``; its behaviour is byte-for-byte the shipped
+  contract, and milling emission (the ``<setup>`` form, consent-gated) is
+  deferred to 14D in full.
 
-Exit codes match the engine CLI: 0 success, 1 the emit ran and the answer
+For ``emit``: kerf is never invented. An explicit ``--kerf-mm`` wins;
+otherwise the DFM pack's ``kerf_mm`` for the part's declared process is used;
+otherwise the file is the nominal path and the record says
+``kerf_uncompensated``.
+
+Exit codes match the engine CLI: 0 success, 1 the verb ran and the answer
 was no (not a 2D cut process, no flat pattern, a kerf that cannot offset),
 2 usage (no project, unknown part, an ``--out`` that cannot be written).
 ``--out`` is validated before the emit runs, so an unwritable path is reported
@@ -104,12 +112,166 @@ def _cmd_emit(args: argparse.Namespace) -> int:
     return 0
 
 
+_LEDGER_COLUMNS: Mapping[str, tuple[str, ...]] = {
+    "setups": ("spindle_axis", "order", "stock", "fixture", "wcs"),
+    "stock": ("kind", "extents_mm", "material", "origin_anchor"),
+    "fixtures": ("members",),
+    "wcs": ("code", "datum", "z_zero"),
+    "operations": ("setup", "kind", "feature", "tool", "depth_mm"),
+}
+
+
+def _entry_line(name: str, entry: Mapping[str, Any]) -> str:
+    parts: list[str] = [str(entry.get("id", "?"))]
+    for column in _LEDGER_COLUMNS[name]:
+        value = entry.get(column)
+        if name == "fixtures" and column == "members":
+            members = cast("list[object]", value) if isinstance(value, list) else []
+            value = f"{len(members)} member(s)"
+        parts.append(f"{column}={value}")
+    if entry.get("withdrawn"):
+        parts.append(f"withdrawn ({entry.get('withdrawn_reason')})")
+    return "  " + " ".join(parts)
+
+
+def format_cam_state(state: Mapping[str, Any]) -> str:
+    """The human tables: every ledger, withdrawn entries included with reasons."""
+    lines: list[str] = []
+    for name in ("setups", "stock", "fixtures", "wcs", "operations"):
+        ledger = state.get(name)
+        ledger_map: Mapping[str, Any] = (
+            cast("Mapping[str, Any]", ledger) if isinstance(ledger, dict) else {}
+        )
+        raw_entries = ledger_map.get("entries")
+        entries = cast("list[Any]", raw_entries) if isinstance(raw_entries, list) else []
+        generation = ledger_map.get("generation", 0)
+        lines.append(f"{name}: {len(entries)} entr{'y' if len(entries) == 1 else 'ies'} "
+                     f"(generation {generation})")
+        for entry in entries:
+            if isinstance(entry, dict):
+                lines.append(_entry_line(name, cast("Mapping[str, Any]", entry)))
+    return "\n".join(lines)
+
+
+def _cmd_show(args: argparse.Namespace) -> int:
+    """``heph cam`` — the declared-state tables. Reads ledgers; writes nothing."""
+    from hephaestus.core.project_store.cam import CamState
+    from hephaestus.core.project_store.layout import load_project, open_store
+
+    root = project_root_or_refuse()
+    layout = load_project(root)
+    store = open_store(layout)
+    try:
+        state = CamState(layout, store).to_json()
+    finally:
+        store.close()
+    if bool(args.json):
+        print(json.dumps(state, sort_keys=True))
+    else:
+        print(format_cam_state(cast("Mapping[str, Any]", state)))
+    return 0
+
+
+def _verdict_line(name: str, block: Mapping[str, Any] | None) -> str:
+    if not isinstance(block, dict):
+        return f"  {name}: not evaluated"
+    verdict = block.get("verdict")
+    extras: list[str] = []
+    samples = block.get("samples_evaluated")
+    if isinstance(samples, int) and not isinstance(samples, bool):
+        extras.append(f"{samples} samples")
+    if block.get("in_process_stock_not_modelled"):
+        extras.append("in_process_stock_not_modelled")
+    suffix = f" ({', '.join(extras)})" if extras else ""
+    return f"  {name}: {verdict}{suffix}"
+
+
+def format_program_status(status: Mapping[str, Any]) -> str:
+    """One setup's §5.9 record as the human report (CAM.md §9, ``heph cam check``).
+
+    Verdicts in their sampled spellings verbatim, every named refusal, every
+    finding with its severity, and the §5.5 stamp — the surface Gate G14C
+    clause 18's whole-token banned-claim lint runs over, so nothing here may
+    editorialize a verdict into a claim.
+    """
+    setup = status.get("setup", "?")
+    state = status.get("state", "?")
+    lines = [f"{setup}: {state}"]
+    if state == "unresolvable":
+        lines.append(f"  reason: {status.get('reason')} — {status.get('detail')}")
+    for name in ("coverage", "round_trip", "simulation", "collision"):
+        block = status.get(name)
+        lines.append(_verdict_line(name, block if isinstance(block, dict) else None))
+    refusals = status.get("refusals")
+    for refusal in refusals if isinstance(refusals, list) else []:
+        if isinstance(refusal, dict):
+            lines.append(f"  refusal: {refusal.get('reason')}")
+    findings = status.get("findings")
+    for finding in findings if isinstance(findings, list) else []:
+        if isinstance(finding, dict):
+            lines.append(f"  finding [{finding.get('severity')}]: {finding.get('reason')}")
+    return "\n".join(lines)
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    """``heph cam check [setups]`` — simulate and verify; writes nothing."""
+    from hephaestus.core.cam_check import check_program
+    from hephaestus.core.project_store.layout import load_project, open_store
+    from hephaestus.core.registry import RegistrySet
+
+    root = project_root_or_refuse()
+    layout = load_project(root)
+    store = open_store(layout)
+    registries = RegistrySet.open(root)
+    try:
+        statuses, partial = check_program(
+            layout,
+            store,
+            cast("list[str] | None", args.setups) or None,
+            tools=registries.tools,
+            materials=registries.materials,
+        )
+    finally:
+        store.close()
+    payload = {
+        "status": "ok",
+        "partial": partial,
+        "programs": [status.to_json() for status in statuses],
+    }
+    if bool(args.json):
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        for status in statuses:
+            print(format_program_status(status.to_json()))
+    blocked = any(status.blocking() for status in statuses)
+    return 1 if blocked else 0
+
+
 def add_subparsers(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
 ) -> None:
     """Register the ``cam emit`` verb on an existing subparser set."""
-    cam = sub.add_parser("cam", help="2D CAM: laser-cut / waterjet toolpath and DXF")
-    verbs = cam.add_subparsers(dest="cam_command", required=True)
+    cam = sub.add_parser(
+        "cam", help="CAM: declared-state tables (bare), and the 2D laser/waterjet cut-file"
+    )
+    # Bare ``heph cam`` prints the declared-state tables (Stage 14B); the
+    # subcommands stay exactly as shipped, so the 2D emit contract is untouched.
+    cam.add_argument(
+        "--json", action="store_true", help="emit the declared-state ledgers as JSON"
+    )
+    cam.set_defaults(func=guard(_cmd_show))
+    verbs = cam.add_subparsers(dest="cam_command", required=False)
+    check = verbs.add_parser(
+        "check",
+        help="simulate and verify declared setups (CAM.md §5); writes nothing",
+    )
+    check.add_argument(
+        "setups",
+        nargs="*",
+        help="setup ids to check (default: every active setup, recorded)",
+    )
+    check.add_argument("--json", action="store_true", help="emit the §5.9 records as JSON")
+    check.set_defaults(func=guard(_cmd_check))
     emit = verbs.add_parser(
         "emit",
         help="emit a kerf-compensated laser/waterjet cut-file from a built part",

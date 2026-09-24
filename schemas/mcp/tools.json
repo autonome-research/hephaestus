@@ -14227,6 +14227,2491 @@
           "additionalProperties": true,
           "properties": {
             "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "declare_setup",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Declare one machining setup (CAM.md §3.1); advances one generation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "fixture": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "order": {
+            "type": "integer"
+          },
+          "provenance": {
+            "additionalProperties": false,
+            "properties": {
+              "assumed": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "requirement": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "spindle_axis": {
+            "enum": [
+              "+X",
+              "-X",
+              "+Y",
+              "-Y",
+              "+Z",
+              "-Z"
+            ],
+            "type": "string"
+          },
+          "stock": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "tolerance": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "gouge_budget_mm3": {
+                    "type": "number"
+                  },
+                  "max_deviation_mm": {
+                    "type": "number"
+                  },
+                  "rejects_mm3": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "rest_budget_mm3": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "gouge_budget_mm3",
+                  "rest_budget_mm3",
+                  "max_deviation_mm"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "wcs": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "spindle_axis",
+          "order",
+          "stock",
+          "fixture",
+          "wcs",
+          "provenance"
+        ],
+        "type": "object"
+      },
+      "name": "declare_setup"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "update_setup",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Revise or withdraw one setup with a recorded reason; one generation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "patch": {
+            "additionalProperties": false,
+            "properties": {
+              "fixture": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "order": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "provenance": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "assumed": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "requirement": {
+                        "anyOf": [
+                          {
+                            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": [],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "spindle_axis": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "+X",
+                      "-X",
+                      "+Y",
+                      "-Y",
+                      "+Z",
+                      "-Z"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "stock": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tolerance": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "gouge_budget_mm3": {
+                        "type": "number"
+                      },
+                      "max_deviation_mm": {
+                        "type": "number"
+                      },
+                      "rejects_mm3": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "rest_budget_mm3": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "gouge_budget_mm3",
+                      "rest_budget_mm3",
+                      "max_deviation_mm"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "wcs": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "withdrawn": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "patch",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "name": "update_setup"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "read_setups",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Read the setup ledger, withdrawn entries included (CAM.md §3.1).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "read_setups"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "declare_stock",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Declare one stock record (CAM.md §3.2); advances one generation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "extents_mm": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          },
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "rectangular"
+            ],
+            "type": "string"
+          },
+          "material": {
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "origin_anchor": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+            "type": "string"
+          },
+          "origin_offset_mm": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 3,
+                "minItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "provenance": {
+            "additionalProperties": false,
+            "properties": {
+              "assumed": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "requirement": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [],
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "extents_mm",
+          "origin_anchor",
+          "material",
+          "provenance"
+        ],
+        "type": "object"
+      },
+      "name": "declare_stock"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "update_stock",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Revise or withdraw one stock record with a recorded reason; one generation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "patch": {
+            "additionalProperties": false,
+            "properties": {
+              "extents_mm": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "number"
+                    },
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "rectangular"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "material": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "origin_anchor": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "origin_offset_mm": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "number"
+                    },
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "provenance": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "assumed": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "requirement": {
+                        "anyOf": [
+                          {
+                            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": [],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "withdrawn": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "patch",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "name": "update_stock"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "read_stock",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Read the stock ledger, withdrawn entries included (CAM.md §3.2).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "read_stock"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "declare_fixture",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Declare one fixture as placed member parts (CAM.md §3.3); one generation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "members": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "anchor": {
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                  "type": "string"
+                },
+                "offset_mm": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "maxItems": 3,
+                  "minItems": 3,
+                  "type": "array"
+                },
+                "part": {
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "part",
+                "anchor",
+                "offset_mm"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "provenance": {
+            "additionalProperties": false,
+            "properties": {
+              "assumed": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "requirement": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [],
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "members",
+          "provenance"
+        ],
+        "type": "object"
+      },
+      "name": "declare_fixture"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "update_fixture",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Revise or withdraw one fixture with a recorded reason; one generation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "patch": {
+            "additionalProperties": false,
+            "properties": {
+              "members": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "anchor": {
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                          "type": "string"
+                        },
+                        "offset_mm": {
+                          "items": {
+                            "type": "number"
+                          },
+                          "maxItems": 3,
+                          "minItems": 3,
+                          "type": "array"
+                        },
+                        "part": {
+                          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "part",
+                        "anchor",
+                        "offset_mm"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "provenance": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "assumed": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "requirement": {
+                        "anyOf": [
+                          {
+                            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": [],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "withdrawn": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "patch",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "name": "update_fixture"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "read_fixtures",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Read the fixture ledger, withdrawn entries included (CAM.md §3.3).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "read_fixtures"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "declare_wcs",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Declare one work coordinate system (CAM.md §3.4); advances one generation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "datum": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "provenance": {
+            "additionalProperties": false,
+            "properties": {
+              "assumed": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "requirement": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "z_zero": {
+            "enum": [
+              "stock_top",
+              "part_top",
+              "datum"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "datum",
+          "z_zero",
+          "provenance"
+        ],
+        "type": "object"
+      },
+      "name": "declare_wcs"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "update_wcs",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Revise or withdraw one WCS with a recorded reason; one generation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "patch": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "datum": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "provenance": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "assumed": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "requirement": {
+                        "anyOf": [
+                          {
+                            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": [],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "withdrawn": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "z_zero": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "stock_top",
+                      "part_top",
+                      "datum"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "patch",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "name": "update_wcs"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "read_wcs",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Read the WCS ledger, withdrawn entries included (CAM.md §3.4).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "read_wcs"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "declare_operation",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Declare one machining operation over a tagged feature (CAM.md §3.7).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "climb": {
+            "default": true,
+            "type": "boolean"
+          },
+          "depth_mm": {
+            "type": "number"
+          },
+          "doc_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "feature": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+            "type": "string"
+          },
+          "feed_mm_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "drill",
+              "pocket",
+              "profile",
+              "face"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "plunge_mm_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "provenance": {
+            "additionalProperties": false,
+            "properties": {
+              "assumed": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "requirement": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "rpm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "setup": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "stepdown_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "stepover_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tabs": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "count": {
+                    "type": "integer"
+                  },
+                  "height_mm": {
+                    "type": "number"
+                  },
+                  "width_mm": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "count",
+                  "width_mm",
+                  "height_mm"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tool": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "woc_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "id",
+          "setup",
+          "kind",
+          "feature",
+          "tool",
+          "depth_mm",
+          "provenance"
+        ],
+        "type": "object"
+      },
+      "name": "declare_operation"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "update_operation",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Revise or withdraw one operation with a recorded reason; one generation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "patch": {
+            "additionalProperties": false,
+            "properties": {
+              "climb": {
+                "anyOf": [
+                  {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "depth_mm": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "doc_mm": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "feature": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "feed_mm_min": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "kind": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "drill",
+                      "pocket",
+                      "profile",
+                      "face"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "plunge_mm_min": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "provenance": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "assumed": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "requirement": {
+                        "anyOf": [
+                          {
+                            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": [],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rpm": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "setup": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "stepdown_mm": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "stepover_mm": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "tabs": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "type": "integer"
+                      },
+                      "height_mm": {
+                        "type": "number"
+                      },
+                      "width_mm": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "count",
+                      "width_mm",
+                      "height_mm"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "tool": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "withdrawn": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "woc_mm": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "patch",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "name": "update_operation"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "entries"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "read_operations",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Read the operation ledger, withdrawn entries included (CAM.md §3.7).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "read_operations"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "partial": {
+              "type": "boolean"
+            },
+            "programs": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "programs",
+            "partial"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "check_program",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Simulate and verify declared setups now (CAM.md §5); ProgramStatus per setup.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "setup_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "check_program"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
               "type": "string"
             },
             "content": {

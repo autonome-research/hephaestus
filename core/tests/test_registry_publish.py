@@ -331,7 +331,7 @@ def test_a_malformed_record_is_a_usage_error(
 # -- the shipped registries ------------------------------------------------
 
 
-@pytest.mark.parametrize("kind", ["skills", "parts", "materials", "dfm"])
+@pytest.mark.parametrize("kind", ["skills", "parts", "materials", "dfm", "tools"])
 def test_every_bundled_registry_publishes(kind: str) -> None:
     record = publish_registry(REGISTRIES / kind)
     assert record.kind == kind
@@ -343,5 +343,6 @@ def test_every_bundled_registry_publishes(kind: str) -> None:
 
 def test_the_bundled_dfm_registry_publishes_the_shipped_packs_and_all_rules() -> None:
     record = publish_registry(REGISTRIES / "dfm")
-    # laser_cut (3) + fdm (3) + cnc_router (6) + waterjet (3).
-    assert record.counts == {"packs": 4, "rules": 15}
+    # laser_cut (3) + fdm (3) + cnc_router (6) + waterjet (3) + cnc_mill (5,
+    # Stage 14A, CAM.md §6.2).
+    assert record.counts == {"packs": 5, "rules": 20}

@@ -1,0 +1,61 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/check_program.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Simulate and verify declared setups now (CAM.md §5); ProgramStatus per setup.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "setup_ids": {
+        "anyOf": [
+          {
+            "items": {
+              "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "partial": {
+        "type": "boolean"
+      },
+      "programs": {
+        "items": {
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "status": {
+        "const": "ok"
+      }
+    },
+    "required": [
+      "status",
+      "programs",
+      "partial"
+    ],
+    "type": "object"
+  },
+  "title": "check_program",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "check_program",
+    "profiles": [
+      "part",
+      "orchestrator"
+    ],
+    "sequential": false
+  }
+}

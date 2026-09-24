@@ -25,12 +25,16 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
-#: The model surface after 13B, and after 13C: **unchanged**. Parameter space
-#: is an enum value on an existing tool, not a fourth tool — the 8A/8B lever
-#: (``SOLVER.md`` §11), on the ``layout="nested_sheet"`` precedent, because each
-#: tool costs five generated drift-tested artifacts, a per-profile decision,
-#: dispatch tests on both profiles and a normative heading.
-TOOL_COUNT: int = 57
+#: The model surface after 13B, and after 13C: **unchanged by 13C**. Parameter
+#: space is an enum value on an existing tool, not a fourth tool — the 8A/8B
+#: lever (``SOLVER.md`` §11), on the ``layout="nested_sheet"`` precedent,
+#: because each tool costs five generated drift-tested artifacts, a
+#: per-profile decision, dispatch tests on both profiles and a normative
+#: heading. 57 -> 72 by Stage 14B's CAM quartet families (CAM.md §9,
+#: 2026-09-02): the pin repoints with the sub-stage that adds tools, and what
+#: this clause still asserts is 13C's own zero — no ``solve_params``, no
+#: ``propose_param*`` tool, ever.
+TOOL_COUNT: int = 72
 
 
 def _schema(name: str) -> Mapping[str, Any]:

@@ -1915,8 +1915,222 @@ geometric proximity, so the same evidence always yields the same steps.
 `spec` — the metadata, effective parameters, kernel metrics and CHECKS outcomes
 of exactly that build, as one page.
 
+## Manufacturing setups (`CAM.md` §3/§5.9/§9 — Stage 14; specified 2026-09-02, quartets landed with 14B, `check_program` landed with 14C)
+
+Specified by the `mission_plan.md` Stage 14 amendment (2026-09-02) **ahead of
+the machinery**, deliberately, because the operator's D2 mandate
+(`docs/frontier-staging-proposal.md` §D2, option (b)) makes the *boundary* of
+this surface load-bearing before any of it exists: the model may declare and
+check, and nothing on this surface can cause a runnable machine program to
+reach the filesystem. Per-tool `### ` headings and the `tools_decl.py`
+declarations land with the sub-stage that ships each tool — the Stage 13
+precedent (`mission_plan.md` Stage 13 block: "the three `tool_schema.md` tool
+headings land with the sub-stages that ship them") — so the contract drift
+gates keep asserting only tools that exist. *(14B landed 2026-09-02: the five
+quartet families below are declared and dispatched, and the pinned tool count
+moved 57 → 72 with them. 14C landed the same day: `check_program` is declared
+and dispatched, 72 → 73, and the surface still carries no emission tool.)*
+
+**The surface, argued rather than assumed** (`CAM.md` §9 requires the
+amendment to argue the shape): five declare/update/read quartet families plus
+one check verb — **16 tools**, moving the pinned tool count **57 → 72 at 14B
+and 72 → 73 at 14C**, repointed per sub-stage on the `SOLVER.md` §11
+discipline. The cheaper `declare_cam(kind, entry)` shape `CAM.md` §9 leaves
+open is **not taken**, for a structural reason the Stage 13 writeback refusal
+already leans on: every tool input schema in this repository is
+`additionalProperties: false`, and the five entry kinds are disjoint records
+with disjoint refusal sets (`invalid_setup` / `invalid_stock` /
+`invalid_fixture` / `invalid_wcs` / `invalid_operation`). A single
+kind-discriminated `entry` field would be the one place on the surface where
+a closed schema cannot refuse a foreign field by construction — the exact
+guarantee the D2 posture rests on.
+
+Landed with **14B** (declarations in `tools_decl.py`, the per-tool headings
+below), on the 8C lifecycle contract (revise/withdraw with a recorded reason,
+generational, nothing erased, `read_*` returns withdrawn entries with their
+reasons; provenance mandatory — cite a ledger requirement or be `assumed`
+with a reason), both profiles. Entry shapes, anchors (the existing
+`ANCHOR_PATTERN` grammar, no new naming scheme), the `VALIDATION.md` §1
+rule-2 tolerance-budget shape, feed transport (`FeedDecision`, `CAM.md`
+§3.6) and the declaration-time refusal taxonomy are normative in `CAM.md` §3
+and are not restated beyond the signatures. The tolerance block and its
+`rejects_mm3` are schema-nullable **deliberately** (the 9A `limits`
+precedent): `no_declared_tolerance` and `budget_missing_rejects` are the
+ledger's own refusals, and the schema does not preempt its one authority.
+
+### declare_setup / update_setup / read_setups
+
+```
+declare_setup(id: str, spindle_axis: "+X"|"-X"|"+Y"|"-Y"|"+Z"|"-Z",
+              order: int, stock: str, fixture: str, wcs: str,
+              tolerance: {gouge_budget_mm3: number, rest_budget_mm3: number,
+                          max_deviation_mm: number, rejects_mm3: number|null}
+                         | null = null,
+              provenance: {requirement: str|null, assumed: bool|null,
+                           reason: str|null},
+              note: str|null = null)
+    -> {status: "ok", generation, artifact_ref, change, entries}
+update_setup(id: str, patch: {...entry fields, withdrawn: bool|null},
+             reason: str)
+    -> {status: "ok", generation, artifact_ref, change, entries}
+read_setups()
+    -> {status: "ok", generation, artifact_ref, change, entries}
+```
+
+A setup is project state on the ledger pattern (`CAM.md` §3.1): declared
+spindle axis (never inferred), a strict `order`, and the `VALIDATION.md` §1
+rule-2 tolerance budgets. An absent tolerance block is refused
+`no_declared_tolerance`; a budget with no `rejects_mm3` is
+`budget_missing_rejects`; whether a budget clears the resolution floor is a
+**resolution-time** question (`budget_below_resolution`, `CAM.md` §5.3),
+unraisable here because a setup entry names no tool.
+
+### declare_stock / update_stock / read_stock
+
+```
+declare_stock(id: str, kind: "rectangular", extents_mm: [x, y, z],
+              origin_anchor: str, origin_offset_mm: [x, y, z] | null = null,
+              material: str,
+              provenance: {requirement: str|null, assumed: bool|null,
+                           reason: str|null},
+              note: str|null = null)
+    -> {status: "ok", generation, artifact_ref, change, entries}
+update_stock(id: str, patch: {...entry fields, withdrawn: bool|null},
+             reason: str)
+    -> {status: "ok", generation, artifact_ref, change, entries}
+read_stock()
+    -> {status: "ok", generation, artifact_ref, change, entries}
+```
+
+`origin_anchor` is the 8C `part[:selector]` grammar — a slash-bearing anchor
+is refused `invalid_stock`, the two-grammars rule. `material` resolves
+through the materials registry at resolution time (`stock_material_unknown`);
+a part overhanging the stock at the declared origin is `stock_too_small`,
+naming the axis, the side and the overhang in mm (`CAM.md` §3.2).
+
+### declare_fixture / update_fixture / read_fixtures
+
+```
+declare_fixture(id: str,
+                members: [{part: str, anchor: str, offset_mm: [x, y, z]}],
+                provenance: {requirement: str|null, assumed: bool|null,
+                             reason: str|null},
+                note: str|null = null)
+    -> {status: "ok", generation, artifact_ref, change, entries}
+update_fixture(id: str, patch: {...entry fields, withdrawn: bool|null},
+               reason: str)
+    -> {status: "ok", generation, artifact_ref, change, entries}
+read_fixtures()
+    -> {status: "ok", generation, artifact_ref, change, entries}
+```
+
+A fixture is **declared geometry** (`CAM.md` §3.3) — there is no work-holding
+precedent anywhere in this repo, which is the honest reason the strongest
+collision sentence is `no_collision_at_samples_in_declared_scene`. A
+collision check against a fixture nobody declared is `undeclared_scene`,
+never a clean result.
+
+### declare_wcs / update_wcs / read_wcs
+
+```
+declare_wcs(id: str, code: str, datum: str,
+            z_zero: "stock_top"|"part_top"|"datum",
+            provenance: {requirement: str|null, assumed: bool|null,
+                         reason: str|null},
+            note: str|null = null)
+    -> {status: "ok", generation, artifact_ref, change, entries}
+update_wcs(id: str, patch: {...entry fields, withdrawn: bool|null},
+           reason: str)
+    -> {status: "ok", generation, artifact_ref, change, entries}
+read_wcs()
+    -> {status: "ok", generation, artifact_ref, change, entries}
+```
+
+`datum` resolves through the 8C anchoring path against the part's current
+successful build; an unresolvable datum is `wcs_anchor_unresolvable`
+carrying the 8C reason (`missing_part` / `no_current_build` /
+`dangling_selector` / …) unconflated. `z_zero` is declared, never guessed —
+a Z zero the harness picked is the fastest way to bury a cutter in a vise
+(`CAM.md` §3.4).
+
+### declare_operation / update_operation / read_operations
+
+```
+declare_operation(id: str, setup: str,
+                  kind: "drill"|"pocket"|"profile"|"face",
+                  feature: str, tool: str, depth_mm: number,
+                  stepdown_mm: number|null = null,
+                  stepover_mm: number|null = null,
+                  climb: bool = true,
+                  tabs: {count: int, width_mm: number, height_mm: number}
+                        | null = null,
+                  feed_mm_min: number|null = null, rpm: number|null = null,
+                  plunge_mm_min: number|null = null,
+                  doc_mm: number|null = null, woc_mm: number|null = null,
+                  provenance: {requirement: str|null, assumed: bool|null,
+                               reason: str|null},
+                  note: str|null = null)
+    -> {status: "ok", generation, artifact_ref, change, entries}
+update_operation(id: str, patch: {...entry fields, withdrawn: bool|null},
+                 reason: str)
+    -> {status: "ok", generation, artifact_ref, change, entries}
+read_operations()
+    -> {status: "ok", generation, artifact_ref, change, entries}
+```
+
+`feature` is an anchor whose selector is a §5.3 tag whose **prefix matches
+the operation kind** (`drill_` / `pocket_` / `profile_` / `face_`, `mill_`
+generic, `keepout_` reserved for scenes) — `tag_prefix_mismatch` /
+`tag_prefix_unknown`, the `layer_for_tag` lookup generalized. Two operations
+claiming one feature in one setup is `duplicate_feature_claim`. The explicit
+feed fields are transport source 1 of `CAM.md` §3.6's fixed order (entry,
+else tool-record `feeds`, else the named `no_declared_*` refusal — **no
+third branch**); `climb` is declared, never inferred. The declaration-time
+pass sieve `op_sample_bound_exceeded` (`CAM.md` §4.3) runs here from the
+entry's own numbers and the named stock's extents.
+
+### check_program
+
+```
+check_program(setup_ids: [str] | null = null)
+    -> {status: "ok", programs: [ProgramStatus, ...], partial: bool}
+```
+
+Landed with **14C** (2026-09-02), both profiles — `CAM.md` §5.9/§9, the one
+CAM measuring verb. Simulate and verify only: coverage, round-trip against
+the in-memory reference post, sampled removal simulation, declared-scene
+collision — every universal verdict in its `_at_samples` spelling, every
+collision result carrying `in_process_stock_not_modelled` (`CAM.md` §5.5).
+Each `ProgramStatus` is the §5.9 record: the source artifact ref, the
+stock/fixture/WCS/tool records with registry digests, per-operation
+`FeedDecision`s with sources and `loops_emitted`, every verdict with
+`samples_evaluated`, the sample step and the reported
+`CAM_MIN_RESOLVABLE_MM3` with its `(step_mm, r, doc_mm)`, every named
+refusal (`cam_sim_timeout` carries the cheap facts and the moves already
+simulated), and every finding with its §1.3 severity. `setup_ids` narrows
+which setups run (the `check_motion` shape): a full run is recorded onto the
+program-status projection; a named subset is evaluated but not projected
+(`partial: true`, the `check_assembly` rule). An unresolvable setup makes
+every check on it `unresolvable` — named, never conflated with a failing
+check. **`check_program` writes no file and returns no program text** (§1.4,
+the D2 mandate).
+
+**No model tool emits a program** (`CAM.md` §1.4). Emission is the
+consent-gated operator CLI verb `heph cam emit`, and it is **deferred to 14D**,
+which this amendment specifies and does not ship — see the Deferred slot below
+and the plan's Stage 14 block. `export_part` gains no program format.
+
 ## Deferred (schema reserved, not in mission scope)
 
 `run_fea(name, load_spec)` — static FEA via CalculiX with loads on tagged
 faces (Smith volunteers "static FEA … ~15 kg dynamic"; we reserve the slot).
 `import_geometry(path)` — STEP import into a project (`Imports` tree section).
+`emit_program(setup_id, post)` — **reserved and refused, deliberately**
+(slot added 2026-09-02 with the Stage 14 amendment, on this section's `run_fea`
+precedent, so no later drafter reads the absence as a free name). Emission of a
+runnable machine program is never a model tool: it is the operator CLI verb
+`heph cam emit` under runtime-recorded operator consent (`CAM.md` §1.4, §9),
+and even that verb's milling form is deferred to Stage 14D under the D2
+operator mandate — specified in `CAM.md` §9/§1.5, not shipped. This slot stays
+a reservation when 14D lands; it never becomes a tool without reversing the
+plan's Stage 14 block by a further dated amendment.

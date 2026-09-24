@@ -404,6 +404,66 @@ _ARGS: dict[str, dict[str, object]] = {
         "provenance": {"assumed": True, "reason": "matrix fixture"},
     },
     "read_proposals": {},
+    # CAM.md §3 (Stage 14B): declared machining state on the 8C quartet
+    # decision. Declaration is structural — whether anchors resolve, tools
+    # exist or the stock fits are RESOLUTION questions — so availability is
+    # what this matrix asserts, exactly as for constraints and joints.
+    "declare_setup": {
+        "id": "s-op1",
+        "spindle_axis": "+Z",
+        "order": 1,
+        "stock": "st-plate",
+        "fixture": "fx-vise",
+        "wcs": "w-g54",
+        "tolerance": {
+            "gouge_budget_mm3": 0.5,
+            "rest_budget_mm3": 40.0,
+            "max_deviation_mm": 0.1,
+            "rejects_mm3": 2.0,
+        },
+        "provenance": {"assumed": True, "reason": "matrix fixture"},
+    },
+    "update_setup": {"id": "s-op1", "patch": {"note": "top face up"}, "reason": "matrix fixture"},
+    "read_setups": {},
+    "declare_stock": {
+        "id": "st-plate",
+        "kind": "rectangular",
+        "extents_mm": [120.0, 80.0, 25.0],
+        "origin_anchor": "widget",
+        "material": "al-6061",
+        "provenance": {"assumed": True, "reason": "matrix fixture"},
+    },
+    "update_stock": {"id": "st-plate", "patch": {"note": "measured"}, "reason": "matrix fixture"},
+    "read_stock": {},
+    "declare_fixture": {
+        "id": "fx-vise",
+        "members": [{"part": "widget", "anchor": "widget", "offset_mm": [0.0, 0.0, 0.0]}],
+        "provenance": {"assumed": True, "reason": "matrix fixture"},
+    },
+    "update_fixture": {"id": "fx-vise", "patch": {"note": "jaws"}, "reason": "matrix fixture"},
+    "read_fixtures": {},
+    "declare_wcs": {
+        "id": "w-g54",
+        "code": "G54",
+        "datum": "widget",
+        "z_zero": "stock_top",
+        "provenance": {"assumed": True, "reason": "matrix fixture"},
+    },
+    "update_wcs": {"id": "w-g54", "patch": {"note": "touch-off"}, "reason": "matrix fixture"},
+    "read_wcs": {},
+    "declare_operation": {
+        "id": "op-1",
+        "setup": "s-op1",
+        "kind": "pocket",
+        "feature": "widget:pocket_relief",
+        "tool": "em_6mm_3fl_carbide",
+        "depth_mm": 6.0,
+        "stepdown_mm": 3.0,
+        "stepover_mm": 2.4,
+        "provenance": {"assumed": True, "reason": "matrix fixture"},
+    },
+    "update_operation": {"id": "op-1", "patch": {"note": "roughing"}, "reason": "matrix fixture"},
+    "read_operations": {},
 }
 
 

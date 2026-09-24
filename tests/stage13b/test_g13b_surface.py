@@ -213,16 +213,20 @@ def test_reading_an_unrecorded_proposal_id_is_refused_by_name(wired: Project) ->
 
 
 def test_the_tool_count_pins_moved_with_this_sub_stage() -> None:
-    """Clause 40: 55 -> 57, repointed HERE.
+    """Clause 40: 55 -> 57, repointed HERE — and 57 -> 72 by Stage 14B.
 
     ``assert len(...) == N`` on an existing suite fails the moment a tool
     lands, so the pin moves with the sub-stage that adds it or "existing suites
-    stay green" catches it late and painfully (``SOLVER.md`` §11).
+    stay green" catches it late and painfully (``SOLVER.md`` §11). Stage 14B's
+    fifteen CAM declared-state tools (CAM.md §9, 2026-09-02) moved every pin —
+    including this one, per exactly that rule — so what this clause now pins
+    is 13B's own contribution plus the shared pins' agreement, not a total the
+    next stage would break.
     """
-    assert len(tools_decl.tool_names()) == 57
+    assert len(tools_decl.tool_names()) == 72
     assert {"propose_placement", "read_proposals"} <= set(tools_decl.tool_names())
-    assert "assert len(TOOL_NAMES) == 57" in _read("tests/stage2/test_g2_contract_drift.py")
-    assert "assert len(tools_decl.tool_names()) == 57" in _read("contract/tests/test_toolgen.py")
+    assert "assert len(TOOL_NAMES) == 72" in _read("tests/stage2/test_g2_contract_drift.py")
+    assert "assert len(tools_decl.tool_names()) == 72" in _read("contract/tests/test_toolgen.py")
     for name in ("propose_placement", "read_proposals"):
         assert (ROOT / "schemas" / "tools" / f"{name}.schema.json").is_file()
 

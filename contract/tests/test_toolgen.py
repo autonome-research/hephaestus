@@ -95,7 +95,7 @@ def test_no_drift_between_declaration_and_tool_schema_md() -> None:
     assert decl.isdisjoint(excluded)
 
 
-def test_full_tool_surface_is_57_tools() -> None:
+def test_full_tool_surface_is_73_tools() -> None:
     # 27 Stage-2 tools, the Stage 2V requirement-ledger family, the Stage 6
     # manufacturing tools (run_dfm, generate_drawing, generate_doc), the
     # Stage 8A read-only reference pair (INGEST.md §2), the Stage 8B
@@ -125,8 +125,18 @@ def test_full_tool_surface_is_57_tools() -> None:
     # surface, because each tool costs five drift-tested generated artifacts, a
     # per-profile decision, dispatch tests on both profiles and a
     # `tool_schema.md` heading under one drift gate.
-    assert len(tools_decl.tool_names()) == 57
-    assert len(set(tools_decl.tool_names())) == 57
+    #
+    # 57 -> 72 by CAM.md §9 (Stage 14B, 2026-09-02): the five CAM
+    # declare/update/read quartet families — the 16-tool shape argued in the
+    # amendment (`declare_cam(kind, entry)` refused: a kind-discriminated
+    # entry defeats closed per-kind schemas).
+    #
+    # 72 -> 73 by CAM.md §5.9/§9 (Stage 14C, 2026-09-02): `check_program`, the
+    # one CAM measuring verb — simulate and verify, no file written, no
+    # program text in any result. 14D adds ZERO — emission is an operator CLI
+    # verb, and `emit_program` stays a refused reservation.
+    assert len(tools_decl.tool_names()) == 73
+    assert len(set(tools_decl.tool_names())) == 73
     assert {"record_requirements", "read_requirements", "update_requirement"} <= set(
         tools_decl.tool_names()
     )
@@ -164,6 +174,30 @@ def test_full_tool_surface_is_57_tools() -> None:
     # SOLVER.md §11 (Stage 13A): the pose solver. One tool, and it writes
     # nothing - the reversal it rides on bought PROPOSING and nothing else.
     assert {"solve_pose", "propose_placement", "read_proposals"} <= set(tools_decl.tool_names())
+    # CAM.md §9 (Stage 14B): the five CAM quartet families, same compelled-
+    # honesty decision — model-writable, generational, never erasing, and
+    # NOTHING on this surface emits a program (§1.4).
+    assert {
+        "declare_setup",
+        "update_setup",
+        "read_setups",
+        "declare_stock",
+        "update_stock",
+        "read_stock",
+        "declare_fixture",
+        "update_fixture",
+        "read_fixtures",
+        "declare_wcs",
+        "update_wcs",
+        "read_wcs",
+        "declare_operation",
+        "update_operation",
+        "read_operations",
+    } <= set(tools_decl.tool_names())
+    assert "emit_program" not in tools_decl.tool_names()
+    # CAM.md §5.9/§9 (Stage 14C): the one CAM measuring verb — simulate and
+    # verify, never emit.
+    assert "check_program" in tools_decl.tool_names()
 
 
 def test_delegate_prompt_carries_max_utf8_keyword() -> None:
