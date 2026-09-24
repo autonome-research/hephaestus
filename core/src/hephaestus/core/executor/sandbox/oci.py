@@ -37,6 +37,7 @@ from hephaestus.core.executor.sandbox.oci_protocol import (
     MAX_ADDRESS_SPACE_BYTES,
     MAX_CPU_SECONDS,
     MAX_NPROC,
+    OCI_HOSTNAME,
     OCI_PROFILE_VERSION,
     OCI_TMPFS_BYTES,
     PROBE_STDERR_MAX_BYTES,
@@ -60,14 +61,21 @@ _REPOSITORY_RE = re.compile(
 AUDITED_ENTRYPOINT: tuple[str, ...] = (
     "/usr/bin/env",
     "-i",
+    "LD_LIBRARY_PATH=/opt/hephaestus/native/$LIB:/opt/hephaestus/native/usr/$LIB",
     "/opt/hephaestus/bin/python",
     "-I",
     "-m",
     "hephaestus.core.executor.sandbox.oci_launcher",
 )
-# The eventual image must deliberately declare this exact map.  In particular,
-# ambient base-image PATH and loader/Python injection variables are not accepted.
-AUDITED_IMAGE_ENV: tuple[str, ...] = ()
+# The pinned Python base declares this exact environment. The audited entrypoint
+# runs ``env -i`` before Python, so none reaches the launcher or worker. Any base
+# drift or loader/Python injection variable still fails image inspection.
+AUDITED_IMAGE_ENV: tuple[str, ...] = (
+    "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305",
+    "PYTHON_VERSION=3.13.7",
+    "PYTHON_SHA256=5462f9099dfd30e238def83c71d91897d8caa5ff6ebc7a50f14d4802cdaaa79a",
+)
 RUNTIME_ENV: Mapping[str, str] = MappingProxyType(
     {
         "PATH": "/usr/bin:/bin",
@@ -367,6 +375,7 @@ def build_create_argv(
     return (
         *_runtime_prefix(runtime),
         "create",
+        "--interactive",
         "--name",
         container_name,
         "--pull=never",
@@ -377,14 +386,10 @@ def build_create_argv(
         "--read-only",
         "--network",
         "none",
-        "--pid",
-        "private",
         "--ipc",
         "none",
-        "--uts",
-        "private",
         "--hostname",
-        "hephaestus-executor",
+        OCI_HOSTNAME,
         "--cap-drop",
         "ALL",
         "--security-opt",
@@ -400,7 +405,7 @@ def build_create_argv(
         "--tmpfs",
         f"/tmp:rw,nosuid,nodev,noexec,size={OCI_TMPFS_BYTES},mode=1777",
         "--mount",
-        f"type=bind,source={source_text},destination=/work,rw,bind-propagation=rprivate",
+        f"type=bind,source={source_text},destination=/work,bind-propagation=rprivate",
         "--workdir",
         "/work",
         image,
@@ -984,12 +989,14 @@ def _validate_probe_response(
         "cwd",
         "effective_gid",
         "effective_uid",
+        "hostname",
         "kind",
         "mounts",
         "network",
         "nonce",
         "no_new_privs",
         "oci_profile_version",
+        "pid",
         "protocol_version",
         "capabilities",
         "rlimits",
@@ -1026,6 +1033,8 @@ def _validate_probe_response(
     features["no_new_privileges"] = (
         type(value["no_new_privs"]) is int and value["no_new_privs"] == 1
     )
+    features["pid_namespace"] = type(value["pid"]) is int and value["pid"] == 1
+    features["uts_namespace"] = value["hostname"] == OCI_HOSTNAME
 
     limits = value["rlimits"]
     expected = {

@@ -1,0 +1,77 @@
+{
+  "architecture": "arm64",
+  "packages": [
+    {
+      "filename": "fonts-dejavu-core_2.37-6_all.deb",
+      "sha256": "8892669e51aab4dc56682c8e39d8ddb7d70fad83c369344e1e240bf3ca22bb76",
+      "size": 1067728,
+      "url": "https://deb.debian.org/debian/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-6_all.deb"
+    },
+    {
+      "filename": "libx11-data_2%3a1.8.4-2+deb12u2_all.deb",
+      "sha256": "987a848aeb1c358e4186368871b0526f10bb14c6b53214ab3bf8b69abb830191",
+      "size": 291884,
+      "url": "https://deb.debian.org/debian/pool/main/libx/libx11/libx11-data_1.8.4-2%2bdeb12u2_all.deb"
+    },
+    {
+      "filename": "libbsd0_0.11.7-2_arm64.deb",
+      "sha256": "ef00f132ddd268ee67d756998723ee18543db27ab34930c0a9f1cff75cf55382",
+      "size": 115116,
+      "url": "https://deb.debian.org/debian/pool/main/libb/libbsd/libbsd0_0.11.7-2_arm64.deb"
+    },
+    {
+      "filename": "libgl1_1.6.0-1_arm64.deb",
+      "sha256": "f4043ab47f52325973d2b608514b3469b055b65c744861c7f378755a32e799d6",
+      "size": 90232,
+      "url": "https://deb.debian.org/debian/pool/main/libg/libglvnd/libgl1_1.6.0-1_arm64.deb"
+    },
+    {
+      "filename": "libglvnd0_1.6.0-1_arm64.deb",
+      "sha256": "d5063205fab5322ee686f33f87c6315b3fcd1335ea4e7bc8202b48ed4f9c9e83",
+      "size": 41396,
+      "url": "https://deb.debian.org/debian/pool/main/libg/libglvnd/libglvnd0_1.6.0-1_arm64.deb"
+    },
+    {
+      "filename": "libglx0_1.6.0-1_arm64.deb",
+      "sha256": "523f9b71f75e48ae605d8ef298a4b03ade26ade9a808a85329a3bd82a54b9b0d",
+      "size": 30848,
+      "url": "https://deb.debian.org/debian/pool/main/libg/libglvnd/libglx0_1.6.0-1_arm64.deb"
+    },
+    {
+      "filename": "libmd0_1.0.4-2_arm64.deb",
+      "sha256": "99a8c7dd591fae9fb37d8bf8dfdffa850e207fa405b3198c5b24711a5f972381",
+      "size": 29400,
+      "url": "https://deb.debian.org/debian/pool/main/libm/libmd/libmd0_1.0.4-2_arm64.deb"
+    },
+    {
+      "filename": "libx11-6_2%3a1.8.4-2+deb12u2_arm64.deb",
+      "sha256": "d1d533e983582282a9ea82c87ac5ce715a9b67bd6d1acbd2439a11c63c36549b",
+      "size": 735284,
+      "url": "https://deb.debian.org/debian/pool/main/libx/libx11/libx11-6_1.8.4-2%2bdeb12u2_arm64.deb"
+    },
+    {
+      "filename": "libxau6_1%3a1.0.9-1_arm64.deb",
+      "sha256": "36c2bf400641a80521093771dc2562c903df4065f9eb03add50d90564337ea6c",
+      "size": 19696,
+      "url": "https://deb.debian.org/debian/pool/main/libx/libxau/libxau6_1.0.9-1_arm64.deb"
+    },
+    {
+      "filename": "libxcb1_1.15-1_arm64.deb",
+      "sha256": "041d9a68415c3ccf3ce8f4f8b88e4bbfb5dc1f0d97013c6ef8423e620ea50f84",
+      "size": 142664,
+      "url": "https://deb.debian.org/debian/pool/main/libx/libxcb/libxcb1_1.15-1_arm64.deb"
+    },
+    {
+      "filename": "libxdmcp6_1%3a1.1.2-3_arm64.deb",
+      "sha256": "e92569ac33247261aa09adfadc34ced3994ac301cf8b58de415a2d5dbf15ccfc",
+      "size": 25358,
+      "url": "https://deb.debian.org/debian/pool/main/libx/libxdmcp/libxdmcp6_1.1.2-3_arm64.deb"
+    },
+    {
+      "filename": "libexpat1_2.5.0-1+deb12u3_arm64.deb",
+      "sha256": "3caad0fb4382e206b005737de35b3193450589a10053f8415ded216649a233bc",
+      "size": 87944,
+      "url": "https://deb.debian.org/debian-security/pool/updates/main/e/expat/libexpat1_2.5.0-1%2bdeb12u3_arm64.deb"
+    }
+  ]
+}

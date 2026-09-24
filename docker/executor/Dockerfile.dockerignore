@@ -1,0 +1,13 @@
+**
+!docker/
+!docker/executor/
+!docker/executor/requirements.lock
+!docker/executor/fonts.conf
+!docker/executor/fetch_native_runtime.py
+!docker/executor/native-amd64.lock.json
+!docker/executor/native-arm64.lock.json
+!dist/
+!dist/executor-wheelhouse/
+!dist/executor-wheelhouse/**
+!dist/executor-native/
+!dist/executor-native/**

@@ -327,6 +327,8 @@ def probe_record(
         observations = {
             **status,
             "cwd": os.getcwd(),
+            "hostname": socket.gethostname(),
+            "pid": os.getpid(),
             "mounts": parse_mountinfo(mount_text),
             "root_write_errno": _attempt_write(Path("/.heph-oci-root-write"), b"x"),
             "work_proof": proof_name,
@@ -345,12 +347,14 @@ def probe_record(
         "cwd": observations.get("cwd"),
         "effective_gid": (os.getegid if getegid is None else getegid)(),
         "effective_uid": (os.geteuid if geteuid is None else geteuid)(),
+        "hostname": observations.get("hostname"),
         "kind": "hephaestus_executor_probe",
         "mounts": observations.get("mounts"),
         "network": observations.get("network"),
         "nonce": request.nonce,
         "no_new_privs": observations.get("no_new_privs"),
         "oci_profile_version": OCI_PROFILE_VERSION,
+        "pid": observations.get("pid"),
         "protocol_version": PROTOCOL_VERSION,
         "capabilities": observations.get("capabilities"),
         "rlimits": {
