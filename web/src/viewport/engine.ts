@@ -52,7 +52,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from "three";
-import type { Box3 } from "three";
+import type { Box3, Quaternion } from "three";
 import { GLTFLoader, type GLTF } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { nameForDirection } from "./cameras";
@@ -308,10 +308,14 @@ export class ViewportEngine {
     if (bounds === null || bounds.isEmpty()) return;
     const framing = framingFor(bounds, view, this.aspect());
     if (framing === null) return;
+    // An explicit view/Fit supersedes any sub-pixel inertia from the previous
+    // gesture. Finish it against the old pose before writing the new framing.
+    this.flushControlsDamping();
     this.framing = framing;
     this.fit = { view, exploded };
     this.applyCurrentFraming(framing);
     this.controls.target.set(framing.target[0], framing.target[1], framing.target[2]);
+    this.alignControlsUp();
     this.controls.update();
     // §3.11.5's grid is stepped off the span this framing just fixed — the same
     // number `GridReadout` prints — so it is rebuilt exactly when that number
@@ -638,6 +642,23 @@ export class ViewportEngine {
     return size.y > 0 ? size.x / size.y : 1;
   }
 
+  /**
+   * Keep OrbitControls' orbit frame aligned with the camera's framing.
+   *
+   * OrbitControls snapshots `object.up` into these quaternions in its
+   * constructor. The cameras are Z-up then, but a named framing subsequently
+   * writes its projected screen-up vector. Leaving the constructor snapshot in
+   * place makes controls orbit in the old Z-up frame while `lookAt` keeps using
+   * the new camera up: a horizontal drag therefore gains a vertical component
+   * and roll (the reported corkscrew). Refresh only that cached basis; damping,
+   * pan, zoom, the target, and the camera pose remain owned by the controls.
+   */
+  private alignControlsUp(): void {
+    const controls = this.controls as OrbitControls & { _quat: Quaternion; _quatInverse: Quaternion };
+    controls._quat.setFromUnitVectors(this.camera.up, new Vector3(0, 1, 0));
+    controls._quatInverse.copy(controls._quat).invert();
+  }
+
   /** Apply the last named-view framing to whichever camera is live. */
   private applyCurrentFraming(framing: Framing): void {
     if (this.camera === this.orthoCamera) {
@@ -731,6 +752,14 @@ export class ViewportEngine {
     return true;
   }
 
+  /** Land at OrbitControls' asymptotic target and clear its pending deltas. */
+  private flushControlsDamping(): void {
+    const damping = this.controls.enableDamping;
+    this.controls.enableDamping = false;
+    this.controls.update();
+    this.controls.enableDamping = damping;
+  }
+
   /**
    * Run the damping to rest.
    *
@@ -751,6 +780,20 @@ export class ViewportEngine {
       for (const listener of this.frameListeners) listener();
       if (zooming || moving) requestAnimationFrame(step);
       else {
+        /*
+         * `update() === false` means only that this frame moved less than
+         * OrbitControls' change-event epsilon; it does NOT mean its damped
+         * spherical/pan deltas are empty. Stopping there leaves inertia for
+         * the next gesture to inherit. Consume that sub-pixel remainder once
+         * without damping: this lands at the same asymptotic target, rather
+         * than truncating it or compounding it into the next drag.
+         */
+        this.flushControlsDamping();
+        // The final sub-pixel step may itself be below OrbitControls' event
+        // epsilon, so publish it unconditionally to the canvas and view cube.
+        this.holdDepthRange();
+        this.renderer.render(this.scene, this.camera);
+        for (const listener of this.frameListeners) listener();
         this.settling = false;
         // The camera has come to rest, so this is where a free orbit or zoom
         // gets its name — the same settle `controls`'s own `end` event gives
