@@ -31,9 +31,11 @@ EXIT_EXEC = 126
 FIXED_WORKER_ENV: Mapping[str, str] = MappingProxyType(
     {
         "HOME": "/tmp",
+        "JOBLIB_MULTIPROCESSING": "0",
         "TMPDIR": "/tmp",
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
+        "LD_LIBRARY_PATH": ("/opt/hephaestus/native/$LIB:/opt/hephaestus/native/usr/$LIB"),
         "PYTHONDONTWRITEBYTECODE": "1",
         "OMP_NUM_THREADS": "1",
         "OPENBLAS_NUM_THREADS": "1",

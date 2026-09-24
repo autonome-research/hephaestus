@@ -14,7 +14,8 @@ PROTOCOL_NAME = "hephaestus.oci-executor"
 PROTOCOL_VERSION = 2
 MANIFEST_VERSION = 2
 DIAGNOSTIC_VERSION = 1
-OCI_PROFILE_VERSION = 1
+OCI_PROFILE_VERSION = 2
+OCI_HOSTNAME = "hephaestus-executor"
 
 OCI_TMPFS_BYTES = 256 * 1024**2
 PROBE_REQUEST_MAX_BYTES = 1024
@@ -28,6 +29,8 @@ REQUIRED_OCI_FEATURES: tuple[str, ...] = (
     "rlimits",
     "capabilities_dropped",
     "no_new_privileges",
+    "pid_namespace",
+    "uts_namespace",
     "root_read_only",
     "work_writable",
     "tmpfs_profile",

@@ -17,6 +17,7 @@ from hephaestus.core.executor.sandbox import oci as oci_module
 from hephaestus.core.executor.sandbox.base import CapabilityReport, Rlimits, SandboxSpec
 from hephaestus.core.executor.sandbox.oci import (
     AUDITED_ENTRYPOINT,
+    AUDITED_IMAGE_ENV,
     OciBackend,
     OciIdentity,
     OciRuntime,
@@ -34,6 +35,7 @@ from hephaestus.core.executor.sandbox.oci import (
 )
 from hephaestus.core.executor.sandbox.oci_protocol import (
     BUILD_WORKER,
+    OCI_HOSTNAME,
     OCI_PROFILE_VERSION,
     OCI_TMPFS_BYTES,
     PROTOCOL_VERSION,
@@ -105,6 +107,7 @@ def test_exact_docker_create_argv(tmp_path: Path) -> None:
     assert actual == (
         "/usr/bin/docker",
         "create",
+        "--interactive",
         "--name",
         NAME,
         "--pull=never",
@@ -115,12 +118,8 @@ def test_exact_docker_create_argv(tmp_path: Path) -> None:
         "--read-only",
         "--network",
         "none",
-        "--pid",
-        "private",
         "--ipc",
         "none",
-        "--uts",
-        "private",
         "--hostname",
         "hephaestus-executor",
         "--cap-drop",
@@ -138,7 +137,7 @@ def test_exact_docker_create_argv(tmp_path: Path) -> None:
         "--tmpfs",
         f"/tmp:rw,nosuid,nodev,noexec,size={OCI_TMPFS_BYTES},mode=1777",
         "--mount",
-        f"type=bind,source={out},destination=/work,rw,bind-propagation=rprivate",
+        f"type=bind,source={out},destination=/work,bind-propagation=rprivate",
         "--workdir",
         "/work",
         IMAGE,
@@ -537,6 +536,7 @@ def _valid_probe_response(nonce: str) -> dict[str, object]:
         "cwd": "/work",
         "effective_gid": IDENTITY.gid,
         "effective_uid": IDENTITY.uid,
+        "hostname": OCI_HOSTNAME,
         "kind": "hephaestus_executor_probe",
         "mounts": {
             "/": {"mountpoint": "/", "fs_type": "overlay", "options": ["ro"]},
@@ -555,6 +555,7 @@ def _valid_probe_response(nonce: str) -> dict[str, object]:
         "nonce": nonce,
         "no_new_privs": 1,
         "oci_profile_version": OCI_PROFILE_VERSION,
+        "pid": 1,
         "protocol_version": PROTOCOL_VERSION,
         "rlimits": {
             "RLIMIT_AS": [123456789, 123456789],
@@ -585,6 +586,8 @@ def test_probe_response_requires_every_raw_containment_observation(tmp_path: Pat
         lambda value: value.__setitem__("effective_uid", 0),
         lambda value: value.__setitem__("effective_uid", True),
         lambda value: value.__setitem__("no_new_privs", True),
+        lambda value: value.__setitem__("pid", 2),
+        lambda value: value.__setitem__("hostname", "shared-host"),
         lambda value: value.__setitem__("tmp_write_errno", False),
         lambda value: value["capabilities"].__setitem__("CapEff", "0000000000000001"),
         lambda value: value["network"].__setitem__("interfaces", ["eth0", "lo"]),
@@ -624,7 +627,7 @@ def test_runtime_and_image_metadata_are_strict() -> None:
         "Config": {
             "Cmd": [],
             "Entrypoint": list(AUDITED_ENTRYPOINT),
-            "Env": [],
+            "Env": list(AUDITED_IMAGE_ENV),
             "Volumes": None,
         },
         "Id": "sha256:" + "e" * 64,
