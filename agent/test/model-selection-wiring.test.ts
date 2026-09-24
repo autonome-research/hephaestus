@@ -44,6 +44,46 @@ it("uses the switched live model for the next explicit turn's images and provide
     await client.request("session.prompt", { session_id: "wire", run_id: "vision-turn", prompt: "inspect again", expected_model_revision: changed.model_state.revision });
     expect(vision.requests.at(-1)?.bodyText).toContain("image_url");
     expect(text.requests).toHaveLength(2);
+
+    // Registration reads canonical ids/models from Pi and appends to the live
+    // resolver. It does not recreate this session or change its selected model.
+    const providerList = await client.request("providers.list", {}) as {
+      catalog: { id: string; auth_methods: { type: string }[]; models: { id: string }[] }[];
+    };
+    const anthropic = providerList.catalog.find((provider) => provider.id === "anthropic");
+    expect(anthropic?.models.length).toBeGreaterThan(0);
+    expect(providerList.catalog.find((provider) => provider.id === "amazon-bedrock"))
+      .toMatchObject({ auth_methods: [] });
+    for (const scope of ["serve", "project"]) {
+      await expect(client.request("credentials.set_key", {
+        provider_id: "amazon-bedrock",
+        key: "synthetic-not-a-real-key",
+        scope,
+      })).rejects.toMatchObject({ data: { code: "unsupported_auth_type" } });
+    }
+    const anthropicModel = anthropic?.models[0]?.id;
+    if (anthropicModel === undefined) throw new Error("Pi catalog has no Anthropic model");
+    await client.request("providers.register", {
+      provider: {
+        id: "anthropic",
+        kind: "pi_native",
+        models: [{ id: anthropicModel }],
+      },
+    });
+    const afterRegistration = await client.request("session.model.get", { session_id: "wire" }) as {
+      model_state: SessionModelState;
+    };
+    expect(afterRegistration.model_state.current).toMatchObject({
+      provider_id: vision.providerId,
+      model_id: vision.modelId,
+    });
+    const projected = await client.request("providers.models", {}) as { providers: { provider_id: string }[] };
+    expect(projected.providers.map((provider) => provider.provider_id)).toEqual([
+      text.providerId,
+      vision.providerId,
+      "anthropic",
+    ]);
+
     const health = await client.request("credentials.status", { provider_id: vision.providerId });
     expect(health).toMatchObject({ health: "accepted" });
     const history = await client.request("history.page", { session_id: "wire" });

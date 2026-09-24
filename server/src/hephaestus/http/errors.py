@@ -338,6 +338,8 @@ REASON_STATUS: Final[dict[str, int]] = {
     # request. It is NOT collapsed into `credential_rejected`: the operator's
     # remedy differs (sign in, versus rotate a key the provider rejected).
     "provider_not_authenticated": 409,
+    "provider_already_registered": 409,
+    "provider_catalog_empty": 409,
     # 422 — the provider offers sign-in flows, just not the one that was asked
     # for. Its own row because a silent substitution is what §23.6 forbids.
     "unsupported_auth_type": 422,

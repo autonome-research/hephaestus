@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -30,11 +31,13 @@ from hephaestus.http.providers import (
     AUTH_FLOW_TYPES,
     AUTH_HEALTH,
     AUTH_SOURCES,
+    CATALOG_AUTH_METHODS,
     CREDENTIAL_SCOPES,
     PROVIDER_KINDS,
     PROVIDER_REFUSALS,
     is_loopback_host,
     read_providers_file,
+    register_catalog_provider,
 )
 from hephaestus.testing.fake_agent import FakeAgent
 from hephaestus.testing.workspace import Workspace, uuid7, workspace
@@ -109,6 +112,155 @@ def test_a_serve_with_no_providers_json_still_reads_and_writes_one(ws: Workspace
     assert written.status_code == 200, written.text
     assert [row["id"] for row in written.json()["providers"]] == ["heph-fake"]
     assert _config_path(ws).exists()
+
+
+def _native_catalog_row() -> dict[str, Any]:
+    return {
+        "id": "anthropic",
+        "name": "Anthropic",
+        "auth_methods": [
+            {"type": "subscription", "label": "Claude Pro/Max subscription"},
+            {"type": "api_key", "label": "API key"},
+        ],
+        "models": [
+            {
+                "id": "claude-sonnet-4-5",
+                "name": "Claude Sonnet 4.5",
+                "input": ["text", "image"],
+                "reasoning": True,
+            }
+        ],
+    }
+
+
+def test_detached_catalog_read_is_ephemeral_and_does_not_create_an_auth_store(
+    ws: Workspace,
+) -> None:
+    response = ws.get("/providers/catalog")
+    assert response.status_code == 200, response.text
+    assert isinstance(response.json().get("catalog"), list)
+    assert not (ws.root / ".heph" / "agent").exists()
+
+
+def test_catalog_registration_bootstraps_first_provider_from_runtime_metadata(
+    tmp_path: Path,
+) -> None:
+    """The first provider needs no hand-authored spec and never stores a secret."""
+    with workspace(tmp_path / "proj", agent=True) as project:
+        assert project.agent is not None
+        project.agent.catalog = [_native_catalog_row()]
+        response = project.request(
+            "POST",
+            "/providers/register",
+            json={"provider_id": "anthropic", "auth_type": "api_key"},
+            key=uuid7(),
+        )
+        assert response.status_code == 200, response.text
+        written = json.loads(_config_path(project).read_text())
+        assert written == {
+            "providers": [
+                {
+                    "id": "anthropic",
+                    "kind": "pi_native",
+                    "models": [{"id": "claude-sonnet-4-5"}],
+                }
+            ]
+        }
+        assert SENTINEL_KEY not in response.text
+        assert set(CATALOG_AUTH_METHODS) == {"subscription", "api_key"}
+
+        # Fake-only credential transport proves the newly declared first row is
+        # immediately addressable; the key remains absent from HTTP and config.
+        fake_key = "first-provider-fake-key"
+        signed_in = project.post(
+            "/providers/anthropic/auth/key",
+            json={"key": fake_key, "scope": "serve"},
+        )
+        assert signed_in.status_code == 200, signed_in.text
+        assert fake_key not in signed_in.text
+        assert fake_key not in _config_path(project).read_text()
+
+
+def test_catalog_registration_is_additive_and_rejects_duplicate_or_unoffered_auth(
+    tmp_path: Path,
+) -> None:
+    """An addition preserves byte-for-byte declarations around its appended row."""
+    with workspace(tmp_path / "proj", agent=True) as project:
+        assert project.agent is not None
+        project.agent.catalog = [_native_catalog_row()]
+        first = _write_specs(project, [_FAKE_SPEC])
+        assert first.status_code == 200
+        added = project.request(
+            "POST",
+            "/providers/register",
+            json={"provider_id": "anthropic", "auth_type": "api_key"},
+            key=uuid7(),
+        )
+        assert added.status_code == 200, added.text
+        rows = read_providers_file(_config_path(project)).providers
+        assert rows[0] == _FAKE_SPEC
+        assert [row["id"] for row in rows] == ["heph-fake", "anthropic"]
+        before = _config_path(project).read_bytes()
+        duplicate = project.request(
+            "POST",
+            "/providers/register",
+            json={"provider_id": "anthropic", "auth_type": "api_key"},
+            key=uuid7(),
+        )
+        assert duplicate.status_code == 409
+        assert duplicate.json()["reason"] == "provider_already_registered"
+        assert _config_path(project).read_bytes() == before
+
+        project.agent.catalog = [
+            {
+                **_native_catalog_row(),
+                "id": "subscription-only",
+                "auth_methods": [{"type": "subscription", "label": "Subscription"}],
+            }
+        ]
+        refused = project.request(
+            "POST",
+            "/providers/register",
+            json={"provider_id": "subscription-only", "auth_type": "api_key"},
+            key=uuid7(),
+        )
+        assert refused.status_code == 422
+        assert refused.json()["reason"] == "unsupported_auth_type"
+        assert _config_path(project).read_bytes() == before
+
+
+def test_concurrent_catalog_registrations_do_not_lose_existing_or_peer_rows(
+    ws: Workspace,
+) -> None:
+    """The additive read-modify-write is serialized around the whole operation."""
+    assert _write_specs(ws, [_FAKE_SPEC]).status_code == 200
+    first = _native_catalog_row()
+    second = {
+        **_native_catalog_row(),
+        "id": "openai-codex",
+        "name": "OpenAI Codex",
+        "models": [
+            {
+                "id": "gpt-codex",
+                "name": "GPT Codex",
+                "input": ["text", "image"],
+                "reasoning": True,
+            }
+        ],
+    }
+    path = _config_path(ws)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(
+                register_catalog_provider, path, catalog_entry=entry, auth_type="subscription"
+            )
+            for entry in (first, second)
+        ]
+        outcomes = [future.result() for future in futures]
+    assert len(outcomes) == 2
+    ids = [row["id"] for row in read_providers_file(path).providers]
+    assert ids[0] == "heph-fake"
+    assert set(ids[1:]) == {"anthropic", "openai-codex"}
 
 
 def test_get_providers_projects_model_ids_and_reasoning_without_house_names(
@@ -597,6 +749,62 @@ def test_the_manual_paste_completes_a_flow_and_applies_it(signed_in: Workspace) 
     assert agent.restarts == ["credentials"]
 
 
+def test_a_polled_device_completion_is_recorded_and_refreshes_once(
+    signed_in: Workspace,
+) -> None:
+    """A device flow completes in Pi, so status polling owns finalization."""
+    started = signed_in.post("/providers/heph-fake/auth/begin", json={"type": "device_code"})
+    assert started.status_code == 200
+    agent = signed_in.agent
+    assert isinstance(agent, FakeAgent)
+    agent.credentials["heph-fake"] = {
+        "key": "oauth-token-held-only-by-the-fake",
+        "scope": "project",
+    }
+    agent.flows["heph-fake"]["state"] = "complete"
+
+    completed = signed_in.get("/providers/heph-fake/auth/status")
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["flow"]["state"] == "complete"
+    assert agent.restarts == ["credentials"]
+    listing = signed_in.get("/providers").json()
+    assert listing["providers"][0]["source"] == "project"
+    assert [
+        {"provider_id": row["provider_id"], "source": row["source"]}
+        for row in listing["credential_sources"]
+    ] == [{"provider_id": "heph-fake", "source": "project"}]
+
+    # The terminal flow remains visible in the fake backend, as it can across
+    # concurrent polls. Finalization is nevertheless one mutation per begin.
+    assert signed_in.get("/providers/heph-fake/auth/status").status_code == 200
+    assert agent.restarts == ["credentials"]
+
+
+def test_polled_completion_waits_for_a_busy_run_without_cancelling_it(
+    signed_in: Workspace,
+) -> None:
+    signed_in.post("/providers/heph-fake/auth/begin", json={"type": "device_code"})
+    agent = signed_in.agent
+    assert isinstance(agent, FakeAgent)
+    agent.credentials["heph-fake"] = {
+        "key": "oauth-token-held-only-by-the-fake",
+        "scope": "project",
+    }
+    agent.flows["heph-fake"]["state"] = "complete"
+    agent.live_runs = ["run-stays-live"]
+
+    refused = signed_in.get("/providers/heph-fake/auth/status")
+    assert refused.status_code == 409
+    assert refused.json()["reason"] == "runs_in_flight"
+    assert refused.json()["run_ids"] == ["run-stays-live"]
+    assert agent.restarts == []
+    assert signed_in.get("/providers").json()["credential_sources"] == []
+
+    agent.live_runs = []
+    assert signed_in.get("/providers/heph-fake/auth/status").status_code == 200
+    assert agent.restarts == ["credentials"]
+
+
 def test_an_empty_paste_is_refused_by_name(signed_in: Workspace) -> None:
     signed_in.post("/providers/heph-fake/auth/begin", json={"type": "authorize_url"})
     response = signed_in.post("/providers/heph-fake/auth/complete", json={"input": "   "})
@@ -622,6 +830,19 @@ def test_cancel_is_idempotent(signed_in: Workspace) -> None:
     signed_in.post("/providers/heph-fake/auth/begin", json={"type": "device_code"})
     assert signed_in.post("/providers/heph-fake/auth/cancel").status_code == 200
     assert signed_in.post("/providers/heph-fake/auth/cancel").status_code == 200
+
+
+def test_subscription_begin_never_cancels_or_restarts_an_active_run(
+    signed_in: Workspace,
+) -> None:
+    agent = signed_in.agent
+    assert isinstance(agent, FakeAgent)
+    agent.live_runs = ["run-active"]
+    refused = signed_in.post("/providers/heph-fake/auth/begin", json={"type": "auto"})
+    assert refused.status_code == 409
+    assert refused.json()["reason"] == "runs_in_flight"
+    assert agent.flows == {}
+    assert agent.restarts == []
 
 
 # --------------------------------------------------------------------------
@@ -695,7 +916,6 @@ def test_the_no_sidecar_rows_never_refuse_agent_unavailable(
 @pytest.mark.parametrize(
     ("method", "path", "body"),
     [
-        ("GET", "/providers/catalog", None),
         ("GET", "/providers/heph-fake/auth/status", None),
         ("POST", "/providers/heph-fake/auth/key", {"key": "x", "scope": "serve"}),
         ("POST", "/providers/heph-fake/auth/begin", {"type": "device_code"}),
@@ -869,7 +1089,7 @@ def test_every_providers_route_refuses_off_loopback(tmp_path: Path) -> None:
             for method, template in ROUTE_TABLE
             if template.startswith("/providers")
         ]
-        assert len(provider_rows) == 14
+        assert len(provider_rows) == 15
         assert ("GET", "/providers/models") in provider_rows
         for method, template in provider_rows:
             # EVERY row, attach included. Item 7 landed `/providers/attach`

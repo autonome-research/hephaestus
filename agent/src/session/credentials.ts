@@ -45,8 +45,8 @@ import { lstatSync } from "node:fs";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 
-/** §23.4's two mechanically distinct flows. Closed; §23 adds no third. */
-export type FlowType = "device_code" | "authorize_url";
+/** §23.4's two real flow shapes plus `auto`, which selects only from Pi-offered branches. */
+export type FlowType = "auto" | "device_code" | "authorize_url";
 
 /** Where a flow is. `slow_down` and `authorization_pending` are §23.6's 200s. */
 export type FlowState =
@@ -108,7 +108,7 @@ const BEGIN_SETTLE_MS = 20_000;
 
 interface Flow {
   readonly providerId: string;
-  readonly type: FlowType;
+  type: FlowType;
   state: FlowState;
   userCode?: string;
   verificationUri?: string;
@@ -388,6 +388,7 @@ export class LoginFlows {
 
   private onNotify(flow: Flow, event: AuthEvent): void {
     if (event.type === "device_code") {
+      flow.type = "device_code";
       flow.userCode = event.userCode;
       flow.verificationUri = event.verificationUri;
       if (event.intervalSeconds !== undefined) flow.intervalSeconds = event.intervalSeconds;
@@ -399,6 +400,7 @@ export class LoginFlows {
       return;
     }
     if (event.type === "auth_url") {
+      flow.type = "authorize_url";
       flow.authorizeUrl = event.url;
       flow.state = "awaiting_input";
       flow.announce();
@@ -410,27 +412,36 @@ export class LoginFlows {
 
   private onPrompt(flow: Flow, prompt: AuthPrompt): Promise<string> {
     if (prompt.type === "select") {
-      // Pi asks which login method; the operator already chose, at `begin`.
-      // Answering here is what makes `device_code` genuinely take the branch
-      // that starts no listening socket (§23.4).
-      const wanted = flow.type === "device_code" ? DEVICE_CODE_METHOD : BROWSER_METHOD;
-      const match = prompt.options.find((option) => option.id === wanted);
-      if (match === undefined) {
-        // The provider does not offer the flow that was asked for. 422 with
-        // what it *does* offer, never a silent substitution (§23.6).
+      // `auto` is used by the compact add-provider flow. Pi's own options are
+      // authoritative: prefer its device-code branch when present (no callback
+      // listener), otherwise its browser branch, and never advertise a method
+      // by provider id in Hephaestus.
+      const wanted = flow.type === "auto"
+        ? prompt.options.find((option) => option.id === DEVICE_CODE_METHOD)
+          ?? prompt.options.find((option) => option.id === BROWSER_METHOD)
+        : prompt.options.find((option) => option.id === (flow.type === "device_code" ? DEVICE_CODE_METHOD : BROWSER_METHOD));
+      if (wanted === undefined) {
         return Promise.reject(new UnsupportedFlow(prompt.options.map((o) => o.id)));
       }
-      return Promise.resolve(match.id);
+      flow.type = wanted.id === DEVICE_CODE_METHOD ? "device_code" : "authorize_url";
+      return Promise.resolve(wanted.id);
+    }
+    if (prompt.type === "text") {
+      // The pinned GitHub Copilot flow asks for an optional enterprise domain
+      // before emitting its device code. Blank is Pi's documented github.com
+      // choice; provider-specific endpoint editing remains out of scope.
+      return Promise.resolve("");
     }
     if (prompt.type === "manual_code") {
+      flow.type = "authorize_url";
       flow.state = "awaiting_input";
       flow.announce();
       return new Promise<string>((resolve) => {
         flow.supply = resolve;
       });
     }
-    // `text` / `secret` prompts belong to an api-key login, which does not
-    // come through this adapter (§23.3 pastes a key on its own route).
+    // A `secret` prompt belongs to an api-key login, which does not come
+    // through this adapter (§23.3 pastes a key on its own route).
     return Promise.reject(new UnsupportedFlow([]));
   }
 }

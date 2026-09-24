@@ -40,14 +40,29 @@ export function resolvedModel(model: PiModel): ResolvedModel { return { ...model
 export function sameModel(a: ModelRef | null, b: ModelRef | null): boolean { return a?.provider_id === b?.provider_id && a?.model_id === b?.model_id; }
 
 export class ModelResolver {
-  constructor(readonly runtime: ModelRuntime, readonly declarations: readonly ProviderSpec[], readonly availability: readonly ProviderAvailability[]) {}
+  private declared: ProviderSpec[];
+  private providerAvailability: ProviderAvailability[];
+
+  constructor(readonly runtime: ModelRuntime, declarations: readonly ProviderSpec[], availability: readonly ProviderAvailability[]) {
+    this.declared = [...declarations];
+    this.providerAvailability = [...availability];
+  }
+  get declarations(): readonly ProviderSpec[] { return this.declared; }
+  get availability(): readonly ProviderAvailability[] { return this.providerAvailability; }
+  /** Add one Pi-owned provider declaration without replacing sessions or defaults. */
+  registerNative(provider: ProviderSpec, status: ProviderAvailability): void {
+    if (provider.kind !== "pi_native") throw modelError("invalid_params");
+    if (this.declared.some((entry) => entry.id === provider.id)) return;
+    this.declared = [...this.declared, provider];
+    this.providerAvailability = [...this.providerAvailability, status];
+  }
   resolve(ref: ModelRef): PiModel {
-    const provider = this.declarations.find(p => p.id === ref.provider_id);
+    const provider = this.declared.find(p => p.id === ref.provider_id);
     if (!provider && !this.runtime.getProvider(ref.provider_id)) throw modelError("provider_unknown");
     const declared = provider?.models.some(m => m.id === ref.model_id);
     // A failed keyed registration is a provider failure, not an invented
     // unknown-model result. Native eligibility is re-read locally after auth changes.
-    const failed = this.availability.find(p => p.id === ref.provider_id);
+    const failed = this.providerAvailability.find(p => p.id === ref.provider_id);
     if (declared && provider?.kind !== "pi_native" && failed?.available === false) throw modelError("model_unavailable", { unavailable_reason: failed.unavailable_reason ?? "provider_unknown" });
     if (!this.runtime.getProvider(ref.provider_id)) throw modelError("provider_unknown");
     const model = this.runtime.getModel(ref.provider_id, ref.model_id);
@@ -58,7 +73,7 @@ export class ModelResolver {
   }
   document(): ModelsDocument {
     let proposed: ResolvedModel | null = null;
-    const providers = this.declarations.map(provider => ({
+    const providers = this.declared.map(provider => ({
       provider_id: provider.id,
       name: this.runtime.getProvider(provider.id)?.name ?? ("name" in provider ? provider.name : undefined) ?? provider.id,
       models: provider.models.map(declared => {

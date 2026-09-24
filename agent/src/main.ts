@@ -32,7 +32,12 @@ import type { NotificationHandler, RequestHandler } from "./rpc.js";
 import type { ModelRuntime, SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   createModelRuntime,
+  nativeProviderCatalog,
+  nativeProviderStatus,
+  supportsPastedApiKey,
+  type PiNativeProviderSpec,
   type ProviderAvailability,
+  type ProviderSpec,
   type RuntimeConfig,
 } from "./session/runtime.js";
 import {
@@ -336,6 +341,7 @@ let runtime: ModelRuntime | undefined;
 let service: SessionService | undefined;
 let modelResolver: ModelResolver | undefined;
 let availability: readonly ProviderAvailability[] = [];
+let declarations: readonly ProviderSpec[] = [];
 const logins = new LoginFlows();
 const agentDir = process.env.HEPHAESTUS_AGENT_DIR ?? process.cwd();
 
@@ -445,7 +451,8 @@ on("runtime.configure", async (params) => {
   const configured = await createModelRuntime(config, { agentDir });
   runtime = configured.runtime;
   availability = configured.providers;
-  const resolver = new ModelResolver(runtime, config.providers, availability);
+  declarations = [...config.providers];
+  const resolver = new ModelResolver(runtime, declarations, availability);
   modelResolver = resolver;
   // A runtime with NO usable provider still comes up. That is §23.7's whole
   // point: the sidecar has to exist for the credential routes to relay to, and
@@ -518,15 +525,56 @@ on("session.model.set", async (params) => {
   return { status: "ok", session_id: sessionId, model_state: await requireService().selectModel(sessionId, ref, expected) };
 });
 
-on("providers.list", () => {
+on("providers.list", async () => {
   const rt = requireRuntime();
   return {
-    catalog: rt.getProviders().map((provider) => ({
-      id: provider.id,
-      name: provider.name ?? provider.id,
-      models: rt.getModels(provider.id).map((model) => model.id),
+    catalog: (await nativeProviderCatalog(rt)).map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      auth_methods: entry.auth_methods.map((method) => ({ type: method.type, label: method.label })),
+      models: entry.models.map((model) => ({
+        id: model.id,
+        name: model.name,
+        input: [...model.input],
+        reasoning: model.reasoning,
+      })),
     })),
     verified: availability.map(wireAvailability),
+  };
+});
+
+on("providers.register", (params) => {
+  const rt = requireRuntime();
+  if (!modelResolver) throw runtimeUnavailable();
+  const raw = params.provider;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw modelError("invalid_params");
+  const candidate = raw as unknown as ProviderSpec;
+  if (candidate.kind !== "pi_native" || typeof candidate.id !== "string" || !Array.isArray(candidate.models)) {
+    throw modelError("invalid_params");
+  }
+  const native = rt.getProvider(candidate.id);
+  if (native === undefined) throw modelError("provider_unknown");
+  const known = new Set(rt.getModels(candidate.id).map((model) => model.id));
+  if (candidate.models.length === 0 || candidate.models.some((model) => typeof model.id !== "string" || !known.has(model.id))) {
+    throw modelError("model_unknown");
+  }
+  const spec: PiNativeProviderSpec = {
+    id: candidate.id,
+    kind: "pi_native",
+    models: candidate.models.map((model) => ({ id: model.id })),
+  };
+  const existing = declarations.find((provider) => provider.id === spec.id);
+  if (existing === undefined) {
+    const status = nativeProviderStatus(rt, spec);
+    declarations = [...declarations, spec];
+    availability = [...availability, status];
+    modelResolver.registerNative(spec, status);
+  }
+  const verified = availability.find((entry) => entry.id === spec.id);
+  return {
+    ok: true,
+    provider: { id: spec.id, kind: spec.kind, models: spec.models.map((model) => ({ id: model.id })) },
+    verified: verified === undefined ? null : wireAvailability(verified),
   };
 });
 
@@ -581,11 +629,26 @@ on("credentials.set_key", async (params) => {
     path.join(agentDir, "auth.json"),
   );
   try {
+    const provider = rt.getProvider(providerId);
+    // The approved key dialog can answer exactly one secret prompt. Pi's
+    // richer API-key interactions (selectors and provider environment fields)
+    // must not receive the same pasted secret for every answer, and the serve
+    // path must not bypass those required fields. The same credential-free
+    // shape probe drives catalog advertisement and this route-level guard.
+    if (provider === undefined || !await supportsPastedApiKey(provider.auth.apiKey)) {
+      throw new CredentialError("unsupported_auth_type", 422, providerId);
+    }
     if (scope === "project") {
       // Pi's AuthStorage: 0600 under a proper-lockfile cross-process lock.
+      let prompts = 0;
       await rt.login(providerId, "api_key", {
         notify: () => {},
-        prompt: () => Promise.resolve(key),
+        prompt: (prompt) => {
+          prompts += 1;
+          return prompts === 1 && prompt.type === "secret"
+            ? Promise.resolve(key)
+            : Promise.reject(new CredentialError("unsupported_auth_type", 422, providerId));
+        },
       });
     } else {
       await rt.setRuntimeApiKey(providerId, key);
@@ -624,7 +687,7 @@ on("login.begin", async (params) => {
   const rt = requireRuntime();
   const providerId = String(params.provider_id);
   const type = String(params.type);
-  if (type !== "device_code" && type !== "authorize_url") {
+  if (type !== "auto" && type !== "device_code" && type !== "authorize_url") {
     throw credentialFailure(
       new CredentialError("unsupported_auth_type", 422, providerId),
       providerId,

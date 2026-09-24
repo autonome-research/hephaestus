@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { credentialSourceState } from "../../src/session/credentials.js";
-import { createModelRuntime } from "../../src/session/runtime.js";
+import { createModelRuntime, nativeProviderCatalog } from "../../src/session/runtime.js";
 
 const PROVIDER = "openai-codex";
 const MODEL = "gpt-5.6-sol";
@@ -42,6 +42,38 @@ function writeSyntheticAuth(dir: string): string {
 }
 
 describe("pi_native providers", () => {
+  it("projects canonical providers, auth methods, and models from Pi itself", async () => {
+    const root = scratch();
+    const agentDir = path.join(root, "agent");
+    mkdirSync(agentDir);
+    const { runtime } = await createModelRuntime({ providers: [] }, { agentDir });
+    const catalog = await nativeProviderCatalog(runtime);
+    const anthropic = catalog.find((provider) => provider.id === "anthropic");
+    expect(anthropic).toBeDefined();
+    expect(anthropic?.auth_methods.map((method) => method.type)).toEqual(["subscription", "api_key"]);
+    expect(anthropic?.models.length).toBeGreaterThan(0);
+    expect(anthropic?.models[0]).toEqual(expect.objectContaining({
+      id: expect.any(String) as unknown as string,
+      name: expect.any(String) as unknown as string,
+      input: expect.any(Array) as unknown as ("text" | "image")[],
+      reasoning: expect.any(Boolean) as unknown as boolean,
+    }));
+
+    // These pinned Pi providers expose `apiKey.login`, but their interactions
+    // require selectors and/or provider environment fields that the approved
+    // one-secret dialog cannot represent. They must not be advertised as if a
+    // pasted key alone were sufficient.
+    for (const providerId of [
+      "amazon-bedrock",
+      "google-vertex",
+      "cloudflare-workers-ai",
+      "cloudflare-ai-gateway",
+    ]) {
+      expect(catalog.find((provider) => provider.id === providerId)?.auth_methods)
+        .not.toContainEqual(expect.objectContaining({ type: "api_key" }));
+    }
+  }, 30000);
+
   it("resolves a built-in provider/model from a linked auth.json", async () => {
     const root = scratch();
     const source = writeSyntheticAuth(root);

@@ -25,6 +25,7 @@
 import http from "node:http";
 import path from "node:path";
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
+import type { ApiKeyAuth, AuthPrompt } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 // pi-ai loads OAuth flow modules (openai-codex, anthropic, ...) through a
@@ -153,6 +154,84 @@ export interface ConfiguredRuntime {
 export interface RuntimePaths {
   /** App-owned agent dir; auth.json / models-store.json live beneath it. */
   readonly agentDir: string;
+}
+
+export type NativeAuthMethod = "subscription" | "api_key";
+export interface NativeProviderCatalogEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly auth_methods: readonly {
+    readonly type: NativeAuthMethod;
+    readonly label: string;
+  }[];
+  readonly models: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly input: readonly ("text" | "image")[];
+    readonly reasoning: boolean;
+  }[];
+}
+
+const API_KEY_PROBE = "hephaestus-api-key-shape-probe";
+
+/**
+ * Whether Pi's API-key login is exactly the interaction this UI can represent:
+ * one secret prompt producing one plain key, with no provider environment.
+ *
+ * Pi 0.80.10 deliberately exposes login as an interaction rather than static
+ * prompt metadata. Drive that interaction with a non-credential sentinel so
+ * the catalog is still runtime-authoritative. The result is never persisted or
+ * resolved, and any selector/additional field (Bedrock, Vertex, Cloudflare) is
+ * excluded instead of receiving the pasted key as an answer to every prompt.
+ */
+export async function supportsPastedApiKey(auth: ApiKeyAuth | undefined): Promise<boolean> {
+  if (auth?.login === undefined) return false;
+  let prompts = 0;
+  try {
+    const credential = await auth.login({
+      notify: () => {},
+      prompt: (prompt: AuthPrompt): Promise<string> => {
+        prompts += 1;
+        return prompts === 1 && prompt.type === "secret"
+          ? Promise.resolve(API_KEY_PROBE)
+          : Promise.reject(new Error("api_key_interaction_not_single_secret"));
+      },
+    });
+    return prompts === 1
+      && credential.type === "api_key"
+      && credential.key === API_KEY_PROBE
+      && (credential.env === undefined || Object.keys(credential.env).length === 0);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Project Pi's live provider objects without resolving real credentials or
+ * inventing auth support. API-key methods are additionally constrained to the
+ * single-secret interaction the approved dialog can faithfully render.
+ */
+export async function nativeProviderCatalog(runtime: ModelRuntime): Promise<NativeProviderCatalogEntry[]> {
+  return Promise.all(runtime.getProviders().map(async (provider) => ({
+    id: provider.id,
+    name: provider.name ?? provider.id,
+    auth_methods: [
+      ...(provider.auth.oauth === undefined ? [] : [{
+        type: "subscription" as const,
+        label: provider.auth.oauth.loginLabel ?? provider.auth.oauth.name,
+      }]),
+      ...(await supportsPastedApiKey(provider.auth.apiKey) ? [{
+        type: "api_key" as const,
+        label: provider.auth.apiKey?.name ?? "API key",
+      }] : []),
+    ],
+    models: runtime.getModels(provider.id).map((model) => ({
+      id: model.id,
+      name: model.name,
+      input: [...model.input],
+      reasoning: model.reasoning,
+    })),
+  })));
 }
 
 /** A resolved, non-undefined Pi model (no transitive pi-ai import needed). */
@@ -312,6 +391,28 @@ function verifyPiNativeProvider(
     );
   }
   return unavailableModels;
+}
+
+export function nativeProviderStatus(
+  runtime: ModelRuntime,
+  provider: PiNativeProviderSpec,
+): ProviderAvailability {
+  try {
+    const unavailableModels = verifyPiNativeProvider(runtime, provider);
+    return {
+      id: provider.id,
+      available: true,
+      ...(unavailableModels.length > 0 ? { unavailable_models: unavailableModels } : {}),
+    };
+  } catch (error) {
+    if (!(error instanceof RuntimeConfigError)) throw error;
+    return {
+      id: provider.id,
+      available: false,
+      unavailable_reason: error.code,
+      message: error.message,
+    };
+  }
 }
 
 function registerProvider(runtime: ModelRuntime, provider: KeyedProviderSpec, apiKey: string): void {

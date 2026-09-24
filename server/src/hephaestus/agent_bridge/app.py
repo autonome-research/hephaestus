@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import stat
+import tempfile
 import threading
 import time
 import uuid
@@ -113,6 +114,7 @@ __all__ = [
     "UnknownSessionError",
     "default_dist_main",
     "link_auth_source",
+    "native_provider_catalog",
     "repo_root",
 ]
 
@@ -129,6 +131,47 @@ AGENT_DIR_MODE: int = 0o700
 #: many runs, and an evicted binding degrades to a *named* absence rather than a
 #: wrong session id.
 _RUN_SESSION_BINDINGS_MAX = 1024
+
+
+def native_provider_catalog(
+    project_root: Path, *, agent_dir: Path | None = None, dist_main: Path | None = None
+) -> dict[str, Any]:
+    """Read the pinned Pi catalog without attaching sessions or using credentials.
+
+    The short-lived sidecar is configured with zero declarations and an empty
+    credential allowlist. Its ``providers.list`` projection comes directly from
+    Pi's live provider objects, including provider-owned auth metadata. This is
+    the zero-config bootstrap path; it neither creates a session nor selects a
+    model, and the supervisor is always closed before returning.
+    """
+    temporary: tempfile.TemporaryDirectory[str] | None = None
+    if agent_dir is None:
+        temporary = tempfile.TemporaryDirectory(prefix="heph-provider-catalog-")
+        owned_agent_dir = Path(temporary.name)
+    else:
+        owned_agent_dir = agent_dir
+    owned_agent_dir.mkdir(parents=True, exist_ok=True, mode=AGENT_DIR_MODE)
+    with contextlib.suppress(OSError):
+        if stat.S_IMODE(owned_agent_dir.stat().st_mode) != AGENT_DIR_MODE:
+            owned_agent_dir.chmod(AGENT_DIR_MODE)
+    entry = resolve_sidecar().main if dist_main is None else dist_main
+    supervisor = Supervisor(
+        SupervisorConfig(
+            argv=[node_executable(), str(entry)],
+            credential_allowlist=frozenset(),
+            extra_env={"HEPHAESTUS_AGENT_DIR": str(owned_agent_dir)},
+            cwd=str(project_root),
+        ),
+        spawn_hook=lambda sup: sup.call("runtime.configure", {"providers": [], "credentials": {}}),
+    )
+    try:
+        supervisor.start()
+        return _as_dict(supervisor.call("providers.list", {}))
+    finally:
+        supervisor.close()
+        if temporary is not None:
+            temporary.cleanup()
+
 
 #: ``(question_params) -> selection`` — resolves a ``py.ask_user`` request.
 AskUserAnswerer = Callable[[dict[str, Any]], Any]
@@ -1047,6 +1090,29 @@ class BridgeRuntime:
     # (`user_code`, `verification_uri`, `interval_seconds`, `expires_at`) and
     # `{state, type, expires_at}` on the way back. It never sees an
     # authorization code, an access token, or a refresh token at all.
+
+    def register_provider(self, spec: dict[str, Any]) -> dict[str, Any]:
+        """Add one server-validated Pi-native declaration without replacing sessions."""
+        provider_id = str(spec.get("id", ""))
+        with self._lock:
+            existing = next(
+                (row for row in self._providers if str(row.get("id", "")) == provider_id),
+                None,
+            )
+            if existing is not None:
+                return {"provider": dict(existing), "registered": False}
+            result = _as_dict(self._sup.call("providers.register", {"provider": spec}))
+            projected = result.get("provider")
+            if not isinstance(projected, dict):
+                raise SupervisorError("providers.register returned no provider declaration")
+            declaration = {str(key): value for key, value in _as_dict(projected).items()}
+            self._providers.append(declaration)
+            verified = result.get("verified")
+            if isinstance(verified, dict):
+                self._provider_status = [
+                    row for row in self._provider_status if str(row.get("id", "")) != provider_id
+                ] + [{str(key): value for key, value in _as_dict(verified).items()}]
+            return {"provider": declaration, "registered": True}
 
     def provider_catalog(self) -> dict[str, Any]:
         """Pi's built-in catalog plus this runtime's registered providers (§23.1).

@@ -148,15 +148,17 @@ KEY_REQUIRED_ROUTES: Final[tuple[tuple[str, str], ...]] = (
     # the whole file: `credential_allowlist` and `auth_source` are read-only
     # projections and a body carrying either is refused by name.
     ("PUT", "/providers/specs"),
+    # Additive catalog registration is a project-config mutation too.
+    ("POST", "/providers/register"),
 )
 
-#: The two key-required routes with **no tool behind them** (§19 item 7): a
-#: project-config write and a git tag. Their recorded outcome is the response
-#: body itself, keyed by route identity.
+#: Key-required routes with **no tool behind them** (§19 item 7). Their recorded
+#: outcome is the response body itself, keyed by route identity.
 NON_TOOL_KEY_ROUTES: Final[tuple[tuple[str, str], ...]] = (
     ("POST", "/project/config/dfm"),
     ("POST", "/git/tag"),
     ("PUT", "/providers/specs"),
+    ("POST", "/providers/register"),
 )
 
 #: ``INTERFACE.md`` §2.3, second table — session control. A key is **not

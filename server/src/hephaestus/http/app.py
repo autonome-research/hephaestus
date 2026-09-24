@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from itertools import count
 from typing import Any, Final, cast
 
+from hephaestus.agent_bridge.app import native_provider_catalog
 from hephaestus.agent_bridge.dispatch import DispatchError
 from hephaestus.agent_bridge.limits import (
     MAX_REQUEST_BYTES,
@@ -79,6 +80,7 @@ from . import agent_attach, providers
 from . import git_projection as git
 from .agent_attach import AgentAlreadyAttached, AttachRefused
 from .agent_credentials import (
+    CredentialBackend,
     apply_credential_change,
     credentials_or_refuse,
     relay_async,
@@ -266,6 +268,7 @@ ROUTE_TABLE: Final[tuple[tuple[str, str], ...]] = (
     # Every row carries the route-level `not_loopback` precondition.
     ("GET", "/providers"),
     ("PUT", "/providers/specs"),
+    ("POST", "/providers/register"),
     ("GET", "/providers/catalog"),
     ("GET", "/providers/models"),
     ("GET", "/sessions/{id}/model"),
@@ -828,6 +831,13 @@ def with_error_envelope(app: ASGIApp) -> ASGIApp:
 def build_app(runtime: WorkspaceRuntime) -> Starlette:
     """The Starlette app serving :data:`ROUTE_TABLE` over ``runtime``."""
     api = _Api(runtime)
+    # A completed background OAuth flow is observable on more than one status
+    # poll. Finalization, however, is a credential mutation and must happen once
+    # per begun flow: recording ownership and restarting twice would terminate a
+    # run that began after the first successful refresh. New begins clear the
+    # marker; per-provider locks coalesce concurrent browser polls.
+    finalized_login_providers: set[str] = set()
+    login_finalization_locks: dict[str, asyncio.Lock] = {}
 
     def guarded(
         handler: Callable[[Request], Awaitable[Response]],
@@ -1419,30 +1429,141 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
             request, template="/providers/specs", body=body, operation=write
         )
 
-    async def get_providers_catalog(_: Request) -> Response:
-        """``GET /providers/catalog`` — Pi's built-in catalog, live over the bridge.
+    async def _native_catalog() -> dict[str, Any]:
+        """Pi's own catalog, including the zero-config bootstrap path."""
+        backend = runtime.credentials
+        if backend is not None:
+            return await relay_async(backend.provider_catalog, provider_id="")
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            runtime.spawn_executor(), lambda: native_provider_catalog(runtime.root)
+        )
 
-        §23.1 rejects a Hephaestus-defined provider catalog outright: a curated
-        "sign in with X" list maintained in this repo would be a second catalog
-        beside Pi's, drifting the moment Pi ships a provider, which mission rule
-        6 forbids. §23.0's third row, so this one **does** refuse
-        ``agent_unavailable`` — correctly, because Pi is the catalog.
+    async def get_providers_catalog(_: Request) -> Response:
+        """``GET /providers/catalog`` — runtime-owned providers/auth/models.
+
+        With no attached runtime a short-lived, zero-declaration sidecar reads
+        the same pinned Pi objects. No repository-maintained provider list is
+        consulted, no session is created, and the child is closed before the
+        response is returned.
         """
         providers.loopback_or_refuse(runtime.bind_host)
-        backend = credentials_or_refuse(runtime)
-        catalog = await relay_async(backend.provider_catalog, provider_id="")
+        catalog = await _native_catalog()
         return JSONResponse({"status": "ok", **catalog})
 
+    async def post_providers_register(request: Request) -> Response:
+        """Append one catalog provider without replacing existing declarations."""
+        providers.loopback_or_refuse(runtime.bind_host)
+        body = await _json_body(request)
+        _closed_body(body, frozenset({"provider_id", "auth_type"}), what="provider registration")
+        provider_id = body.get("provider_id")
+        auth_type = body.get("auth_type")
+        if not isinstance(provider_id, str) or not provider_id:
+            raise HttpRefusal(400, "invalid_params", "provider_id must be a non-empty string")
+        if not isinstance(auth_type, str):
+            raise HttpRefusal(400, "unsupported_auth_type", "auth_type is required")
+        catalog = await _native_catalog()
+        entries = catalog.get("catalog")
+        catalog_rows: list[dict[str, Any]] = (
+            [
+                cast("dict[str, Any]", row)
+                for row in cast("list[Any]", entries)
+                if isinstance(row, dict)
+            ]
+            if isinstance(entries, list)
+            else []
+        )
+        entry = next(
+            (row for row in catalog_rows if str(row.get("id", "")) == provider_id),
+            None,
+        )
+        if entry is None:
+            raise HttpRefusal(404, "provider_unknown", "no such provider in the runtime catalog")
+        config_path = agent_attach.provider_config_path(runtime.root)
+        registered_spec: dict[str, Any] = {}
+
+        def write() -> dict[str, Any]:
+            nonlocal registered_spec
+            written, registered_spec = providers.register_catalog_provider(
+                config_path, catalog_entry=entry, auth_type=auth_type
+            )
+            runtime.invalidate_attach_state()
+            return {
+                "status": "ok",
+                "provider": providers.provider_specs_of(written)[-1],
+                "auth_type": auth_type,
+                "config_path": str(written.path),
+                "file_mode": written.file_mode,
+            }
+
+        response = await api.keyed_non_tool(
+            request, template="/providers/register", body=body, operation=write
+        )
+        # Runtime sync is idempotent and deliberately after the durable write.
+        # A failed sync leaves the declaration visible on disk and a retry of
+        # the same idempotency key replays the write before trying this again.
+        backend = runtime.credentials
+        if backend is not None:
+            if not registered_spec:
+                entry_models = entry.get("models")
+                model_rows = (
+                    cast("list[Any]", entry_models) if isinstance(entry_models, list) else []
+                )
+                registered_spec = {
+                    "id": provider_id,
+                    "kind": "pi_native",
+                    "models": [
+                        {"id": str(cast("dict[str, Any]", model).get("id"))}
+                        for model in model_rows
+                        if isinstance(model, dict)
+                        and isinstance(cast("dict[str, Any]", model).get("id"), str)
+                    ],
+                }
+            await relay_async(
+                lambda: backend.register_provider(registered_spec), provider_id=provider_id
+            )
+        return response
+
+    async def _finalize_completed_login_locked(
+        *, file: providers.ProvidersFile, provider_id: str, backend: CredentialBackend
+    ) -> None:
+        """Apply a Pi-completed background flow exactly once.
+
+        Device-code flows finish inside Pi rather than through the manual
+        ``/complete`` route. A status read that observes that terminal state is
+        therefore the mutation boundary: it records the project-owned source
+        and refreshes the runtime before the browser is told completion is
+        final. Active turns are never silently ended; the ordinary named
+        ``runs_in_flight`` refusal leaves the completed flow available to a
+        later poll.
+        """
+        if provider_id in finalized_login_providers:
+            return
+        runs_in_flight_or_refuse(backend, confirm=False, action="finishing a sign-in")
+        providers.record_credential_source(file.path, provider_id=provider_id, source="project")
+        await apply_credential_change(runtime, backend)
+        finalized_login_providers.add(provider_id)
+
     async def get_provider_auth_status(request: Request) -> Response:
-        """``GET /providers/{id}/auth/status`` — **metadata only** (§23.8)."""
+        """``GET /providers/{id}/auth/status`` — metadata plus flow finalization."""
         file = _providers_file()
         provider_id = request.path_params["id"]
         _provider_or_refuse(file, provider_id)
         backend = credentials_or_refuse(runtime)
-        status = await relay_async(
-            lambda: backend.credential_status(provider_id), provider_id=provider_id
-        )
-        return JSONResponse({"status": "ok", **status})
+        lock = login_finalization_locks.setdefault(provider_id, asyncio.Lock())
+        async with lock:
+            status = await relay_async(
+                lambda: backend.credential_status(provider_id), provider_id=provider_id
+            )
+            flow = status.get("flow")
+            if (
+                isinstance(flow, dict)
+                and str(cast("dict[str, Any]", flow).get("state")) == "complete"
+            ):
+                await _finalize_completed_login_locked(
+                    file=file, provider_id=provider_id, backend=backend
+                )
+            return JSONResponse({"status": "ok", **status})
 
     async def post_provider_auth_key(request: Request) -> Response:
         """``POST /providers/{id}/auth/key`` — the §23.3 paste.
@@ -1520,7 +1641,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         provider_id = request.path_params["id"]
         _provider_or_refuse(file, provider_id)
         body = await _json_body(request)
-        flow_type = body.get("type", "device_code")
+        flow_type = body.get("type", "auto")
         if flow_type not in providers.AUTH_FLOW_TYPES:
             raise HttpRefusal(
                 422,
@@ -1530,10 +1651,15 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
             )
         providers.guard_unlinked(runtime.root)
         backend = credentials_or_refuse(runtime)
-        flow = await relay_async(
-            lambda: backend.login_begin(provider_id, str(flow_type)), provider_id=provider_id
-        )
-        return JSONResponse({"status": "ok", **flow})
+        runs_in_flight_or_refuse(backend, confirm=False, action="starting a sign-in")
+        lock = login_finalization_locks.setdefault(provider_id, asyncio.Lock())
+        async with lock:
+            flow = await relay_async(
+                lambda: backend.login_begin(provider_id, str(flow_type)),
+                provider_id=provider_id,
+            )
+            finalized_login_providers.discard(provider_id)
+            return JSONResponse({"status": "ok", **flow})
 
     async def post_provider_auth_complete(request: Request) -> Response:
         """``POST /providers/{id}/auth/complete`` — the operator's paste (§23.4).
@@ -1556,13 +1682,17 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
                 "paste the redirect URL, the code#state pair, or the authorization code",
             )
         backend = credentials_or_refuse(runtime)
-        flow = await relay_async(
-            lambda: backend.login_complete(provider_id, text), provider_id=provider_id
-        )
-        if str(flow.get("state")) == "complete":
-            providers.record_credential_source(file.path, provider_id=provider_id, source="project")
-            await apply_credential_change(runtime, backend)
-        return JSONResponse({"status": "ok", **flow})
+        lock = login_finalization_locks.setdefault(provider_id, asyncio.Lock())
+        async with lock:
+            runs_in_flight_or_refuse(backend, confirm=False, action="finishing a sign-in")
+            flow = await relay_async(
+                lambda: backend.login_complete(provider_id, text), provider_id=provider_id
+            )
+            if str(flow.get("state")) == "complete":
+                await _finalize_completed_login_locked(
+                    file=file, provider_id=provider_id, backend=backend
+                )
+            return JSONResponse({"status": "ok", **flow})
 
     async def post_provider_auth_cancel(request: Request) -> Response:
         """``POST /providers/{id}/auth/cancel`` — abandon a flow. Idempotent."""
@@ -1570,10 +1700,12 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         provider_id = request.path_params["id"]
         _provider_or_refuse(file, provider_id)
         backend = credentials_or_refuse(runtime)
-        cancelled = await relay_async(
-            lambda: backend.login_cancel(provider_id), provider_id=provider_id
-        )
-        return JSONResponse({"status": "ok", **cancelled})
+        lock = login_finalization_locks.setdefault(provider_id, asyncio.Lock())
+        async with lock:
+            cancelled = await relay_async(
+                lambda: backend.login_cancel(provider_id), provider_id=provider_id
+            )
+            return JSONResponse({"status": "ok", **cancelled})
 
     async def post_provider_auth_signout(request: Request) -> Response:
         """``POST /providers/{id}/auth/signout`` — §23.9's three properties.
@@ -1591,10 +1723,15 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         providers.guard_unlinked(runtime.root)
         backend = credentials_or_refuse(runtime)
         runs_in_flight_or_refuse(backend, confirm=body.get("confirm") is True, action="signing out")
-        result = await relay_async(lambda: backend.sign_out(provider_id), provider_id=provider_id)
-        providers.record_credential_source(file.path, provider_id=provider_id, source="none")
-        await apply_credential_change(runtime, backend)
-        return JSONResponse({"status": "ok", "provider_id": provider_id, **result})
+        lock = login_finalization_locks.setdefault(provider_id, asyncio.Lock())
+        async with lock:
+            result = await relay_async(
+                lambda: backend.sign_out(provider_id), provider_id=provider_id
+            )
+            finalized_login_providers.discard(provider_id)
+            providers.record_credential_source(file.path, provider_id=provider_id, source="none")
+            await apply_credential_change(runtime, backend)
+            return JSONResponse({"status": "ok", "provider_id": provider_id, **result})
 
     async def post_providers_auth_unlink(_: Request) -> Response:
         """``POST /providers/auth/unlink`` — stop borrowing (§23.5).
@@ -2056,6 +2193,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         ("POST", "/providers/attach"): post_providers_attach,
         ("GET", "/providers"): get_providers,
         ("PUT", "/providers/specs"): put_providers_specs,
+        ("POST", "/providers/register"): post_providers_register,
         ("GET", "/providers/catalog"): get_providers_catalog,
         ("GET", "/providers/models"): get_provider_models,
         ("GET", "/sessions/{id}/model"): get_session_model,

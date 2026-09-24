@@ -46,6 +46,7 @@ export const SIDECAR_REQUEST_METHODS: ReadonlySet<string> = new Set([
   // repo does not implement (mission rule 6). Requests rather than events:
   // §17 exclusion 10 (no event-vocabulary extension) is not amended by §23.
   "providers.list",
+  "providers.register",
   "credentials.status",
   "credentials.set_key",
   "credentials.signout",

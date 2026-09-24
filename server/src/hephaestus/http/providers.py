@@ -41,6 +41,7 @@ import json
 import os
 import secrets
 import stat
+import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -61,6 +62,7 @@ __all__ = [
     "AUTH_FLOW_TYPES",
     "AUTH_HEALTH",
     "AUTH_SOURCES",
+    "CATALOG_AUTH_METHODS",
     "CREDENTIAL_READ_REASONS",
     "CREDENTIAL_SCOPES",
     "DISCOVERY_MAX_OFFERS",
@@ -84,6 +86,7 @@ __all__ = [
     "read_outside_project",
     "read_providers_file",
     "record_credential_source",
+    "register_catalog_provider",
     "reset_credential_reads",
     "unlink_auth_source",
     "validate_spec_write",
@@ -120,9 +123,12 @@ AUTH_HEALTH: Final[tuple[str, ...]] = (
     "rate_limited",
 )
 
-#: §23.4's two mechanically distinct subscription flows. Both exist in the
-#: pinned dependency; §23 supports both and adds neither.
-AUTH_FLOW_TYPES: Final[tuple[str, ...]] = ("device_code", "authorize_url")
+#: §23.4's two real subscription flow shapes plus ``auto``, which selects only
+#: from branches offered by the pinned Pi interaction.
+AUTH_FLOW_TYPES: Final[tuple[str, ...]] = ("auto", "device_code", "authorize_url")
+
+#: The approved first step. Values map one-to-one to Pi's ProviderAuth fields.
+CATALOG_AUTH_METHODS: Final[tuple[str, ...]] = ("subscription", "api_key")
 
 #: What §23.5's offer may enumerate. Closed, because §19's rule that a closed
 #: list may not silently acquire members applies to this one too.
@@ -149,6 +155,8 @@ PROVIDER_REFUSALS: Final[tuple[str, ...]] = (
     "model_unknown",
     "not_loopback",
     "path_not_web_writable",
+    "provider_already_registered",
+    "provider_catalog_empty",
     "provider_not_authenticated",
     "provider_rate_limited",
     "provider_unknown",
@@ -185,6 +193,10 @@ PI_AUTH_RELPATH: Final[Path] = Path(".pi") / "agent" / "auth.json"
 PROVIDERS_FILE_NAME: Final[str] = "providers.json"
 
 _PRIVATE_MODE: Final[int] = 0o600
+
+# Additive registration is a read-modify-write. Serialize that exact operation
+# so two concurrent additions cannot each overwrite the other's declaration.
+_REGISTRATION_LOCK = threading.Lock()
 
 
 # --------------------------------------------------------------------------
@@ -693,6 +705,62 @@ def write_specs(
     )
     _write_document(current.path, updated.document())
     return read_providers_file(current.path)
+
+
+def register_catalog_provider(
+    path: Path, *, catalog_entry: dict[str, Any], auth_type: str
+) -> tuple[ProvidersFile, dict[str, Any]]:
+    """Append one Pi-owned provider from the runtime catalog, preserving order.
+
+    The browser supplies only the canonical provider id/auth choice; the name
+    and models in ``catalog_entry`` came from the pinned runtime. Existing rows
+    are never replaced, and the lock closes the concurrent read-modify-write
+    window that a client-side merge cannot close.
+    """
+    if auth_type not in CATALOG_AUTH_METHODS:
+        raise _refuse(400, "unsupported_auth_type", "unknown provider authentication method")
+    provider_id = catalog_entry.get("id")
+    if not isinstance(provider_id, str) or not provider_id:
+        raise _refuse(404, "provider_unknown", "the runtime catalog has no such provider")
+    methods = catalog_entry.get("auth_methods")
+    method_rows = cast("list[dict[str, Any]]", methods) if isinstance(methods, list) else []
+    offered: set[str] = {str(row.get("type")) for row in method_rows}
+    if auth_type not in offered:
+        raise _refuse(
+            422,
+            "unsupported_auth_type",
+            f"provider {provider_id!r} does not offer {auth_type}",
+            provider_id=provider_id,
+            offered=sorted(offered),
+        )
+    raw_models = catalog_entry.get("models")
+    model_rows = cast("list[dict[str, Any]]", raw_models) if isinstance(raw_models, list) else []
+    models = [{"id": str(row.get("id"))} for row in model_rows if isinstance(row.get("id"), str)]
+    if not models:
+        raise _refuse(
+            409,
+            "provider_catalog_empty",
+            f"provider {provider_id!r} has no models in the runtime catalog",
+            provider_id=provider_id,
+        )
+    spec: dict[str, Any] = {
+        "id": provider_id,
+        "kind": "pi_native",
+        "models": models,
+    }
+    with _REGISTRATION_LOCK:
+        current = read_providers_file(path)
+        if any(str(row.get("id", "")) == provider_id for row in current.providers):
+            raise _refuse(
+                409,
+                "provider_already_registered",
+                f"provider {provider_id!r} is already declared",
+                provider_id=provider_id,
+            )
+        # Reuse the closed spec validator and preservation writer. No egress,
+        # credential variable, auth source, or endpoint is accepted here.
+        validated = validate_spec_write({"providers": [*current.providers, spec]}, current)
+        return write_specs(current, validated), spec
 
 
 def record_credential_source(path: Path, *, provider_id: str, source: str) -> ProvidersFile:

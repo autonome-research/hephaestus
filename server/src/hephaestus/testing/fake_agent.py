@@ -611,6 +611,20 @@ class FakeAgent:
         self._maybe_fail()
         return {"catalog": list(self.catalog), "verified": self.provider_status()}
 
+    def register_provider(self, spec: dict[str, Any]) -> dict[str, Any]:
+        self._maybe_fail()
+        provider_id = str(spec.get("id", ""))
+        if any(str(row.get("id", "")) == provider_id for row in self.catalog):
+            self.verified = [
+                *[row for row in self.verified if str(row.get("id", "")) != provider_id],
+                {
+                    "id": provider_id,
+                    "available": False,
+                    "unavailable_reason": "provider_not_authenticated",
+                },
+            ]
+        return {"provider": dict(spec), "registered": True}
+
     def provider_status(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self.verified]
 
