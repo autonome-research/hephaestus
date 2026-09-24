@@ -11,9 +11,32 @@ import json
 from collections.abc import Sequence
 
 PROTOCOL_NAME = "hephaestus.oci-executor"
-PROTOCOL_VERSION = 1
-MANIFEST_VERSION = 1
+PROTOCOL_VERSION = 2
+MANIFEST_VERSION = 2
 DIAGNOSTIC_VERSION = 1
+OCI_PROFILE_VERSION = 1
+
+OCI_TMPFS_BYTES = 256 * 1024**2
+PROBE_REQUEST_MAX_BYTES = 1024
+PROBE_STDOUT_MAX_BYTES = 64 * 1024
+PROBE_STDERR_MAX_BYTES = 16 * 1024
+EXEC_STDOUT_MAX_BYTES = 16 * 1024 * 1024
+EXEC_STDERR_MAX_BYTES = 1024 * 1024
+
+REQUIRED_OCI_FEATURES: tuple[str, ...] = (
+    "numeric_identity",
+    "rlimits",
+    "capabilities_dropped",
+    "no_new_privileges",
+    "root_read_only",
+    "work_writable",
+    "tmpfs_profile",
+    "network_isolated",
+    "cgroup_memory",
+    "cgroup_swap",
+    "cgroup_pids",
+    "cgroup_cpu",
+)
 
 BUILD_WORKER = "hephaestus.core.executor.worker"
 DFM_WORKER = "hephaestus.core.dfm.worker"
@@ -60,6 +83,7 @@ def manifest_record() -> dict[str, object]:
             ],
         },
         "manifest_version": MANIFEST_VERSION,
+        "oci_profile_version": OCI_PROFILE_VERSION,
         "protocol": {"name": PROTOCOL_NAME, "version": PROTOCOL_VERSION},
         "workers": sorted(APPROVED_MODULES),
     }
