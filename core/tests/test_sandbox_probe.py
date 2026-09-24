@@ -4,15 +4,18 @@ factory, unsafe refusal policy."""
 from __future__ import annotations
 
 import json
+import stat
 import sys
 from pathlib import Path
 
 import pytest
 from hephaestus.core.errors import SandboxDeniedError, UnsafeRefusedError
+from hephaestus.core.executor.sandbox import probe as probe_mod
 from hephaestus.core.executor.sandbox.base import CapabilityReport, ExecBackend
 from hephaestus.core.executor.sandbox.bwrap import BwrapBackend, find_bwrap
 from hephaestus.core.executor.sandbox.probe import (
     PROBE_CACHE_FILENAME,
+    PRODUCTION_OCI_IMAGE,
     REQUIRED_FEATURES,
     cached_probe,
     probe_bwrap,
@@ -122,6 +125,128 @@ class TestSecureBackendFactory:
         assert isinstance(backend, BwrapBackend)
         assert isinstance(backend, ExecBackend)
         assert backend.name == "bwrap"
+
+
+class _CandidateBackend:
+    def __init__(self, report: CapabilityReport) -> None:
+        self._report = report
+        self.probe_calls = 0
+
+    @property
+    def name(self) -> str:
+        return self._report.backend
+
+    def probe(self) -> CapabilityReport:
+        self.probe_calls += 1
+        return self._report
+
+    def execute(self, spec: object, stdin_payload: bytes) -> object:
+        raise AssertionError("selection tests must not execute a worker")
+
+
+class TestPlatformPolicy:
+    def test_linux_never_discovers_oci(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(probe_mod.sys, "platform", "linux")
+        strip_bwrap_from_path(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            probe_mod,
+            "_discover_darwin_oci_backends",
+            lambda _image: pytest.fail("Linux attempted OCI discovery"),
+        )
+        with pytest.raises(SandboxDeniedError):
+            secure_backend(tmp_path / "store")
+
+    def test_darwin_refuses_before_discovery_while_image_is_unpublished(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert PRODUCTION_OCI_IMAGE is None
+        monkeypatch.setattr(probe_mod.sys, "platform", "darwin")
+        monkeypatch.setattr(probe_mod, "PRODUCTION_OCI_IMAGE", None)
+        monkeypatch.setattr(
+            probe_mod,
+            "_discover_darwin_oci_backends",
+            lambda _image: pytest.fail("Darwin discovered a runtime without an image"),
+        )
+        with pytest.raises(SandboxDeniedError, match="not published"):
+            secure_backend(tmp_path / "store")
+        assert not (tmp_path / "store").exists()
+
+    def test_darwin_returns_only_a_passing_injected_candidate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        failed = _CandidateBackend(
+            CapabilityReport(backend="oci-docker", available=False, reason="failed")
+        )
+        passed = _CandidateBackend(
+            CapabilityReport(backend="oci-podman", available=True, features={"live": True})
+        )
+        monkeypatch.setattr(probe_mod.sys, "platform", "darwin")
+        monkeypatch.setattr(
+            probe_mod,
+            "PRODUCTION_OCI_IMAGE",
+            "registry.example/executor@sha256:" + "a" * 64,
+        )
+        monkeypatch.setattr(
+            probe_mod,
+            "_discover_darwin_oci_backends",
+            lambda _image: (failed, passed),
+        )
+        selected = secure_backend(tmp_path / "store")
+        assert selected is passed
+        assert failed.probe_calls == 1
+        assert passed.probe_calls == 1
+        # OCI reports are never persisted in a project-controlled cache.
+        assert not (tmp_path / "store" / PROBE_CACHE_FILENAME).exists()
+
+    def test_unsupported_platform_refuses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(probe_mod.sys, "platform", "win32")
+        with pytest.raises(SandboxDeniedError, match="supports 'win32'"):
+            secure_backend(tmp_path / "store")
+
+
+def test_incomplete_passing_bwrap_cache_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    cache = store / PROBE_CACHE_FILENAME
+    cache.write_text(
+        json.dumps(
+            {
+                "bwrap_path": "/bin/true",
+                "bwrap_version": "test-version",
+                "report": {
+                    "backend": "bwrap",
+                    "available": True,
+                    "reason": None,
+                    "probed_at": 1.0,
+                    "features": {"trivial_run": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    reprobed = CapabilityReport(backend="bwrap", available=False, reason="reprobed")
+    monkeypatch.setattr(probe_mod, "_bwrap_version", lambda _path: "test-version")
+    monkeypatch.setattr(probe_mod, "probe_bwrap", lambda *_args, **_kwargs: reprobed)
+    report = cached_probe(store, BwrapBackend(bwrap_path="/bin/true"))
+    assert report is reprobed
+
+
+def test_bwrap_cache_file_is_written_restrictively(tmp_path: Path) -> None:
+    cache = tmp_path / PROBE_CACHE_FILENAME
+    report = CapabilityReport(
+        backend="bwrap",
+        available=True,
+        features={name: True for name in REQUIRED_FEATURES},
+    )
+    probe_mod._write_cache(cache, "/bin/bwrap", "test", report)
+    assert stat.S_IMODE(cache.stat().st_mode) == 0o600
+    assert not list(tmp_path.glob(f".{PROBE_CACHE_FILENAME}.*.tmp"))
 
 
 class TestUnsafeRefusal:

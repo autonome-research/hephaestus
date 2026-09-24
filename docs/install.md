@@ -157,8 +157,11 @@ checkout serves its own `web/dist` whatever `--project` names.
   build` exits non-zero (`sandbox_unavailable`); it never silently downgrades.
   `heph build --unsafe-local-executor` is a local debug hatch with no OS
   sandbox. It is refused for registry content and under `heph serve`.
-- **macOS** — no script execution in v0.1. `heph lint`, schema/contract reads,
-  and `heph --version` work. A capability-tested OCI backend is post-v0.1.
+- **macOS** — no production script execution in v0.1. `heph lint`,
+  schema/contract reads, and `heph --version` work. OCI launcher and host
+  mechanics are present but deliberately unactivated: there is no packaged
+  executor image, immutable production digest, runtime discovery, or macOS
+  release lane yet, so execution fails closed before inspecting Docker/Podman.
 - **Agent sidecar** (`heph agent`, agent-backed serve) — Node ≥ 22.19 on
   `PATH`, after you build the sidecar in this checkout:
 

@@ -128,7 +128,7 @@ def test_the_deferred_lane_names_the_tests_that_pin_it() -> None:
     )
     for pin in (
         "test_lane_c_is_deferred_not_silently_dropped",
-        "test_bwrap_is_still_the_only_secure_backend",
+        "test_secure_backend_platform_policy_stays_fail_closed",
     ):
         assert pin in text, f"CI_ONLY.md does not name the pinning test {pin}"
         hits = list(Path(__file__).parent.glob("test_*.py"))
