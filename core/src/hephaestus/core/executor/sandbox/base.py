@@ -3,7 +3,7 @@
 An :class:`ExecBackend` launches the build worker exactly once per request:
 the parent writes one JSON request to the worker's stdin, the worker writes
 one JSON result to stdout, and every artifact lands under the single
-read-write out dir named by the :class:`SandboxSpec`. Backends (bwrap,
+read-write out dir named by the :class:`SandboxSpec`. Backends (bwrap, OCI,
 unsafe-local) implement this protocol elsewhere; this module never imports
 them and contains no bwrap/argv logic.
 
@@ -122,8 +122,9 @@ class ExecOutcome:
 class ExecBackend(Protocol):
     """A sandbox backend able to probe its capabilities and run one worker.
 
-    Implementations: the secure bwrap backend and the explicit
-    ``--unsafe-local-executor`` debug backend. ``probe()`` must be safe to
+    Implementations include secure bwrap, the non-activated OCI host
+    foundation, and the explicit ``--unsafe-local-executor`` debug backend.
+    ``probe()`` must be safe to
     call repeatedly (callers cache per store); ``execute()`` runs the worker
     of ``spec`` with ``stdin_payload`` on stdin and returns the collected
     outcome, enforcing ``spec.rlimits`` and ``spec.wall_clock_s``.
@@ -131,7 +132,7 @@ class ExecBackend(Protocol):
 
     @property
     def name(self) -> str:
-        """Stable backend identifier (e.g. ``"bwrap"``, ``"unsafe-local"``)."""
+        """Stable backend identifier (e.g. ``"bwrap"``, ``"oci-docker"``)."""
         ...
 
     def probe(self) -> CapabilityReport:

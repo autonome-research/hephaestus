@@ -7,13 +7,13 @@ unreadable, the out dir must be writable and visible to the host). A version
 string is never trusted as evidence. Any failure — bwrap missing, launch
 error, a probe not blocking — yields ``available=False`` with a reason.
 
-``cached_probe`` caches only *passing* reports per store root (failures are
-re-probed every time so installing bwrap later is picked up); the cache is
-invalidated when the bwrap path or version changes.
+``cached_probe`` persistently caches only *passing* bwrap reports per store
+root; OCI reports remain instance-local. Failures are always re-probed.
 
-``secure_backend`` is the only factory secure builds may use: it returns a
-probed :class:`BwrapBackend` or raises ``sandbox_denied`` — it NEVER falls
-back to the unsafe backend. ``refuse_unsafe`` is the policy gate the unsafe
+``secure_backend`` is the only factory secure builds may use. Linux is
+bwrap-only. Darwin is OCI-only but currently refuses before discovery because
+no production image is published. Unsupported platforms refuse. It NEVER
+falls back to the unsafe backend. ``refuse_unsafe`` is the policy gate the unsafe
 backend must call before running anything: registry content and ``serve``
 are always refused (``unsafe_refused``).
 """
@@ -21,22 +21,25 @@ are always refused (``unsafe_refused``).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from hephaestus.core.errors import SandboxDeniedError, UnsafeRefusedError
 from hephaestus.core.executor.sandbox.base import (
     CapabilityReport,
+    ExecBackend,
     Rlimits,
     SandboxSpec,
 )
-from hephaestus.core.executor.sandbox.bwrap import (
-    BwrapBackend,
-    build_bwrap_argv,
-    describe_argv,
-)
+from hephaestus.core.executor.sandbox.oci import OciBackend
+
+if TYPE_CHECKING:
+    from hephaestus.core.executor.sandbox.bwrap import BwrapBackend
 
 __all__ = [
     "PROBE_CACHE_FILENAME",
@@ -47,6 +50,11 @@ __all__ = [
 ]
 
 PROBE_CACHE_FILENAME = "sandbox_probe.json"
+
+# Production OCI activation is intentionally unavailable until the executor
+# package/image/release-lane contract is complete. This setting is package-owned:
+# environment variables, project files, and CLI flags may not override it.
+PRODUCTION_OCI_IMAGE: str | None = None
 
 #: Every feature the probe must observe as True for ``available=True``.
 REQUIRED_FEATURES: tuple[str, ...] = (
@@ -147,6 +155,12 @@ def probe_bwrap(
     backend: BwrapBackend | None = None, *, scratch_dir: Path | None = None
 ) -> CapabilityReport:
     """Live fail-closed probe of the bwrap sandbox. Never raises for unavailability."""
+    from hephaestus.core.executor.sandbox.bwrap import (
+        BwrapBackend,
+        build_bwrap_argv,
+        describe_argv,
+    )
+
     backend = backend or BwrapBackend()
     bwrap = backend.bwrap_path()
     if bwrap is None:
@@ -241,6 +255,8 @@ def _report_from_cache(entry: dict[str, object]) -> CapabilityReport | None:
         if not isinstance(key, str) or not isinstance(value, bool):
             return None
         feature_map[key] = value
+    if any(feature_map.get(name) is not True for name in REQUIRED_FEATURES):
+        return None
     try:
         return CapabilityReport(
             backend="bwrap",
@@ -265,30 +281,54 @@ def _write_cache(cache_path: Path, bwrap_path: str, version: str, report: Capabi
             "features": dict(report.features),
         },
     }
-    tmp = cache_path.with_name(cache_path.name + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(cache_path)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{cache_path.name}.",
+        suffix=".tmp",
+        dir=cache_path.parent,
+    )
+    temporary_path = Path(temporary)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = -1
+            json.dump(payload, stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary_path.replace(cache_path)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary_path.unlink(missing_ok=True)
 
 
 def cached_probe(
     store_root: Path,
-    backend: BwrapBackend | None = None,
+    backend: ExecBackend | None = None,
     *,
     scratch_dir: Path | None = None,
 ) -> CapabilityReport:
-    """Per-store-root cached probe (cache file: ``<store_root>/sandbox_probe.json``).
+    """Probe a backend, persistently caching passing bwrap evidence only.
 
-    A cached PASSING report is returned only when the current bwrap path and
-    version still match the ones that passed. Failing reports are never
-    cached — unavailability is always re-checked (fail closed, cheap).
+    OCI evidence is cached only inside its backend instance and never written
+    into a project-controlled store. Failing reports are never cached.
     """
-    backend = backend or BwrapBackend()
+    if backend is not None and backend.name != "bwrap":
+        return backend.probe()
+    if sys.platform != "linux":
+        return _unavailable("bwrap is supported only on Linux")
+
+    from hephaestus.core.executor.sandbox.bwrap import BwrapBackend
+
+    selected = backend or BwrapBackend()
+    if not isinstance(selected, BwrapBackend):
+        return selected.probe()
+
     store_root.mkdir(parents=True, exist_ok=True)
     cache_path = store_root / PROBE_CACHE_FILENAME
-
     entry = _read_cache(cache_path)
     if entry is not None:
-        current_path = backend.bwrap_path()
+        current_path = selected.bwrap_path()
         cached_report = _report_from_cache(entry)
         if (
             cached_report is not None
@@ -298,29 +338,62 @@ def cached_probe(
         ):
             return cached_report
 
-    report = probe_bwrap(backend, scratch_dir=scratch_dir)
+    report = probe_bwrap(selected, scratch_dir=scratch_dir)
     if report.available:
-        bwrap = backend.bwrap_path()
+        bwrap = selected.bwrap_path()
         version = _bwrap_version(bwrap) if bwrap is not None else None
         if bwrap is not None and version is not None:
             _write_cache(cache_path, bwrap, version, report)
     return report
 
 
-def secure_backend(store_root: Path, *, scratch_dir: Path | None = None) -> BwrapBackend:
-    """The ONLY factory secure builds may use. Probed bwrap or ``sandbox_denied``.
+def _discover_darwin_oci_backends(image_ref: str) -> tuple[OciBackend, ...]:
+    """Return validated local-runtime candidates once production activation lands.
 
-    Never falls back to the unsafe backend — silently or otherwise. The
-    unsafe backend exists solely behind its explicit CLI flag and its own
-    module.
+    Runtime discovery deliberately remains absent while ``PRODUCTION_OCI_IMAGE``
+    is unavailable. Tests inject candidates at this boundary; production must
+    later replace this empty implementation together with a published digest
+    and real macOS release-lane evidence.
     """
-    backend = BwrapBackend()
-    report = cached_probe(store_root, backend, scratch_dir=scratch_dir)
-    if not report.available:
-        raise SandboxDeniedError(
-            f"sandbox_unavailable: secure sandbox probe failed: {report.reason}"
-        )
-    return backend
+    del image_ref
+    return ()
+
+
+def secure_backend(store_root: Path, *, scratch_dir: Path | None = None) -> ExecBackend:
+    """Select the sole secure backend allowed by the current host platform.
+
+    Linux is bwrap-only. Darwin is OCI-only, but currently fails closed before
+    discovery because no package-owned production image has been published.
+    Other platforms are unsupported. No branch falls back to unsafe execution.
+    """
+    if sys.platform == "linux":
+        from hephaestus.core.executor.sandbox.bwrap import BwrapBackend
+
+        backend = BwrapBackend()
+        report = cached_probe(store_root, backend, scratch_dir=scratch_dir)
+        if report.available:
+            return backend
+        raise SandboxDeniedError(f"sandbox_unavailable: secure bwrap probe failed: {report.reason}")
+
+    if sys.platform == "darwin":
+        image_ref = PRODUCTION_OCI_IMAGE
+        if image_ref is None:
+            raise SandboxDeniedError(
+                "sandbox_unavailable: the macOS OCI executor image is not published"
+            )
+        candidates = _discover_darwin_oci_backends(image_ref)
+        reasons: list[str] = []
+        for backend in candidates:
+            report = cached_probe(store_root, backend, scratch_dir=scratch_dir)
+            if report.available:
+                return backend
+            reasons.append(report.reason or f"{backend.name} probe failed")
+        detail = "; ".join(reasons) if reasons else "no validated local OCI runtime"
+        raise SandboxDeniedError(f"sandbox_unavailable: secure OCI probe failed: {detail}")
+
+    raise SandboxDeniedError(
+        f"sandbox_unavailable: no secure sandbox backend supports {sys.platform!r}"
+    )
 
 
 def refuse_unsafe(*, registry_content: bool, serve: bool = False) -> None:
