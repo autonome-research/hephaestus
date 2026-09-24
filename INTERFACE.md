@@ -557,12 +557,13 @@ genuinely replays.
 | `POST /parts/{part}/drawing` **Stage 10A (§22)** | `generate_drawing` | **existing `tp_exports` WAL** |
 | `POST /parts/{part}/doc` **Stage 10A (§22)** | `generate_doc` | **existing `tp_exports` WAL** |
 | `PUT /providers/specs` **Stage 10B (§23)** | the `providers.json` **spec-only** write (§23.6) | **NEW WORK**: the same non-tool ledger extension the two rows above it need |
+| `POST /providers/register` **compact UX (§23)** | append one Pi-catalog `pi_native` spec | the same non-tool ledger extension and key space |
 
 The three export rows are the only rows in this table that need **no** ledger
 extension: they replay a complete `ExportCommit` — paths,
 `source_artifact_ref`, `source_input_hashes`, `export_hashes`, and the
-per-operation `extra` — from a `COMMITTED` row. `PUT /providers/specs` does need
-it, under the same key space.
+per-operation `extra` — from a `COMMITTED` row. `PUT /providers/specs` and
+`POST /providers/register` do need it, under the same key space.
 
 **TIGHTENING (binds the `PUT /providers/specs` row).** The route is named
 `/specs` and not `/providers` because it is **not** the whole file. It writes
@@ -673,10 +674,10 @@ the sidecar, read again, and the row is `readable: true` with
 | `GET /parts/{part}/exports` | committed `tp_exports` projection: rows with paths, blobs, sizes, source ref, `extra` | §22.7 |
 | `GET /exports/{export_blob}/bytes` | the file, as an `attachment`, addressed by the blob a **`COMMITTED`** row names | §22.3 |
 | `GET /providers` | specs, availability, auth state, egress acknowledgements, `auth_source`, file mode — **no credential material** | §23.8 |
-| `GET /providers/catalog` | Existing `providers.list` sign-in projection: provider identities and model-ID arrays, **not** the active session model | §23.1 |
+| `GET /providers/catalog` | Pi-owned provider identities, native auth methods, and model metadata; a short-lived zero-declaration sidecar supplies the same projection before attach; **not** the active session model | §23.1 |
 | `GET /providers/models` | `providers.models`: declared options joined to the configured runtime's resolved names/capabilities, plus explicit proposed default | §7A.10(d) |
 | `GET /sessions/{id}/model` | `session.model.get` plus Python-owned live question projection: `{status:"ok", session_id, model_state, execution, live_questions}`; `Cache-Control: no-store`; no prompt/answer/cancel | §7A.7, §7A.10(d) |
-| `GET /providers/{id}/auth/status` | `{state, type?, expires_at?, health, last_observed_at, flow?}` — metadata only | §23.8 |
+| `GET /providers/{id}/auth/status` | `{state, type?, expires_at?, health, last_observed_at, flow?}`; a polled terminal OAuth flow is finalized once before completion is returned | §23.4, §23.8 |
 | `POST /providers/discover` **Stage 10C** | the discovery **offer**: `[{kind, provider_id, model_ids[], source_path}]` — never a secret, never a masked tail, and it runs **only** on this explicit request | §23.5 |
 
 `POST /providers/discover` is a `POST` and sits in the read table on purpose: it
@@ -7583,6 +7584,37 @@ route that serves the same bytes under a different label.
   server. Conflating the two is the mistake §2.2 already made and §23 does not
   repeat.
 
+**APPROVED COMPACT-UX AMENDMENT — 2026-09-24.** The composer control visibly
+names the current model and opens one compact menu. The model list carries Pi's
+resolved names and capabilities; its final action is **`+ Add provider`**.
+Adding is staged: choose **Subscription** or **API key first**, then choose only
+an absent provider for which Pi advertises that auth mechanism. The provider
+list, auth mechanisms (`oauth` / `apiKey`), canonical ids, and model metadata
+come from the pinned `ModelRuntime` provider objects — there is still no
+Hephaestus provider/auth table. Because the approved API-key screen has one
+secret field, `apiKey` is offered only when Pi's own login interaction accepts
+exactly one secret and returns a plain key with no provider environment. Pi
+providers that begin with a selector or require account/project/gateway fields
+are not mislabeled as compatible with this screen.
+
+`POST /providers/register` accepts only `{provider_id, auth_type}`, requires an
+idempotency key, validates both values against that Pi projection, and appends a
+structureless `pi_native` declaration under the private-file writer. It cannot
+replace another declaration or accept a secret, endpoint, credential variable,
+model id, or path from the browser. With no attached runtime,
+`GET /providers/catalog` starts a short-lived zero-declaration sidecar with an
+empty credential allowlist and an ephemeral agent directory, then closes and
+removes both after the read; registration then uses
+the existing attach path. With an attached runtime, `providers.register` adds
+the same declaration to the live resolver without recreating sessions. Neither
+path selects a model, changes a session/default, sends a prompt, or reads/probes
+a credential. The next screen delegates API-key storage and subscription login
+to Pi's existing auth APIs; Pi's own prompt/notification sequence determines
+the native flow. Closing any stage preserves the durable declaration, current
+model, session, and draft. Once a subscription flow has begun, dismissal waits
+for Pi's cancellation acknowledgement; a failed cancellation keeps the dialog
+visible so no live flow is left without an owning UI.
+
 ### 23.0 The state this section exists to fix — and the capability it needs first
 
 Today a project with no `.heph/providers.json` serves every read route and
@@ -7613,9 +7645,10 @@ with it:**
 
 | Route class | Needs a sidecar? | Refuses `agent_unavailable`? |
 |---|---|---|
-| `GET /providers`, `PUT /providers/specs` | **No** — they read and write a file | **No.** Refusing these in the zero-config case is what made the section unusable. |
+| `GET /providers`, `PUT /providers/specs`, `POST /providers/register` | **No attached runtime** — specs are file-backed; catalog registration uses the bounded catalog reader described in the 2026-09-24 amendment | **No.** Refusing these in the zero-config case is what made the section unusable. |
 | `POST /providers/attach` | No — it *creates* one | No; it reports per-provider verification results |
-| `GET /providers/catalog`, every `auth/*` route | **Yes** — Pi is the credential store | Yes, and correctly |
+| `GET /providers/catalog` | No attached runtime; it uses the bounded zero-declaration Pi catalog reader when detached | No |
+| every `auth/*` route | **Yes** — Pi is the credential store | Yes, and correctly |
 
 The success path of sign-in is not "the panel says connected". It is:
 `agent_unavailable` disappears → `GET /sessions` returns → the empty state becomes
@@ -7694,7 +7727,12 @@ manager would save under a misleading identity → `POST /providers/{id}/auth/ke
 with `{key, scope}`, **the key in the body**, never a path segment, query
 parameter, or fragment → the server relays it to `runtime.setApiKey` or holds it
 in the configure map → attach-or-restart (§23.7) → the response carries the
-§23.8 projection and **not the key**.
+§23.8 projection and **not the key**. For a native catalog provider this route
+first re-checks the same Pi-owned interaction shape used by the catalog; a
+selector, second prompt, or provider-environment result is
+`unsupported_auth_type` for this one-field surface in both `serve` and `project`
+scope, rather than reusing the pasted key as every answer or bypassing Pi's
+required fields.
 
 **The fragment is not a safe place for a provider secret either**, and this is
 the one place §2.2's reasoning does not transfer. The bearer rides in the
@@ -7737,9 +7775,14 @@ secret. The panel renders the code large and the URI as a link the operator open
 in a normal tab. The client polls `GET /providers/{id}/auth/status`; the
 **sidecar** polls the provider, honouring `authorization_pending` and `slow_down`.
 Poll state lives in the sidecar; **the browser never touches the provider.** On
-completion Pi exchanges the code and persists the credential, and the status
-route flips to `{"state":"project","type":"oauth","expires_at":…}` — **no token
-in the body, ever.**
+completion Pi exchanges the code and persists the credential. The first status
+poll that observes the completed flow records the project-owned credential
+source and applies the credential change exactly once before returning success.
+If a turn is active, it returns the named `runs_in_flight` refusal without
+restarting or losing the completed flow; the owning dialog keeps polling until
+application is safe. The response then flips to
+`{"state":"project","type":"oauth","expires_at":…}` — **no token in the body,
+ever.**
 
 **DECISION: device code is the default because it opens no listening socket.** It
 works over SSH, in a container, and cannot collide with a real provider CLI
@@ -7901,9 +7944,12 @@ loopback-only; §23 re-checks it at the route anyway, on the §2.6 pattern — a
 refusal a future configuration change could quietly contradict is worse than no
 refusal, because a reader stops looking.
 
-**Reads (no key):** `GET /providers`, `GET /providers/catalog`,
-`GET /providers/models` (§7A.10(d), added 2026-09-10),
-`GET /providers/{id}/auth/status` — **metadata only** (§23.8).
+**Reads (no key):** `GET /providers`, `GET /providers/catalog`, and
+`GET /providers/models` (§7A.10(d), added 2026-09-10).
+`GET /providers/{id}/auth/status` normally returns metadata only; when Pi's
+background flow has reached `complete`, that poll is the one-shot finalization
+boundary described in §23.4 (source record plus apply/restart, deferred rather
+than ending an active run).
 
 **Config mutation — key required:** `PUT /providers/specs` (§2.3's first table),
 under the same non-tool ledger extension `POST /project/config/dfm` and
