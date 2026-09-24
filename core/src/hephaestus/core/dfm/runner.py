@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import sys
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -34,7 +33,7 @@ from typing import cast
 
 from hephaestus.core.dfm.types import DfmEvaluation, DfmRuleOutcome, TopologyDescriptor
 from hephaestus.core.errors import HephaestusError, ValidationError
-from hephaestus.core.executor.runner import DEFAULT_RLIMITS, worker_ro_binds
+from hephaestus.core.executor.runner import DEFAULT_RLIMITS
 from hephaestus.core.executor.sandbox.base import ExecBackend, Rlimits, SandboxSpec
 from hephaestus.core.registry import DfmPack, RegistryError
 from opstore.types import JSONValue
@@ -43,7 +42,7 @@ __all__ = [
     "ARTIFACT_FILENAME",
     "DEFAULT_DFM_WALL_CLOCK_S",
     "DfmRequest",
-    "dfm_worker_command",
+    "dfm_worker_args",
     "evaluate_pack",
 ]
 
@@ -54,9 +53,9 @@ ARTIFACT_FILENAME = "source.brep"
 DEFAULT_DFM_WALL_CLOCK_S = 120.0
 
 
-def dfm_worker_command() -> tuple[str, ...]:
-    """argv of the DFM worker: this interpreter running the worker module."""
-    return (sys.executable, "-m", "hephaestus.core.dfm.worker")
+def dfm_worker_args() -> tuple[str, ...]:
+    """Interpreter-independent arguments selecting the DFM worker module."""
+    return ("-m", "hephaestus.core.dfm.worker")
 
 
 @dataclass(frozen=True)
@@ -90,7 +89,7 @@ class DfmRequest:
             raise ValidationError("a DFM run needs the source artifact's bytes", kind="contract")
 
 
-def _job(request: DfmRequest, pack: DfmPack, out_dir: Path) -> dict[str, JSONValue]:
+def _job(request: DfmRequest, pack: DfmPack) -> dict[str, JSONValue]:
     rules: list[JSONValue] = [
         {
             "rule_id": rule.rule_id,
@@ -108,7 +107,9 @@ def _job(request: DfmRequest, pack: DfmPack, out_dir: Path) -> dict[str, JSONVal
         "process": pack.process,
         "source_artifact_ref": request.source_artifact_ref,
         "brep": ARTIFACT_FILENAME,
-        "out_dir": str(out_dir),
+        # The backend presents the host staging directory as the worker cwd;
+        # no host path may leak into this image-neutral protocol payload.
+        "out_dir": ".",
         "metadata": {name: value for name, value in sorted(request.metadata.items())},
         "material": (None if request.material is None else dict(request.material)),
         "tags": {name: descriptor.to_json() for name, descriptor in sorted(request.tags.items())},
@@ -158,10 +159,10 @@ def evaluate_pack(
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
         (out_dir / ARTIFACT_FILENAME).write_bytes(request.brep)
-        payload = json.dumps(_job(request, pack, out_dir)).encode("utf-8")
+        payload = json.dumps(_job(request, pack)).encode("utf-8")
         spec = SandboxSpec(
-            worker_cmd=dfm_worker_command(),
-            ro_binds=worker_ro_binds(),
+            worker_args=dfm_worker_args(),
+            ro_binds=(),
             rw_out_dir=out_dir,
             rlimits=rlimits,
             wall_clock_s=request.wall_clock_s,

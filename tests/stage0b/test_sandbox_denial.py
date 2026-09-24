@@ -116,7 +116,7 @@ class TestUnsafeRefusal:
 
     def _spec(self, tmp_path: Path) -> SandboxSpec:
         return SandboxSpec(
-            worker_cmd=("true",),
+            worker_args=("-c", "pass"),
             ro_binds=(),
             rw_out_dir=tmp_path,
             rlimits=Rlimits(cpu_seconds=5, address_space_bytes=1 << 30, nproc=64),

@@ -10,7 +10,9 @@ message, ±2-line frame with a ``"> "`` marker, ``built_through``,
 ``last_good`` metrics) and writes the last-good BRep under the out dir; on
 success it writes the final compound BRep plus geometry index, source map,
 and tag fingerprints. Artifacts are written ONLY under the job's out dir —
-the parent (runner) moves them into CAS and mints refs.
+the parent (runner) moves them into CAS and mints refs. Production backends
+make the host staging directory the worker cwd and the job names it as ``.``;
+the payload therefore contains no backend- or host-specific mount path.
 
 Job JSON: ``{"part", "script", "globals_source", "part_overrides",
 "project_overrides", "out_dir", "origin", "mode", "imports",

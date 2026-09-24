@@ -20,7 +20,8 @@ findings of the rest.
 
 Job JSON: ``{"mode": "dfm", "origin": "registry", "part", "process",
 "source_artifact_ref", "brep", "metadata", "material", "tags", "rules",
-"out_dir"}``.
+"out_dir"}``. Production backends set the artifact-staging directory as the
+worker cwd, so the payload uses the backend-neutral relative path ``.``.
 """
 
 from __future__ import annotations
