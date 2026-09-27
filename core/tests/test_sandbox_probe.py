@@ -1,3 +1,6 @@
+# pyright: reportPrivateUsage=false, reportPrivateImportUsage=false
+# pyright: reportUnknownArgumentType=false, reportUnknownLambdaType=false
+
 """probe.py tests: fail-closed detection, per-store caching, secure_backend
 factory, unsafe refusal policy."""
 

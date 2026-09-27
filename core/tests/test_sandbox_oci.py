@@ -1,3 +1,7 @@
+# pyright: reportPrivateUsage=false, reportPrivateImportUsage=false
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
+# pyright: reportUnknownArgumentType=false, reportUnknownLambdaType=false
+
 """Daemon-free tests for conservative OCI host mechanics."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# pyright: reportPrivateImportUsage=false
+# pyright: reportUnknownArgumentType=false, reportUnknownLambdaType=false
+
 """Daemon-free tests for the OCI executor protocol and launcher."""
 
 from __future__ import annotations
