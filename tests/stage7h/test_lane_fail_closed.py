@@ -40,9 +40,9 @@ FIXTURE = REPO / "corpus" / "public_fixtures" / "assembly"
 def no_backend_env(venv: Path) -> dict[str, str]:
     """The venv's scripts on PATH, with every bubblewrap-bearing entry removed.
 
-    Removing the binary is what makes the probe fail; faking a failing probe
-    would test the fake. Docker/Podman are left alone deliberately — see
-    ``test_bwrap_is_still_the_only_secure_backend``.
+    Removing the binary is what makes the Linux probe fail; faking a failing
+    probe would test the fake. Docker/Podman are left alone deliberately — the
+    platform policy keeps Linux bwrap-only.
     """
     scripts = str(venv_script(venv, "").parent)
     keep = [scripts]
@@ -180,41 +180,48 @@ else:
     assert "sandbox_unavailable" in proc.stdout, proc.stdout
 
 
-def test_bwrap_is_still_the_only_secure_backend(installed_venv: Path) -> None:
-    """Lane (d)'s validity condition — and, since the 2026-08-13 G7H amendment,
-    the amendment's own tripwire — asserted rather than assumed.
+def test_secure_backend_platform_policy_stays_fail_closed(installed_venv: Path) -> None:
+    """Pin the transition policy while macOS production activation is deferred.
 
-    The CI lane proves "no passing secure backend" by not installing bubblewrap
-    — while Docker *is* present on the hosted image. That argument holds only
-    while ``secure_backend`` can construct nothing but ``BwrapBackend``.
-
-    Repointed under the G7H amendment (2026-08-13, ``mission_plan.md``
-    §"Stage 7H"): v0.1.0-headless supports secure script execution on Linux
-    x86_64 via probed bubblewrap ONLY, and macOS via an OCI backend is
-    DEFERRED to Stage 7. This test now pins that decision from the product
-    side: the day an OCI backend lands, it fails and forces the deferral
-    record (``tests/stage7h/CI_ONLY.md`` §3, ``release.yml``'s lane (c)
-    comment block) to be revisited and lane (d) to disable the new backend
-    too, instead of either lane silently becoming a lie.
+    Linux remains bwrap-only even when Docker is installed. Darwin has an
+    OCI-only branch, but no package-owned image digest yet, so it must refuse
+    before runtime discovery. No platform may select the unsafe backend.
     """
     payload = json_in_venv(
         installed_venv,
         """
 import inspect, json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from hephaestus.core.executor.sandbox import probe
 src = inspect.getsource(probe.secure_backend)
+original = probe.sys.platform
+try:
+    probe.sys.platform = "darwin"
+    with TemporaryDirectory() as tmp:
+        try:
+            probe.secure_backend(Path(tmp) / "store")
+        except Exception as exc:
+            darwin = type(exc).__name__ + ": " + str(exc)
+        else:
+            darwin = "RETURNED A BACKEND"
+finally:
+    probe.sys.platform = original
 print(json.dumps({
-    "returns": probe.secure_backend.__annotations__.get("return", ""),
-    "constructs": [n for n in ("BwrapBackend", "OciBackend", "DockerBackend")
-                   if n + "(" in src],
+    "darwin": darwin,
+    "linux_branch": 'sys.platform == "linux"' in src and "BwrapBackend()" in src,
+    "darwin_branch": 'sys.platform == "darwin"' in src and "PRODUCTION_OCI_IMAGE" in src,
+    "unsafe": "UnsafeLocalBackend" in src,
 }))
 """,
     )
     assert isinstance(payload, dict)
-    assert payload["constructs"] == ["BwrapBackend"], (
-        "secure_backend can now construct another backend; lane (d) must be "
-        "updated to disable it before this test is relaxed"
-    )
+    assert payload["linux_branch"] is True
+    assert payload["darwin_branch"] is True
+    assert payload["unsafe"] is False
+    assert "RETURNED A BACKEND" not in payload["darwin"]
+    assert "sandbox_unavailable" in payload["darwin"]
+    assert "not published" in payload["darwin"]
 
 
 # --------------------------------------------------------------------------

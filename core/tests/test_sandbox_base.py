@@ -18,8 +18,8 @@ RLIMITS = Rlimits(cpu_seconds=60, address_space_bytes=4 << 30, nproc=16)
 
 def make_spec(tmp_path: Path) -> SandboxSpec:
     return SandboxSpec(
-        worker_cmd=("python", "-m", "hephaestus.core.executor.worker"),
-        ro_binds=(tmp_path / "project", tmp_path / "venv"),
+        worker_args=("-m", "hephaestus.core.executor.worker"),
+        ro_binds=(tmp_path / "project", tmp_path / "job-inputs"),
         rw_out_dir=tmp_path / "out",
         rlimits=RLIMITS,
         wall_clock_s=30.0,
@@ -64,14 +64,15 @@ class TestProtocol:
 class TestSandboxSpec:
     def test_holds_worker_view(self, tmp_path: Path) -> None:
         spec = make_spec(tmp_path)
+        assert spec.worker_args == ("-m", "hephaestus.core.executor.worker")
         assert spec.rw_out_dir == tmp_path / "out"
         assert spec.rlimits.cpu_seconds == 60
         assert len(spec.ro_binds) == 2
 
-    def test_empty_worker_cmd_rejected(self, tmp_path: Path) -> None:
+    def test_empty_worker_args_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError):
             SandboxSpec(
-                worker_cmd=(),
+                worker_args=(),
                 ro_binds=(),
                 rw_out_dir=tmp_path,
                 rlimits=RLIMITS,
@@ -81,7 +82,7 @@ class TestSandboxSpec:
     def test_nonpositive_wall_clock_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError):
             SandboxSpec(
-                worker_cmd=("python",),
+                worker_args=("-c", "pass"),
                 ro_binds=(),
                 rw_out_dir=tmp_path,
                 rlimits=RLIMITS,

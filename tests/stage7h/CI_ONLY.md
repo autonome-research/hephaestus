@@ -88,13 +88,13 @@ What the removed job proved, so it can be reauthored rather than reinvented:
 a Docker/Podman/OrbStack-compatible backend **detected** by response (never
 assumed), the executor profile **capability-probed** directly against the
 backend — read-only root, no network, dropped caps, bounded memory/pids —
-then the same fake-model/MCP smoke and escape suite as the Linux lane. It was
-KNOWN RED from the day it was authored:
-`hephaestus.core.executor.sandbox.probe.secure_backend()` constructs a
-`BwrapBackend` and nothing else, so on macOS the product raises
-`sandbox_unavailable` — correct fail-closed behaviour, now the *specified*
-v0.1 behaviour under lane (d)'s amended clause ("on macOS the product refuses
-script execution by design in v0.1").
+then the same fake-model/MCP smoke and escape suite as the Linux lane. It was KNOWN RED from the day it was authored. The product now contains
+non-activated OCI protocol and host mechanics, and `secure_backend()` has an
+explicit Darwin branch, but there is deliberately no package-owned image
+digest or runtime discovery. Darwin therefore still raises
+`sandbox_unavailable` before inspecting a runtime — correct fail-closed
+behaviour, and still the *specified* v0.1 behaviour under lane (d)'s amended
+clause ("on macOS the product refuses script execution by design in v0.1").
 
 The deferral is pinned in both directions so it can neither be silently
 resurrected nor silently forgotten:
@@ -102,9 +102,9 @@ resurrected nor silently forgotten:
 - `test_release_lanes.py::test_lane_c_is_deferred_not_silently_dropped`
   fails if a lane-c job reappears in `release.yml`, or if the dated deferral
   record disappears from `release.yml`, `mission_plan.md`, or this document;
-- `test_lane_fail_closed.py::test_bwrap_is_still_the_only_secure_backend`
-  fails the day an OCI backend lands, forcing the amendment — and this entry —
-  to be revisited.
+- `test_lane_fail_closed.py::test_secure_backend_platform_policy_stays_fail_closed`
+  pins Linux as bwrap-only, Darwin as OCI-only, Darwin's pre-discovery refusal
+  while the image is unpublished, and the absence of any unsafe fallback.
 
 There is no local equivalent and there should not be one: this machine is Linux
 and has no OCI backend the product would accept.
@@ -198,5 +198,6 @@ untestable and skip writing the test that already passed.
 
 A DEFERRED entry follows the same contract in time instead of space: it is
 deleted in the change that reintroduces its lane, and
-`test_lane_fail_closed.py::test_bwrap_is_still_the_only_secure_backend` is what
-forces that change to happen rather than letting the entry outlive its truth.
+`test_lane_fail_closed.py::test_secure_backend_platform_policy_stays_fail_closed`
+is what forces activation policy to change together with this entry rather
+than letting the deferral outlive its truth.

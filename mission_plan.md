@@ -458,8 +458,9 @@ fail-closed clause now explicitly covers macOS ("on macOS the product refuses
 script execution by design in v0.1"). This is a tightening, not a waiver:
 lane (a) still runs on macOS, `heph agent`/serve on macOS refuse rather than
 run unsandboxed, and `tests/stage7h/test_lane_fail_closed.py`
-(`test_bwrap_is_still_the_only_secure_backend`) fails the day an OCI backend
-lands without this amendment being revisited. The deferral text is pinned in
+(`test_secure_backend_platform_policy_stays_fail_closed`) pins Linux as
+bwrap-only and Darwin as OCI-only-but-unactivated until the package-owned image,
+runtime discovery, and release-lane evidence land together. The deferral text is pinned in
 `tests/stage7h/CI_ONLY.md` §3 and by
 `tests/stage7h/test_release_lanes.py`, so silently resurrecting lane (c) and
 silently forgetting macOS both fail tests.

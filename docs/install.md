@@ -195,8 +195,12 @@ checkout serves its own `web/dist` whatever `--project` names.
   `mesa-libEGL mesa-libGL mesa-dri-drivers`. `scripts/bootstrap.sh --check`
   warns when `libEGL.so.1` is not on the loader path; without it a render
   fails with `Unable to load EGL library` rather than a named refusal.
-- **macOS** — no script execution in v0.1. `heph lint`, schema/contract reads,
-  and `heph --version` work. A capability-tested OCI backend is post-v0.1.
+- **macOS** — no production script execution in v0.1. `heph lint`,
+  schema/contract reads, and `heph --version` work. OCI launcher and host
+  mechanics and a reproducible executor-image recipe are present but
+  deliberately unactivated: there is no published multi-architecture immutable
+  production digest, runtime discovery, or macOS release lane yet, so execution
+  fails closed before inspecting Docker/Podman.
 - **Agent sidecar** (`heph agent`, agent-backed serve) — Node ≥ 22.19 on
   `PATH`, after you build the sidecar in this checkout:
 

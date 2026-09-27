@@ -199,7 +199,7 @@ class TestUnsafeRefusal:
     def test_unparseable_payload_refused(self, tmp_path: Path) -> None:
         backend = UnsafeLocalBackend()
         spec = SandboxSpec(
-            worker_cmd=("true",),
+            worker_args=("-c", "pass"),
             ro_binds=(),
             rw_out_dir=tmp_path,
             rlimits=Rlimits(cpu_seconds=1, address_space_bytes=1 << 30, nproc=8),

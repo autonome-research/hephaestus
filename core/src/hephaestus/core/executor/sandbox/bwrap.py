@@ -4,9 +4,9 @@ Adapts the proven argv from ``spikes/sandbox`` (Stage S, spike F — see its
 RESULTS.md) to the :class:`~hephaestus.core.executor.sandbox.base.ExecBackend`
 protocol. Sandbox profile:
 
-- every ``ro_bind`` of the spec (project dir, venv prefix, pinned interpreter
-  install root) is bound read-only at its own host path (identity bind), so
-  ``worker_cmd`` host paths work unchanged inside the sandbox;
+- every job-specific ``ro_bind`` of the spec is bound read-only at its own
+  host path (identity bind); the backend adds the current interpreter's
+  runtime binds itself and prepends that interpreter to ``worker_args``;
 - ONE writable bind: the fresh per-build ``rw_out_dir`` (also the chdir);
 - tmpfs ``/tmp`` and ``/run``; private ``/proc`` and ``/dev``; base OS from a
   read-only ``/usr`` bind plus the host's OWN top-level merged-usr entries
@@ -248,11 +248,13 @@ def build_bwrap_argv(bwrap: str | Path, spec: SandboxSpec) -> tuple[str, ...]:
     out_dir = Path(spec.rw_out_dir).resolve()
     if not out_dir.is_dir():
         raise ValueError(f"rw_out_dir does not exist or is not a directory: {out_dir}")
-    # Keep BOTH the stated and the resolved form of every ro_bind: worker_cmd
-    # and sys.path entries name STATED paths, which dangle inside the sandbox
-    # if only the symlink's resolved target was mounted.
+    # Runtime exposure belongs to this backend. Callers provide only
+    # job-specific inputs, keeping SandboxSpec independent of the host Python
+    # installation. Keep BOTH stated and resolved forms: sys.executable,
+    # sys.path, and job inputs can name stated symlink paths that would dangle
+    # if only their targets were mounted.
     stated_and_resolved: list[Path] = []
-    for bind in spec.ro_binds:
+    for bind in (*interpreter_ro_binds(), *spec.ro_binds):
         stated = Path(bind)
         resolved = stated.resolve()
         if not resolved.exists():
@@ -298,7 +300,7 @@ def build_bwrap_argv(bwrap: str | Path, spec: SandboxSpec) -> tuple[str, ...]:
         "--remount-ro",
         "/",
     ]
-    argv += list(spec.worker_cmd)
+    argv += [sys.executable, *spec.worker_args]
     return tuple(argv)
 
 
