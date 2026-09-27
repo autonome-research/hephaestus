@@ -3,13 +3,12 @@
 The pump consumes the sidecar's ``event`` and ``terminal`` notifications
 (delivered via the supervisor's notification sink) and:
 
-* fans ``event`` records into **per-client bounded queues** (``buffered_events``
-  = 1024). Explicitly droppable **progress deltas** coalesce to the latest per
-  key ``(run_id, event_kind, tool_call_id)``; never-dropped classes (audit, tool
-  calls/results, questions/answers, terminals) always append. If the bounded
-  queue still cannot make progress after coalescing, the affected run is
-  **backpressure-cancelled** and its final error routed through the terminal
-  channel (architecture §5 "Event coalescing").
+* fans ``event`` records into **strictly bounded per-client queues**
+  (``buffered_events`` = 1024). Explicitly droppable **progress deltas**
+  coalesce by ``(run_id, event_kind, tool_call_id)`` and evict the oldest
+  progress key at capacity. A non-droppable overflow is explicit: durable
+  owners are backpressure-cancelled and detached after their reserved terminal;
+  observers are dropped with ``resync_required`` and never cancel the run.
 * ingests ``terminal`` records into the opstore admission terminal channel in
   **one transaction**, then acknowledges back to the sidecar **only after the
   terminal is durable** (``terminal.ack`` names the terminal id). Exactly one
@@ -107,37 +106,76 @@ def coalesce_key(ev: HephaestusEvent) -> str:
 
 
 class PerClientQueue:
-    """A single client's bounded event queue with progress coalescing.
+    """A strictly bounded event queue with progress coalescing.
 
-    Non-droppable events append and count against the bound. Droppable
-    (progress) events coalesce to the latest per :func:`coalesce_key`, occupying
-    at most one slot per key. ``overflow`` becomes true when, after coalescing,
-    the durable (non-droppable) backlog still exceeds the bound — that is the
-    backpressure-cancel trigger.
+    At most ``bound - 1`` non-terminal events are retained, reserving one slot
+    for the authoritative terminal if a durable backlog overflows. Distinct
+    progress keys cannot defeat the bound: the oldest progress key is evicted.
+    Once a non-droppable event cannot fit, overflow latches and later
+    non-terminal events are refused; the owner must cancel/drop and resync.
     """
 
     def __init__(self, bound: int = BUFFERED_EVENTS_MAX) -> None:
+        if bound < 1:
+            raise ValueError("event queue bound must be positive")
         self.bound = bound
         self._durable: list[HephaestusEvent] = []
         self._progress: OrderedDict[str, HephaestusEvent] = OrderedDict()
+        self._overflowed = False
 
     def push(self, ev: HephaestusEvent) -> bool:
-        """Enqueue ``ev``; return True if it fit, False on overflow (cancel signal)."""
+        """Enqueue ``ev`` when it fits; never let total storage exceed ``bound``."""
+        if ev.kind == "terminal":
+            # One durable terminal exists per run. Replayed sidecar terminals do
+            # not consume another slot in a stalled client's finite queue.
+            if any(item.kind == "terminal" and item.run_id == ev.run_id for item in self._durable):
+                return True
+            if self.size >= self.bound:
+                self._overflowed = True
+                return False
+            self._durable.append(ev)
+            return True
+
+        if self._overflowed:
+            return False
+
+        regular_limit = self.bound - 1
         if ev.kind in DROPPABLE_KINDS:
             key = coalesce_key(ev)
-            # Coalesce to the latest; move to the end to preserve arrival order.
-            self._progress.pop(key, None)
+            if key in self._progress:
+                self._progress.pop(key)
+                self._progress[key] = ev
+                return True
+            if regular_limit == 0:
+                return True  # progress is explicitly droppable
+            if self.size >= regular_limit:
+                if self._progress:
+                    self._progress.popitem(last=False)
+                else:
+                    return True  # a progress delta need not displace durable evidence
             self._progress[key] = ev
             return True
+
+        # Durable evidence displaces droppable progress before declaring the
+        # client unable to keep up.
+        while self.size >= regular_limit and self._progress:
+            self._progress.popitem(last=False)
+        if self.size >= regular_limit:
+            self._overflowed = True
+            return False
         self._durable.append(ev)
-        return len(self._durable) <= self.bound
+        return True
 
     @property
     def overflowed(self) -> bool:
-        return len(self._durable) > self.bound
+        return self._overflowed
 
     def drain(self) -> list[HephaestusEvent]:
-        """Return buffered events in arrival order and clear the queue."""
+        """Return buffered events in arrival order and clear stored entries.
+
+        Overflow intentionally remains latched: the pump has already dropped
+        the observer or cancelled and detached the durable client.
+        """
         out = list(self._durable)
         out.extend(self._progress.values())
         out.sort(key=lambda e: e.seq)
@@ -325,22 +363,32 @@ class EventPump:
         resync_required`` — and leaves the run untouched.
         """
         overflow_runs: set[str] = set()
+        overflow_clients: list[tuple[str, PerClientQueue]] = []
         dropped: list[ObserverClient] = []
         with self._lock:
             for tap in self._taps:
                 with contextlib.suppress(Exception):
                     tap(ev)
-            for queue in self._clients.values():
+            for client_id, queue in self._clients.items():
                 fit = queue.push(ev)
                 if not fit:
                     overflow_runs.add(ev.run_id)
+                    overflow_clients.append((client_id, queue))
             for observer in list(self._observers.values()):
                 if not observer.push(ev):
                     dropped.append(observer)
                     self._observers.pop(observer.client_id, None)
         self._wake(dropped)
         for run_id in overflow_runs:
+            # The synthetic terminal uses the queue's reserved final slot.
             self._backpressure_cancel(run_id)
+        # A client that forced cancellation is no longer a stream consumer.
+        # Detach only after terminal synthesis so it can drain that final truth,
+        # and identity-check in case the id was concurrently re-registered.
+        with self._lock:
+            for client_id, queue in overflow_clients:
+                if self._clients.get(client_id) is queue:
+                    self._clients.pop(client_id, None)
 
     def _wake(self, dropped: Sequence[ObserverClient]) -> None:
         """Wake every attached observer, plus the ones just dropped.
@@ -374,11 +422,26 @@ class EventPump:
 
     def on_terminal(self, params: dict[str, Any]) -> TerminalIngest:
         """Durably record a terminal, then ack it back to the sidecar."""
+        return self._terminal_from_params(params, acknowledge_peer=True)
+
+    def reconcile_terminal(self, params: dict[str, Any]) -> TerminalIngest:
+        """Settle a terminal after sidecar loss without writing to the dead peer."""
+        return self._terminal_from_params(params, acknowledge_peer=False)
+
+    def _terminal_from_params(
+        self, params: dict[str, Any], *, acknowledge_peer: bool
+    ) -> TerminalIngest:
         run_id = str(params["run_id"])
         terminal_id = str(params.get("terminal_id", f"terminal:{run_id}"))
         state = TerminalState(str(params["state"]))
         data = params.get("payload")
-        return self._ingest_terminal(run_id=run_id, terminal_id=terminal_id, state=state, data=data)
+        return self._ingest_terminal(
+            run_id=run_id,
+            terminal_id=terminal_id,
+            state=state,
+            data=data,
+            acknowledge_peer=acknowledge_peer,
+        )
 
     def _ingest_terminal(
         self,
@@ -387,6 +450,7 @@ class EventPump:
         terminal_id: str,
         state: TerminalState,
         data: Any,
+        acknowledge_peer: bool = True,
     ) -> TerminalIngest:
         existing = self._admission.get_terminal(run_id)
         duplicate = existing is not None
@@ -413,9 +477,13 @@ class EventPump:
         acked = True
         with self._lock:
             self.acked_terminals[run_id] = record.terminal_id
-        if self._ack_terminal is not None:
+        if acknowledge_peer and self._ack_terminal is not None:
             self._ack_terminal(run_id, record.terminal_id)
-        # Emit a normalized terminal event to every client (never dropped).
+        # Emit a normalized terminal event. A queue reserves capacity for this
+        # after ordinary-event overflow. A backlog made entirely of terminals
+        # can still fill the finite queue; in that case the client is detached
+        # and its latched queue explicitly requires resync rather than silently
+        # remaining registered after losing authoritative truth.
         term_event = HephaestusEvent(
             run_id=run_id,
             seq=2**62,  # terminals sort last
@@ -431,8 +499,9 @@ class EventPump:
             for tap in self._taps:
                 with contextlib.suppress(Exception):
                     tap(term_event)
-            for queue in self._clients.values():
-                queue.push(term_event)
+            for client_id, queue in list(self._clients.items()):
+                if not queue.push(term_event):
+                    self._clients.pop(client_id, None)
             # Observers see terminals too — a run-terminal band the browser never
             # received would leave a transcript implying the run is still open
             # (§7.3). An observer that overflows on the terminal is dropped like

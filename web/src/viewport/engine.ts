@@ -96,6 +96,23 @@ export interface ViewportEngineOptions {
   readonly onCameraSettled: (viewName: string) => void;
 }
 
+export interface CameraSnapshot {
+  readonly eye: readonly [number, number, number];
+  readonly target: readonly [number, number, number];
+  readonly up: readonly [number, number, number];
+  readonly zoom: number;
+  readonly scale: number;
+  readonly fit: boolean;
+  readonly projection: "orthographic" | "perspective";
+  readonly size: readonly [number, number];
+  readonly frustum: {
+    readonly left: number;
+    readonly right: number;
+    readonly top: number;
+    readonly bottom: number;
+  } | null;
+}
+
 export class ViewportEngine {
   readonly canvas: HTMLCanvasElement;
   private readonly renderer: WebGLRenderer;
@@ -240,9 +257,20 @@ export class ViewportEngine {
     this.controls.addEventListener("start", this.holdCamera);
   }
 
-  /** Replace the scene's geometry with the meshes of `bytes`. */
-  async load(bytes: ArrayBuffer, geometry: GlbGeometry): Promise<SolidIndex> {
+  /**
+   * Replace the scene's geometry with the meshes of `bytes` iff this artifact
+   * still owns the asynchronous parse. The ownership check is inside the
+   * engine, before its first scene mutation: guarding only the caller's
+   * promise callback would still let a slow stale GLTFLoader clear a newer
+   * artifact from the scene.
+   */
+  async load(
+    bytes: ArrayBuffer,
+    geometry: GlbGeometry,
+    ownsLoad: () => boolean = () => true,
+  ): Promise<SolidIndex | null> {
     const gltf: GLTF = await new GLTFLoader().parseAsync(bytes, "");
+    if (!ownsLoad()) return null;
     this.clearRoot();
     // §3.11.2 and §3.11.4, and BEFORE the index is built rather than after: the
     // silhouettes become children of the meshes, and `indexSolidNodes` reads the
@@ -600,13 +628,65 @@ export class ViewportEngine {
   }
 
   /** Read-only camera evidence for the existing packaged browser harness. */
-  cameraSnapshot() {
+  cameraSnapshot(): CameraSnapshot {
+    const eye = this.camera.position;
+    const target = this.controls.target;
+    const up = this.camera.up;
+    const size = this.renderer.getSize(new Vector2());
     return {
-      eye: this.camera.position.toArray(), target: this.controls.target.toArray(),
-      up: this.camera.up.toArray(), zoom: this.camera.zoom, scale: this.scale(),
+      eye: [eye.x, eye.y, eye.z], target: [target.x, target.y, target.z],
+      up: [up.x, up.y, up.z], zoom: this.camera.zoom, scale: this.scale(),
       fit: this.fit !== null, projection: this.ortho ? "orthographic" : "perspective",
-      size: this.renderer.getSize(new Vector2()).toArray(),
+      size: [size.x, size.y],
+      frustum: this.camera === this.orthoCamera
+        ? {
+            left: this.orthoCamera.left,
+            right: this.orthoCamera.right,
+            top: this.orthoCamera.top,
+            bottom: this.orthoCamera.bottom,
+          }
+        : null,
     };
+  }
+
+  /**
+   * Restore a held operator camera after replacement geometry has been framed.
+   *
+   * A transient GLB retry still needs the normal frame call to establish the
+   * new scene's bounds, depth range and grid. The retry is not camera
+   * navigation, though, so the caller snapshots the live orbit/pan/zoom first
+   * and restores it here after that frame. Marking the result non-fit prevents
+   * a later resize from silently reapplying the temporary framing.
+   */
+  restoreCamera(snapshot: CameraSnapshot): void {
+    const projection = this.ortho ? "orthographic" : "perspective";
+    if (snapshot.projection !== projection) return;
+    this.zoomPending = 1;
+    this.interacting = false;
+    this.camera.position.fromArray([...snapshot.eye]);
+    this.camera.up.fromArray([...snapshot.up]);
+    this.controls.target.fromArray([...snapshot.target]);
+    if (this.camera === this.orthoCamera) {
+      this.orthoCamera.zoom = snapshot.zoom;
+      if (snapshot.frustum !== null) {
+        this.orthoCamera.left = snapshot.frustum.left;
+        this.orthoCamera.right = snapshot.frustum.right;
+        this.orthoCamera.top = snapshot.frustum.top;
+        this.orthoCamera.bottom = snapshot.frustum.bottom;
+      }
+      this.orthoCamera.updateProjectionMatrix();
+    }
+    this.camera.lookAt(this.controls.target);
+    this.alignControlsUp();
+    this.controls.update();
+    // OrbitControls may introduce sub-ulp position changes while synchronising
+    // its spherical state. Reapply the authoritative snapshot afterwards.
+    this.camera.position.fromArray([...snapshot.eye]);
+    this.camera.up.fromArray([...snapshot.up]);
+    this.controls.target.fromArray([...snapshot.target]);
+    this.camera.lookAt(this.controls.target);
+    this.fit = null;
+    this.render();
   }
 
   /**

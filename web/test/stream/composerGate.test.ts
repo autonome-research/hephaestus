@@ -46,8 +46,12 @@ describe("which disabled reasons still admit typing", () => {
     expect(isComposable("run_in_flight")).toBe(true);
   });
 
-  it("keeps the box live with no session, so the first send can start one", () => {
+  it("keeps recoverable drafts editable while blocking only an absent runtime", () => {
     expect(isComposable("no_session")).toBe(true);
+    expect(isComposable("history_unavailable")).toBe(true);
+    expect(isComposable("runtime_unavailable")).toBe(true);
+    expect(isComposable("unknown_session")).toBe(true);
+    expect(isComposable("images_unsupported")).toBe(true);
     expect(isComposable("agent_unavailable")).toBe(false);
   });
 
@@ -124,6 +128,10 @@ describe("Send and Cancel share one predicate each", () => {
     expect(canSendTurn({ ...ok, sending: true })).toBe(false);
     expect(canSendTurn({ ...ok, disabledReason: "no_session" })).toBe(true);
     expect(canSendTurn({ ...ok, disabledReason: "run_in_flight" })).toBe(false);
+    expect(canSendTurn({ ...ok, disabledReason: "history_unavailable" })).toBe(false);
+    expect(canSendTurn({ ...ok, disabledReason: "runtime_unavailable" })).toBe(false);
+    expect(canSendTurn({ ...ok, disabledReason: "unknown_session" })).toBe(false);
+    expect(canSendTurn({ ...ok, disabledReason: "images_unsupported" })).toBe(false);
     expect(canSendTurn({ ...ok, disabledReason: "agent_unavailable" })).toBe(false);
   });
 

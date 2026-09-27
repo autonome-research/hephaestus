@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from hephaestus.agent_bridge.app import BridgeRuntime, _Run
 from hephaestus.agent_bridge.events import HephaestusEvent
+from hephaestus.agent_bridge.model_selection import ModelSelectionError
 from hephaestus.agent_bridge.sessions import RunInFlightError
 from hephaestus.agent_bridge.supervisor import SupervisorError
 from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
@@ -47,8 +48,9 @@ def test_crash_and_conflicting_terminal_project_the_durable_winner(runtime: Brid
         evidence = runtime.sessions()[0]["execution"]
         assert evidence["terminal"]["state"] == "interrupted"
         assert evidence["active_run_id"] is None
-        # Terminal does NOT silently clear the per-session runtime guard.
-        assert evidence["admission_available"] is False
+        # Durable process-loss settlement releases both admission and the
+        # per-session runtime guard, so a valid follow-up is not stranded.
+        assert evidence["admission_available"] is True
         observed: list[HephaestusEvent] = []
         runtime._pump.add_tap(observed.append)
         runtime._on_notification(
@@ -64,7 +66,10 @@ def test_crash_and_conflicting_terminal_project_the_durable_winner(runtime: Brid
         assert observed[-1].payload["state"] == "interrupted"
         assert observed[-1].payload["terminal_id"] == "interrupted:zero-event-run"
         assert runtime.sessions()[0]["execution"]["terminal"] == evidence["terminal"]
-        assert runtime._runs["zero-event-run"].terminal == evidence["terminal"]
+        assert "zero-event-run" not in runtime._runs
+        followup = _Run(run_id="after-crash", session_id=sid)
+        runtime._admit_turn(followup, None)
+        runtime._runs.pop(followup.run_id)
     finally:
         runtime._runs.pop("zero-event-run", None)
 
@@ -152,6 +157,57 @@ def test_blocking_response_uses_durable_winner_not_late_rpc_status(
     assert result.terminal is not None
     assert result.terminal["terminal_id"] == "winner"
     assert result.terminal["payload"] == {"reason": "backpressure_cancel"}
+
+
+def test_prompt_forwards_one_explicit_turn_control_snapshot(
+    runtime: BridgeRuntime,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = runtime.create_session("orchestrator", session_id="turn-controls")
+    observed: dict[str, Any] = {}
+
+    def reply(method: str, params: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        assert method == "session.prompt"
+        observed.update(params)
+        runtime._on_notification(
+            "terminal",
+            {
+                "run_id": params["run_id"],
+                "terminal_id": "turn-controls-done",
+                "state": "completed",
+                "payload": {},
+            },
+        )
+        return {"status": "completed"}
+
+    monkeypatch.setattr(runtime, "_call_for_session", reply)
+    result = runtime.prompt(
+        sid,
+        "plan locally",
+        run_id="controlled-run",
+        interaction_mode="plan",
+        dfm_mode="casting",
+        thinking_level="high",
+    )
+    assert result.status == "completed"
+    assert observed == {
+        "session_id": sid,
+        "run_id": "controlled-run",
+        "prompt": "plan locally",
+        "interaction_mode": "plan",
+        "dfm_mode": "casting",
+        "thinking_level": "high",
+    }
+
+    for field, value in (
+        ("interaction_mode", None),
+        ("interaction_mode", ""),
+        ("dfm_mode", "milling"),
+        ("thinking_level", "max"),
+    ):
+        with pytest.raises(ModelSelectionError) as exc:
+            runtime.prompt(sid, "refuse", run_id=f"bad-{field}-{value}", **{field: value})  # type: ignore[arg-type]
+        assert getattr(exc.value, "reason", None) == "invalid_params"
 
 
 @pytest.mark.parametrize("state", list(TerminalState))

@@ -9,10 +9,10 @@
 // tested only through rendered markup is a claim that can only be tested in the
 // states a parent can drive it into from props.
 //
-// **1. `disabled` is not one state.** §7A.10's `data-disabled-reason` vocabulary
-// is closed at three, and the shipped composer treated all three identically:
-// the textarea turned off for each. That is right for `agent_unavailable` —
-// there is nowhere to send — and produced two dead ends. `run_in_flight` means
+// **1. `disabled` is not one state.** The shipped composer treated every reason
+// identically: the textarea turned off for each. That is right for
+// `agent_unavailable` — there is nowhere to send — and produced dead ends.
+// `run_in_flight` means
 // *there is somewhere and it is busy*: the refusal's own copy says "wait for it
 // to finish, or cancel it", and waiting is exactly when an operator writes the
 // next message. `no_session` means *Send will open the appropriate session*
@@ -31,13 +31,18 @@ import type { DisabledReason } from "../components/stream/Composer";
 /**
  * The `data-disabled-reason` values that still admit typing.
  *
- * Written as a set rather than as a pair of `===` checks because the interesting
- * property is the PARTITION of §7A.10's closed vocabulary: every reason is
- * either "nowhere to send" (`agent_unavailable`) or "the box stays live"
- * (`run_in_flight`, `no_session`), and a fourth reason added later has to land
- * on one side of it.
+ * Written as a set because the interesting property is the PARTITION: every
+ * reason is either "nowhere to type" (`agent_unavailable`) or "the draft stays
+ * editable while Send is gated", and a new reason has to land on one side.
  */
-export const COMPOSABLE_REASONS: readonly DisabledReason[] = ["run_in_flight", "no_session"];
+export const COMPOSABLE_REASONS: readonly DisabledReason[] = [
+  "run_in_flight",
+  "no_session",
+  "history_unavailable",
+  "runtime_unavailable",
+  "unknown_session",
+  "images_unsupported",
+];
 
 /** May the operator type? `null` is enabled; see `COMPOSABLE_REASONS`. */
 export function isComposable(reason: DisabledReason | null): boolean {
@@ -69,9 +74,10 @@ export function canSendTurn(input: {
   readonly text: string;
   readonly sending: boolean;
 }): boolean {
-  if (input.disabledReason === "agent_unavailable" || input.disabledReason === "run_in_flight") {
-    return false;
-  }
+  // `no_session` is the one named state whose Send creates its destination.
+  // Every other reason is authoritative refusal, even when the box remains
+  // editable so the draft and its recovery intent survive.
+  if (input.disabledReason !== null && input.disabledReason !== "no_session") return false;
   if (input.sending) return false;
   return input.text.trim() !== "";
 }

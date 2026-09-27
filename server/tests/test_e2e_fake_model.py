@@ -93,9 +93,10 @@ def e2e_project(root: Path) -> Path:
 class Harness:
     """A started :class:`BridgeRuntime` plus its scripted fake provider."""
 
-    def __init__(self, project_root: Path, dist_main: Path) -> None:
+    def __init__(self, project_root: Path, dist_main: Path, *, reasoning: bool = True) -> None:
         self.project_root = project_root
         self.fake: FakeOpenAI = start_fake_openai([])
+        self.fake.reasoning = reasoning
         self.runtime = BridgeRuntime(
             backend=UnsafeLocalBackend(),
             project_root=project_root,
@@ -125,6 +126,72 @@ def harness(tmp_path: Path, sidecar_dist: Path) -> Iterator[Harness]:
     h = Harness(project, sidecar_dist)
     try:
         yield h
+    finally:
+        h.close()
+        h.assert_no_orphans()
+
+
+# --------------------------------------------------------------------------
+# 0. turn controls cross Python bridge -> RPC -> real pinned Pi session
+
+
+def test_turn_controls_reach_real_sidecar_and_restore_modeling(harness: Harness) -> None:
+    def planned(info: RequestInfo) -> dict[str, Any]:
+        assert "read_part" in info.tool_names
+        assert "inspect_part" in info.tool_names
+        assert "edit_part" not in info.tool_names
+        assert "run_dfm" not in info.tool_names
+        assert "Plan mode is active for this turn" in info.body_text
+        assert "additive manufacturing" in info.body_text
+        assert "Do not invoke run_dfm" in info.body_text
+        return text("plan ready")
+
+    def modeled(info: RequestInfo) -> dict[str, Any]:
+        assert "edit_part" in info.tool_names
+        assert "run_dfm" in info.tool_names
+        return text("modeling ready")
+
+    harness.fake.set_script([planned, modeled])
+    session_id = harness.runtime.create_session(
+        "part", part="widget", session_id="controlled-real-sidecar"
+    )
+    plan = harness.runtime.prompt(
+        session_id,
+        "inspect and plan",
+        interaction_mode="plan",
+        dfm_mode="additive",
+        thinking_level="high",
+        timeout=30,
+    )
+    assert plan.status == "completed"
+    modeling = harness.runtime.prompt(
+        session_id,
+        "continue modeling",
+        interaction_mode="modeling",
+        dfm_mode="off",
+        thinking_level="low",
+        timeout=30,
+    )
+    assert modeling.status == "completed"
+    history = harness.runtime.history_page(session_id)
+    assert "Plan mode is active for this turn" in json.dumps(history)
+    assert "additive manufacturing" in json.dumps(history)
+    harness.fake.raise_script_error()
+
+
+def test_effective_thinking_level_reports_non_reasoning_clamp_through_rpc_and_history(
+    tmp_path: Path, sidecar_dist: Path
+) -> None:
+    h = Harness(e2e_project(tmp_path / "plain"), sidecar_dist, reasoning=False)
+    try:
+        h.fake.set_script([text("plain model")])
+        session_id = h.runtime.create_session("part", part="widget", session_id="effective-effort")
+        result = h.runtime.prompt(session_id, "try hard", thinking_level="high", timeout=30)
+        assert result.status == "completed"
+        assert result.effective_thinking_level == "off"
+        prompt_record = h.runtime.history_page(session_id)["user_prompts"][0]
+        assert prompt_record["effective_thinking_level"] == "off"
+        h.fake.raise_script_error()
     finally:
         h.close()
         h.assert_no_orphans()

@@ -21,6 +21,7 @@ export interface StreamView {
   readonly resyncs: number;
   readonly runId: string | null;
   readonly clearRunId: () => void;
+  readonly retryHistory: () => void;
   readonly echo: (sessionId: string, text: string) => void;
   readonly refuseEcho: (sessionId: string, reason: string) => void;
   readonly midRunAttach: boolean;
@@ -36,19 +37,44 @@ export function useStream(sessionId: string | null): StreamView {
     sid: string; document: ThreadDocument; bounded: boolean; tabs: readonly ThreadTab[];
   } | null>(null);
   const [error, setError] = useState<{ sid: string; error: Error } | null>(null);
+  const [historyRetry, setHistoryRetry] = useState(0);
+  const retryHistory = useCallback(() => {
+    if (sessionId === null) return;
+    // Keep the failed read's partial evidence, but name the retry window. A
+    // generic `loading` state is the initial-load state and would temporarily
+    // remove the failed-history write guard before recovery was authoritative.
+    conversationStore.update(sessionId, c => ({
+      ...c,
+      history: { ...c.history, state: "retrying", error: null },
+    }));
+    setHistoryRetry((attempt) => attempt + 1);
+  }, [sessionId]);
+
   useEffect(() => {
     if (sessionId === null) return;
     const signal = { aborted: false };
-    // Cached material belongs to this session for project lifetime.
-    if (conversationStore.get(sessionId).history.state === "loading") {
+    // Cached material belongs to this session for project lifetime. An explicit
+    // retry resets only this read; it does not replay a prompt or touch drafts.
+    const startingState = conversationStore.get(sessionId).history.state;
+    if (startingState === "loading" || startingState === "retrying") {
+      const retrying = startingState === "retrying";
       void loadHistory(sessionId, fetchHistoryPage, progress => {
         if (signal.aborted) return;
-        conversationStore.update(sessionId, c => ({ ...c, history: progress }));
+        const visibleProgress = retrying && progress.state === "loading"
+          ? { ...progress, state: "retrying" as const }
+          : progress;
+        conversationStore.update(sessionId, c => ({ ...c, history: visibleProgress }));
         for (const prompt of progress.userPrompts) {
           if (prompt.text !== null) sessionPromptStore.remember(sessionId, prompt.text);
         }
       }, signal);
     }
+    return () => { signal.aborted = true; };
+  }, [sessionId, historyRetry]);
+
+  useEffect(() => {
+    if (sessionId === null) return;
+    const signal = { aborted: false };
     void loadThreadTree(sessionId, fetchThread).then(tree => {
       if (!signal.aborted) setThread({ sid: sessionId, ...tree, tabs: threadTabs(tree.document) });
     }).catch((cause: unknown) => {
@@ -101,7 +127,7 @@ export function useStream(sessionId: string | null): StreamView {
     tabs: thread?.sid === sessionId ? thread.tabs : NO_TABS,
     threadState: thread?.sid === sessionId ? thread.document.thread_state : null,
     threadBounded: thread?.sid === sessionId ? thread.bounded : false,
-    resyncs: live.resyncs, runId: turn.runId, clearRunId,
+    resyncs: live.resyncs, runId: turn.runId, clearRunId, retryHistory,
     echo: conversationStore.echo, refuseEcho: conversationStore.rejectEcho,
     midRunAttach: live.midRunAttach, terminals: live.terminals,
     error: error?.sid === sessionId ? error.error : history.error,

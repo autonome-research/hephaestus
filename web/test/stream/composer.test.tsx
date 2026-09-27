@@ -405,7 +405,15 @@ describe("the DOM contract", () => {
 
   it("keeps every disabled reason inside the closed vocabulary", () => {
     for (const reason of DISABLED_REASONS) {
-      expect(["agent_unavailable", "run_in_flight", "no_session"]).toContain(reason);
+      expect([
+        "agent_unavailable",
+        "run_in_flight",
+        "no_session",
+        "history_unavailable",
+        "runtime_unavailable",
+        "unknown_session",
+        "images_unsupported",
+      ]).toContain(reason);
     }
   });
 
@@ -995,6 +1003,7 @@ describe("context chips do not force a 2400px stream", () => {
 
 let host: HTMLDivElement | null = null;
 let unmount: (() => void) | null = null;
+let rerender: ((props: Partial<React.ComponentProps<typeof Composer>>) => void) | null = null;
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -1006,6 +1015,7 @@ afterEach(() => {
   host?.remove();
   host = null;
   unmount = null;
+  rerender = null;
   vi.mocked(sendPrompt).mockReset();
   vi.mocked(cancelRun).mockReset();
   vi.mocked(createSession).mockReset();
@@ -1024,7 +1034,7 @@ function mount(props: Partial<React.ComponentProps<typeof Composer>> = {}): HTML
   document.body.appendChild(element);
   const root = createRoot(element);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  act(() => {
+  const render = (next: Partial<React.ComponentProps<typeof Composer>>): void => {
     root.render(
       <QueryClientProvider client={client}>
         <Composer
@@ -1034,12 +1044,18 @@ function mount(props: Partial<React.ComponentProps<typeof Composer>> = {}): HTML
           agentUnavailable={false}
           liveRunId={null}
           streamLive={true}
-          {...props}
+          {...next}
         />
       </QueryClientProvider>,
     );
+  };
+  act(() => {
+    render(props);
   });
   host = element;
+  rerender = (next) => {
+    act(() => render(next));
+  };
   unmount = () => {
     root.unmount();
   };
@@ -1108,6 +1124,90 @@ async function refuseRunInFlight(
 }
 
 describe("the paths that bypass Send are gated where Send's gate is decided", () => {
+  it.each([
+    ["history_unavailable", "The transcript read failed."],
+    ["runtime_unavailable", "The runtime stopped."],
+    ["unknown_session", "The session is unknown."],
+  ] as const)("blocks click, Enter and form submit for %s while preserving the draft", (reason, message) => {
+    const root = mount({ promptBlock: { reason, message } });
+    type(root, "keep this draft");
+    const send = root.querySelector<HTMLButtonElement>("[data-composer-send]");
+    expect(composer(root).getAttribute("data-disabled-reason")).toBe(reason);
+    expect(send?.getAttribute("aria-disabled")).toBe("true");
+    expect(send?.getAttribute("title")).toBe(message);
+    const described = send?.getAttribute("aria-describedby");
+    expect(described ? root.querySelector(`#${CSS.escape(described)}`)?.textContent : null).toBe(message);
+    act(() => send?.click());
+    pressEnter(root);
+    submitForm(root);
+    expect(sendPrompt).not.toHaveBeenCalled();
+    expect(input(root).value).toBe("keep this draft");
+    expect(input(root).disabled).toBe(false);
+  });
+
+  it("holds picker, paste and drop images honestly, per session, until removal", () => {
+    const create = vi.spyOn(URL, "createObjectURL").mockImplementation(
+      (blob) => `blob:test/${(blob as File).name}`,
+    );
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    try {
+      const root = mount();
+      type(root, "text that must not leave without its image");
+      const picker = root.querySelector<HTMLInputElement>('input[type="file"]');
+      const picked = new File(["picker"], "picker.png", { type: "image/png" });
+      Object.defineProperty(picker, "files", { configurable: true, value: [picked] });
+      act(() => {
+        picker?.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+
+      expect(root.querySelectorAll("[data-composer-image-remove]")).toHaveLength(1);
+      expect(root.querySelector("[data-composer-images]")?.textContent).toContain(copy.composer.imagesHeld);
+      expect(composer(root).getAttribute("data-disabled-reason")).toBe("images_unsupported");
+      expect(root.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).toBe("true");
+      pressEnter(root);
+      submitForm(root);
+      act(() => root.querySelector<HTMLButtonElement>("[data-composer-send]")?.click());
+      expect(sendPrompt).not.toHaveBeenCalled();
+
+      conversationStore.modelSnapshot("sess-2", modelState, IDLE_EXECUTION, conversationStore.ticket());
+      rerender?.({ sessionId: "sess-2" });
+      expect(root.querySelector("[data-composer-images]")).toBeNull();
+      expect(composer(root).getAttribute("data-disabled-reason")).toBe("null");
+      rerender?.({ sessionId: "sess-1" });
+      expect(root.querySelectorAll("[data-composer-image-remove]")).toHaveLength(1);
+
+      act(() => root.querySelector<HTMLButtonElement>("[data-composer-image-remove]")?.click());
+      expect(root.querySelector("[data-composer-images]")).toBeNull();
+      expect(composer(root).getAttribute("data-disabled-reason")).toBe("null");
+
+      const transfer = (file: File): DataTransfer => ({ files: [file], types: ["Files"] }) as unknown as DataTransfer;
+      const inputRow = root.querySelector<HTMLElement>("[data-composer-input-row]");
+      const pasted = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(pasted, "clipboardData", {
+        value: transfer(new File(["paste"], "paste.png", { type: "image/png" })),
+      });
+      act(() => {
+        inputRow?.dispatchEvent(pasted);
+      });
+      expect(root.querySelectorAll("[data-composer-image-remove]")).toHaveLength(1);
+      act(() => root.querySelector<HTMLButtonElement>("[data-composer-image-remove]")?.click());
+
+      const dropped = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(dropped, "dataTransfer", {
+        value: transfer(new File(["drop"], "drop.png", { type: "image/png" })),
+      });
+      act(() => {
+        inputRow?.dispatchEvent(dropped);
+      });
+      expect(dropped.defaultPrevented).toBe(true);
+      expect(root.querySelectorAll("[data-composer-image-remove]")).toHaveLength(1);
+      expect(sendPrompt).not.toHaveBeenCalled();
+    } finally {
+      create.mockRestore();
+      revoke.mockRestore();
+    }
+  });
+
   it("guards Enter/form on an authoritative zero-frame run, while the draft stays editable", () => {
     const root = mount();
     act(() => conversationStore.snapshot("sess-1", { ...IDLE_EXECUTION, version: 2,
@@ -1208,6 +1308,30 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     expect(sendPrompt).toHaveBeenCalledWith("sess-1", "Plan this machined part.", null, modelState.revision, {
       interaction_mode: "plan", dfm_mode: "off", thinking_level: "high",
     });
+  });
+
+  it("reconciles the displayed effort to Pi's effective clamp", async () => {
+    vi.mocked(sendPrompt).mockResolvedValue({
+      status: "ok",
+      session_id: "sess-1",
+      run_id: "run-clamped",
+      run_status: "completed",
+      effective_thinking_level: "off",
+      terminal: null,
+      events: [],
+      context: null,
+    });
+    const root = mount();
+    act(() => { root.querySelector<HTMLButtonElement>("[data-model-button]")?.click(); });
+    await act(async () => undefined);
+    act(() => { root.querySelector<HTMLButtonElement>('[data-effort-option="high"]')?.click(); });
+    type(root, "Use the available effort.");
+    pressEnter(root);
+    await act(async () => undefined);
+
+    const picker = root.querySelector("[data-model-button]");
+    expect(picker?.getAttribute("data-effective-effort")).toBe("off");
+    expect(picker?.getAttribute("title")).toContain("Off effective; requested High");
   });
 
   it("sends on Enter when nothing refuses it", async () => {

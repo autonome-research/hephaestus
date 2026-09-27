@@ -4,7 +4,7 @@
 import { useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { loadModels, loadProviders, type CatalogAuthMethod, type ModelOption, type ProviderRow } from "../../api/providers";
-import type { ThinkingLevel } from "../../api/sessions";
+import type { EffectiveThinkingLevel, ThinkingLevel } from "../../api/sessions";
 import { copy } from "../../copy";
 import { AddProviderDialog } from "../AddProviderDialog";
 import { ProvidersPanel } from "../ProvidersPanel";
@@ -22,13 +22,19 @@ export interface CreationModelChoice {
 }
 
 const EFFORTS: readonly ThinkingLevel[] = ["low", "medium", "high"];
-const effortLabel = (effort: ThinkingLevel): string => effort === "low" ? copy.composer.effortLow
-  : effort === "high" ? copy.composer.effortHigh : copy.composer.effortMedium;
+const effortLabel = (effort: EffectiveThinkingLevel): string => effort === "off" ? copy.composer.effortOff
+  : effort === "minimal" ? copy.composer.effortMinimal
+  : effort === "low" ? copy.composer.effortLow
+  : effort === "medium" ? copy.composer.effortMedium
+  : effort === "high" ? copy.composer.effortHigh
+  : effort === "xhigh" ? copy.composer.effortExtraHigh : copy.composer.effortMax;
 
-export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }: {
+export function ModelPicker({ sessionId, creation, effort = "medium", effectiveEffort, onEffort }: {
   readonly sessionId: string | null;
   readonly creation?: CreationModelChoice;
   readonly effort?: ThinkingLevel;
+  /** Last completed turn's Pi-clamped value, distinct from the next request. */
+  readonly effectiveEffort?: EffectiveThinkingLevel | null;
   readonly onEffort?: ((effort: ThinkingLevel) => void) | undefined;
 }): React.JSX.Element {
   const c = useConversation(sessionId);
@@ -66,6 +72,10 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
   const options = groups.flatMap(provider => provider.models);
   const activeIndex = Math.min(active, Math.max(0, options.length - 1));
   const identity = model === null ? copy.models.none : "name" in model && typeof model.name === "string" ? model.name : model.model_id;
+  const shownEffort = effectiveEffort ?? effort;
+  const effortSummary = shownEffort === effort
+    ? effortLabel(shownEffort)
+    : `${effortLabel(shownEffort)} ${copy.composer.effortEffective}; ${copy.composer.effortRequested} ${effortLabel(effort)}`;
 
   const choose = (option: ModelOption) => {
     if (!option.available || busy) return;
@@ -109,12 +119,13 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
       className={styles["button"]}
       expanded={open}
       data-model-button=""
-      title={`${label}. ${prefix}: ${model === null ? copy.models.none : modelIdentity(model)} · ${capability}. ${copy.composer.effort}: ${effortLabel(effort)}.`}
+      data-effective-effort={shownEffort}
+      title={`${label}. ${prefix}: ${model === null ? copy.models.none : modelIdentity(model)} · ${capability}. ${copy.composer.effort}: ${effortSummary}.`}
       {...(busy ? { disabled: true as const, reason } : {})}
     >
       <span className={styles["identity"]}>{identity}</span>
       <span aria-hidden="true" className={styles["cue"]}>⌄</span>
-      <span className={styles["srOnly"]}>. {copy.composer.effort}: {effortLabel(effort)}</span>
+      <span className={styles["srOnly"]}>. {copy.composer.effort}: {effortSummary}</span>
     </Button>
     <Popover open={open} onClose={() => setOpen(false)} label={copy.models.choose}
       className={creation ? `${styles["picker"]} ${styles["pickerBelow"]}` : styles["picker"]}>

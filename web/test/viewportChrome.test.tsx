@@ -21,7 +21,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, afterEach, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
@@ -30,6 +30,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Viewport,
   ViewportAbsence,
+  canRetryGlb,
   emptyPinAbsence,
 } from "../src/components/stage/viewport/Viewport";
 import { ExplodeSlider } from "../src/components/stage/viewport/ExplodeSlider";
@@ -45,6 +46,8 @@ function css(relative: string): string {
 }
 import { DEFAULT_STATE } from "../src/state/workspace";
 import { workspaceStore } from "../src/state/react";
+import { cameraPoseStore } from "../src/state/cameraPose";
+import { GlbFormatError } from "../src/viewport/glb";
 
 /** Every overlay the well used to paint over an empty canvas. */
 const FURNITURE = [
@@ -151,6 +154,44 @@ describe("ViewportAbsence — a title that is the whole fact is the whole state"
   it("still shows a refusal reason on a state that would otherwise be title-only", () => {
     const host = plate("no-pin", "malformed_gltf");
     expect(host.querySelector('[data-refusal-reason="malformed_gltf"]')).not.toBeNull();
+  });
+
+  it("offers explicit retry for fetch failures but not malformed GLBs", () => {
+    expect(canRetryGlb(new Error("offline"), null)).toBe(true);
+    expect(canRetryGlb(new GlbFormatError("bad GLB"), null)).toBe(false);
+    expect(canRetryGlb(null, "loader rejected malformed scene")).toBe(false);
+    const retriable = document.createElement("div");
+    retriable.innerHTML = renderToStaticMarkup(
+      <ViewportAbsence state="refused" refusalReason="transport_error" onRetry={() => undefined} />,
+    );
+    expect(retriable.querySelector("[data-glb-retry]")).not.toBeNull();
+    expect(plate("refused", "malformed_gltf").querySelector("[data-glb-retry]")).toBeNull();
+  });
+
+  it("retry intent does not change the held pin or camera pose", () => {
+    const pin = `artifact:build:sha256:${"a".repeat(64)}`;
+    workspaceStore.reset({ ...DEFAULT_STATE, artifact_ref: pin, pin_mode: "pinned", view: "+X" });
+    const originalPose = cameraPoseStore.getSnapshot();
+    cameraPoseStore.set({ azimuth_deg: 17, elevation_deg: 23 });
+    const beforePose = cameraPoseStore.getSnapshot();
+    const retry = vi.fn();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+      act(() => root.render(
+        <ViewportAbsence state="refused" refusalReason="transport_error" onRetry={retry} />,
+      ));
+      act(() => host.querySelector<HTMLButtonElement>("[data-glb-retry]")?.click());
+      expect(retry).toHaveBeenCalledTimes(1);
+      expect(workspaceStore.getSnapshot()).toMatchObject({ artifact_ref: pin, pin_mode: "pinned", view: "+X" });
+      expect(cameraPoseStore.getSnapshot()).toEqual(beforePose);
+    } finally {
+      act(() => root.unmount());
+      host.remove();
+      workspaceStore.reset(DEFAULT_STATE);
+      cameraPoseStore.set(originalPose);
+    }
   });
 });
 

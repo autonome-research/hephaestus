@@ -60,6 +60,14 @@ from hephaestus.agent_bridge.project_projections import (
 )
 from hephaestus.agent_bridge.serve_record import WORKSPACE_API_PREFIX
 from hephaestus.agent_bridge.supervisor import SupervisorError
+from hephaestus.agent_bridge.turn_control import (
+    DEFAULT_DFM_MODE,
+    DEFAULT_INTERACTION_MODE,
+    DEFAULT_THINKING_LEVEL,
+    dfm_mode,
+    interaction_mode,
+    thinking_level,
+)
 from hephaestus.contract import toolgen
 from hephaestus.contract.tools_decl import READ_ARTIFACT_PAGE_MAX, TOOLS_BY_NAME
 from hephaestus.core.checks.report import project_check_report
@@ -158,7 +166,16 @@ API_PREFIX: Final[str] = WORKSPACE_API_PREFIX
 #: against the canonical schema, and a second gate here would be a second table.
 _PREVIEW_MEMBERS: Final[frozenset[str]] = frozenset({"context"})
 _PROMPT_MEMBERS: Final[frozenset[str]] = frozenset(
-    {"text", "run_id", "context", "include_events", "expected_model_revision"}
+    {
+        "text",
+        "run_id",
+        "context",
+        "include_events",
+        "expected_model_revision",
+        "interaction_mode",
+        "dfm_mode",
+        "thinking_level",
+    }
 )
 _ANSWER_MEMBERS: Final[frozenset[str]] = frozenset({"question_id", "answer"})
 _SESSION_CREATE_MEMBERS: Final[frozenset[str]] = frozenset(
@@ -1461,7 +1478,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         if not isinstance(provider_id, str) or not provider_id:
             raise HttpRefusal(400, "invalid_params", "provider_id must be a non-empty string")
         if not isinstance(auth_type, str):
-            raise HttpRefusal(400, "unsupported_auth_type", "auth_type is required")
+            raise HttpRefusal(422, "unsupported_auth_type", "auth_type is required")
         catalog = await _native_catalog()
         entries = catalog.get("catalog")
         catalog_rows: list[dict[str, Any]] = (
@@ -2032,6 +2049,18 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         include_events = body.get("include_events", True)
         if not isinstance(include_events, bool):
             raise HttpRefusal(400, "invalid_params", "include_events must be a boolean")
+        # §7A.10A — web callers send all three controls, while older/private
+        # callers receive the documented defaults. Presence with null, an empty
+        # string, a wrong type, or an unknown member is a refusal before turn
+        # admission; omission alone defaults.
+        try:
+            turn_interaction = interaction_mode(
+                body.get("interaction_mode", DEFAULT_INTERACTION_MODE)
+            )
+            turn_dfm = dfm_mode(body.get("dfm_mode", DEFAULT_DFM_MODE))
+            turn_thinking = thinking_level(body.get("thinking_level", DEFAULT_THINKING_LEVEL))
+        except ValueError as exc:
+            raise HttpRefusal(400, "invalid_params", str(exc)) from exc
         # §7A.3/§7A.4/§19.22 — the one optional member this route gained.
         #
         # THE INVARIANT, and it is the reason the block travels beside `text`
@@ -2062,6 +2091,9 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
                         context=block,
                         include_events=include_events,
                         expected_model_revision=expected,
+                        interaction_mode=turn_interaction,
+                        dfm_mode=turn_dfm,
+                        thinking_level=turn_thinking,
                     ),
                     # The block ACTUALLY SENT, echoed — §7A.3 makes
                     # `/context/preview` advisory precisely because this is the

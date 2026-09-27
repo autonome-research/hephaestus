@@ -50,6 +50,7 @@ import {
   type FlowProjection,
 } from "./session/credentials.js";
 import { SessionService, UnknownSessionError, type ManagedSession } from "./session/manager.js";
+import { readTurnControl, turnContextBlock } from "./session/turn-control.js";
 import { ModelResolver, readModelRef, readRevision, modelError } from "./session/model-selection.js";
 import type { SessionProfile } from "./session/profiles.js";
 import {
@@ -810,6 +811,16 @@ on("session.prompt", async (params) => {
   const sessionId = String(params.session_id);
   const runId = String(params.run_id);
   const promptText = String(params.prompt);
+  // §7A.10A: omission alone gets compatibility defaults. Explicit null, empty,
+  // wrong-type, or unknown values fail here before run admission, Pi state,
+  // markers, or provider work.
+  let turnControl;
+  try {
+    turnControl = readTurnControl(params);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new RpcError(ErrorCode.INVALID_PARAMS, message, { reason: "invalid_params" });
+  }
   // INTERFACE.md §7A.4 / §19.22 — the workspace's composed context block.
   //
   // It arrives as its OWN parameter and is prepended as its own user-role
@@ -817,7 +828,7 @@ on("session.prompt", async (params) => {
   // because `BridgeRuntime.prompt` binds `prompt` as the request every
   // VALIDATION.md §4/§5 rung judges against. Absent on every turn that carries
   // no workspace context, including every `heph agent` turn.
-  const contextBlock =
+  const incomingContextBlock =
     params.context === undefined || params.context === null ? undefined : String(params.context);
   const managed = svc.get(sessionId);
   if (managed === undefined) {
@@ -828,6 +839,17 @@ on("session.prompt", async (params) => {
   const controller = svc.beginRun(sessionId, runId, params.expected_model_revision === undefined ? undefined : readRevision(params.expected_model_revision));
   const admittedModel = managed.session.model;
   if (!admittedModel) { svc.endRun(runId); throw modelError("selection_required"); }
+  let appliedTurnControl;
+  try {
+    // Sync Pi APIs, after admission and before markers/provider execution. A
+    // Modeling turn explicitly restores the profile's full allowlist; a Plan
+    // turn applies the deliberate inspection intersection.
+    appliedTurnControl = svc.applyTurnControl(sessionId, turnControl);
+  } catch (error) {
+    svc.endRun(runId);
+    throw error;
+  }
+  const contextBlock = turnContextBlock(incomingContextBlock, turnControl);
 
   // INTERFACE.md §2.8(3) — RECORD THE TURN AT PROMPT TIME.
   //
@@ -852,6 +874,7 @@ on("session.prompt", async (params) => {
     manager.appendCustomEntry(TURN_MARKER_TYPE, {
       turn: recordedTurn,
       run_id: runId,
+      effective_thinking_level: appliedTurnControl.effectiveThinkingLevel,
       text: promptText,
       envelope: contextBlock ?? null,
     });
@@ -932,6 +955,7 @@ on("session.prompt", async (params) => {
               manager.appendCustomEntry(TURN_MARKER_TYPE, {
                 turn: nextTurnOrdinal(manager.getEntries()),
                 run_id: runId,
+                effective_thinking_level: appliedTurnControl.effectiveThinkingLevel,
                 text,
                 envelope: contextBlock ?? null,
                 origin: "agent",
@@ -978,6 +1002,13 @@ on("session.prompt", async (params) => {
     }
   } finally {
     unsubscribe();
+    // Turn controls are snapshots. Restore the immutable profile ceiling and
+    // prior Pi effort even after cancellation/provider failure; the next turn
+    // will explicitly apply its own values again.
+    if (!svc.restoreTurnControl(sessionId, appliedTurnControl.previousThinkingLevel)) {
+      state = "failed";
+      errorMessage ??= "turn controls could not be restored";
+    }
     // Each run drops ITS OWN entry. The old shared slot was cleared here by
     // whichever run finished first, which left every other in-flight run's
     // remaining tool calls resolving nothing.
@@ -1015,7 +1046,11 @@ on("session.prompt", async (params) => {
     state,
     payload: terminalPayload,
   });
-  return { status: state, run_id: runId };
+  return {
+    status: state,
+    run_id: runId,
+    effective_thinking_level: appliedTurnControl.effectiveThinkingLevel,
+  };
 });
 
 /**
@@ -1094,6 +1129,9 @@ function wireUserPrompt(prompt: HistoryUserPrompt): { [k: string]: JsonValue } {
   if (prompt.origin === "agent") wire.origin = "agent";
   // Omitted outcome means no terminal evidence; completion is explicit.
   if (prompt.run_id !== undefined) wire.run_id = prompt.run_id;
+  if (prompt.effective_thinking_level !== undefined) {
+    wire.effective_thinking_level = prompt.effective_thinking_level;
+  }
   if (prompt.outcome !== undefined) {
     wire.outcome =
       prompt.outcome.message !== undefined

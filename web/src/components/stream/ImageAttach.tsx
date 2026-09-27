@@ -6,12 +6,12 @@
 // Three ways in, because an operator with a screenshot will try all three: the
 // button opens a file picker, a paste into the message box takes the
 // clipboard's image, and a drop onto the box takes the file. All three land in
-// the same list and the list is what Send carries.
+// the same list and the list is what gates Send until transport exists.
 //
 // THE FILES ARE HELD HERE, NOT UPLOADED HERE. This component owns a list of
-// `File` objects and object URLs for the thumbnails; nothing is sent until the
-// turn is. That keeps a cancelled message from having left anything behind,
-// and it is why `revoke` runs on every removal and on unmount — an object URL
+// `File` objects and object URLs for the thumbnails; nothing is sent until
+// transport exists. Keeping them local means a cancelled draft leaves nothing
+// behind, and it is why `revoke` runs on every removal and on unmount — an object URL
 // that outlives its thumbnail is a leak the browser cannot collect.
 //
 // WHAT THIS DOES NOT DO, stated because the gap is load-bearing: it does not
@@ -107,13 +107,23 @@ export function ImageAttach({
 export function ImageStrip({
   images,
   onChange,
+  sessionId,
 }: {
   readonly images: readonly HeldImage[];
   readonly onChange: (images: readonly HeldImage[]) => void;
+  readonly sessionId: string | null;
 }): React.JSX.Element | null {
   if (images.length === 0) return null;
   return (
-    <ul className={styles["strip"]} data-composer-images="" aria-label={copy.composer.attachedImages(images.length)}>
+    <ul
+      className={styles["strip"]}
+      data-composer-images=""
+      data-image-session-id={sessionId ?? ""}
+      aria-label={copy.composer.attachedImages(images.length)}
+    >
+      <li className={styles["note"]} data-composer-images-held="" role="status">
+        {copy.composer.imagesHeld}
+      </li>
       {images.map((image) => (
         <li key={image.id} className={styles["held"]}>
           <img className={styles["thumb"]} src={image.url} alt={image.file.name} />

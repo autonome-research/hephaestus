@@ -170,6 +170,10 @@ async function revealProviders(page: Page): Promise<void> {
   await expect(control).toBeVisible({ timeout: 90_000 });
   await control.click();
   await expect(page.getByRole("group", { name: "Choose model" })).toBeVisible();
+  // The compact model menu keeps provider management behind its explicit
+  // secondary action; opening the model picker alone must not expand it.
+  await page.locator("[data-manage-providers]").click();
+  await expect(page.locator("[data-model-providers]")).toBeVisible();
 }
 
 test.describe.configure({ mode: "serial" });

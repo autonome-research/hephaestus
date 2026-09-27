@@ -129,6 +129,8 @@ export interface HistoryUserPrompt {
   readonly turn: number;
   readonly seq: number;
   readonly run_id?: string;
+  /** Pi's effective value after model-capability clamping for this turn. */
+  readonly effective_thinking_level?: EffectiveThinkingLevel;
   /** The operator's typed sentence and nothing else; null when unrecoverable. */
   readonly text: string | null;
   /** §7A.3's workspace-context block verbatim, when one was sent. */
@@ -278,8 +280,14 @@ function assistantOutcome(message: PiAssistantMessage): HistoryTurnOutcome | nul
 }
 
 /** The prompt-time marker's payload, read defensively (it is durable JSON). */
+export const EFFECTIVE_THINKING_LEVELS = [
+  "off", "minimal", "low", "medium", "high", "xhigh", "max",
+] as const;
+export type EffectiveThinkingLevel = (typeof EFFECTIVE_THINKING_LEVELS)[number];
+
 interface TurnMarker {
   readonly run_id?: string;
+  readonly effective_thinking_level?: EffectiveThinkingLevel;
   readonly text: string | null;
   readonly envelope: string | null;
   readonly origin: "operator" | "agent";
@@ -287,7 +295,13 @@ interface TurnMarker {
 
 function readTurnMarker(data: unknown): TurnMarker | null {
   if (data === null || typeof data !== "object" || Array.isArray(data)) return null;
-  const record = data as { text?: unknown; envelope?: unknown; origin?: unknown; run_id?: unknown };
+  const record = data as {
+    text?: unknown;
+    envelope?: unknown;
+    origin?: unknown;
+    run_id?: unknown;
+    effective_thinking_level?: unknown;
+  };
   const text =
     typeof record.text === "string" && record.text.trim() !== "" ? record.text : null;
   const envelope =
@@ -295,8 +309,14 @@ function readTurnMarker(data: unknown): TurnMarker | null {
   // Absent means operator, so every marker written before `origin` existed keeps
   // its meaning; only the literal "agent" changes the attribution.
   const origin = record.origin === "agent" ? "agent" : "operator";
+  const effectiveThinkingLevel = EFFECTIVE_THINKING_LEVELS.find(
+    (level) => level === record.effective_thinking_level,
+  );
   return { text, envelope, origin,
     ...(typeof record.run_id === "string" ? { run_id: record.run_id } : {}),
+    ...(effectiveThinkingLevel !== undefined
+      ? { effective_thinking_level: effectiveThinkingLevel }
+      : {}),
   };
 }
 
@@ -326,6 +346,7 @@ function makeEvent(
 /** Mutable per-turn accumulator; frozen into a `HistoryUserPrompt` at the end. */
 interface TurnAccumulator {
   readonly run_id?: string;
+  readonly effective_thinking_level?: EffectiveThinkingLevel;
   readonly turn: number;
   readonly seq: number;
   readonly text: string | null;
@@ -437,6 +458,9 @@ function walkEntries(entries: readonly SessionEntry[], runId: string): Walk {
         envelope: marker !== null ? marker.envelope : null,
         origin: marker !== null ? marker.origin : "operator",
         ...(marker?.run_id !== undefined ? { run_id: marker.run_id } : {}),
+        ...(marker?.effective_thinking_level !== undefined
+          ? { effective_thinking_level: marker.effective_thinking_level }
+          : {}),
         assistantOutcome: null,
         markerOutcome: null,
       });
@@ -489,6 +513,9 @@ function walkEntries(entries: readonly SessionEntry[], runId: string): Walk {
     const outcome = acc.markerOutcome ?? (acc.run_id === undefined ? acc.assistantOutcome : null);
     const base = { turn: acc.turn, seq: acc.seq, text: acc.text, envelope: acc.envelope,
       ...(acc.run_id !== undefined ? { run_id: acc.run_id } : {}),
+      ...(acc.effective_thinking_level !== undefined
+        ? { effective_thinking_level: acc.effective_thinking_level }
+        : {}),
     };
     const attributed = acc.origin === "agent" ? { ...base, origin: "agent" as const } : base;
     return outcome !== null ? { ...attributed, outcome } : attributed;

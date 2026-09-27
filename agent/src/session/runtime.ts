@@ -478,6 +478,8 @@ export interface FakeModelOptions {
   readonly modelId?: string;
   readonly contextWindow?: number;
   readonly maxTokens?: number;
+  /** Advertise real Pi reasoning support for effort/payload tests. */
+  readonly reasoning?: boolean;
   /** Response for tool-less requests (compaction/summarization). */
   readonly summarize?: (req: FakeRequestInfo) => string;
 }
@@ -511,6 +513,7 @@ export class FakeModel {
   private cursor = 0;
   private readonly contextWindow: number;
   private readonly maxTokens: number;
+  private readonly reasoning: boolean;
   private readonly summarize: (req: FakeRequestInfo) => string;
 
   private constructor(server: http.Server, port: number, script: FakeTurnResolver[], opts: FakeModelOptions) {
@@ -521,6 +524,7 @@ export class FakeModel {
     this.baseUrl = `http://127.0.0.1:${port}/v1`;
     this.contextWindow = opts.contextWindow ?? 128000;
     this.maxTokens = opts.maxTokens ?? 4096;
+    this.reasoning = opts.reasoning ?? false;
     this.summarize = opts.summarize ?? ((req) => summarizeDefault(req));
     this.script = script;
   }
@@ -559,7 +563,13 @@ export class FakeModel {
       name: "Hephaestus Fake Provider",
       baseUrl: this.baseUrl,
       models: [
-        { id: this.modelId, name: "Heph Fake Model", contextWindow: this.contextWindow, maxTokens: this.maxTokens },
+        {
+          id: this.modelId,
+          name: "Heph Fake Model",
+          contextWindow: this.contextWindow,
+          maxTokens: this.maxTokens,
+          reasoning: this.reasoning,
+        },
       ],
     };
   }

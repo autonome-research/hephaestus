@@ -89,6 +89,57 @@ def test_the_profile_set_is_closed(tmp_path: Path) -> None:
     assert refused.json()["reason"] == "invalid_params"
 
 
+def test_prompt_turn_controls_are_closed_and_forwarded_with_defaults(tmp_path: Path) -> None:
+    with workspace(tmp_path / "proj", agent=True) as web:
+        assert web.agent is not None
+        session = web.agent.create_session("orchestrator")
+        explicit = prompt(
+            web,
+            session,
+            {
+                "text": "plan it",
+                "interaction_mode": "plan",
+                "dfm_mode": "machining",
+                "thinking_level": "high",
+            },
+        )
+        omitted = prompt(web, session, {"text": "model it"})
+
+        assert explicit.status_code == 200, explicit.text
+        assert omitted.status_code == 200, omitted.text
+        assert explicit.json()["effective_thinking_level"] == "high"
+        assert omitted.json()["effective_thinking_level"] == "medium"
+        assert web.agent.turn_controls == [
+            ("plan", "machining", "high"),
+            ("modeling", "off", "medium"),
+        ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("interaction_mode", None),
+        ("interaction_mode", ""),
+        ("interaction_mode", "execute"),
+        ("dfm_mode", 1),
+        ("dfm_mode", "milling"),
+        ("thinking_level", False),
+        ("thinking_level", "max"),
+    ],
+)
+def test_prompt_turn_controls_refuse_invalid_values_before_a_turn(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    with workspace(tmp_path / "proj", agent=True) as web:
+        assert web.agent is not None
+        session = web.agent.create_session("orchestrator")
+        refused = prompt(web, session, {"text": "do not run", field: value})
+        assert web.agent.prompts == []
+
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["reason"] == "invalid_params"
+
+
 # --------------------------------------------------------------------------
 # B-11(b): resume is refused for a transcript that does not exist, and
 # `resumed` reports what happened rather than echoing the request (§2.3/§2.4,

@@ -21,7 +21,8 @@
 // selection bundle on demand, §5.1); refetching it on a window focus would be a
 // re-render of geometry that cannot have changed.
 
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { useCallback } from "react";
+import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { apiBytes, refSegment } from "../api/client";
 import { readGlbGeometry, type GlbGeometry } from "./glb";
 
@@ -60,9 +61,15 @@ async function fetchGlb(ref: string): Promise<LoadedGlb> {
   };
 }
 
+export type GlbQueryResult = UseQueryResult<LoadedGlb, Error> & {
+  /** Evict exactly this immutable artifact and issue a fresh explicit read. */
+  readonly retryGlb: () => void;
+};
+
 /** The pinned build's GLB. Disabled until a ref is pinned. */
-export function useGlb(ref: string | null): UseQueryResult<LoadedGlb, Error> {
-  return useQuery({
+export function useGlb(ref: string | null): GlbQueryResult {
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: glbKey(ref ?? ""),
     queryFn: () => fetchGlb(ref ?? ""),
     enabled: ref !== null,
@@ -70,4 +77,11 @@ export function useGlb(ref: string | null): UseQueryResult<LoadedGlb, Error> {
     gcTime: Infinity,
     retry: false,
   });
+  const retryGlb = useCallback((): void => {
+    if (ref === null) return;
+    // `resetQueries` is the explicit retry boundary: it clears the settled
+    // error/bad value for only this ref and refetches its active observer.
+    void queryClient.resetQueries({ queryKey: glbKey(ref), exact: true });
+  }, [queryClient, ref]);
+  return { ...query, retryGlb };
 }

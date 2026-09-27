@@ -49,12 +49,13 @@ import { WorkspaceError } from "../../../api/client";
 import { copy } from "../../../copy";
 import { useBuild } from "../../../api/queries";
 import { useWorkspace, workspaceStore } from "../../../state/react";
-import { NoWebglError, ViewportEngine } from "../../../viewport/engine";
+import { NoWebglError, ViewportEngine, type CameraSnapshot } from "../../../viewport/engine";
 import { plateOwnsWell as plateOwnsWellFor, parseSectionPlane } from "../../../viewport/section";
 import { installViewportHandle } from "../../../viewport/testHook";
 import { cameraPoseStore } from "../../../state/cameraPose";
 import { anglesFromDirection } from "../../../viewport/cameras";
 import { useGlb } from "../../../viewport/useGlb";
+import { GlbFormatError } from "../../../viewport/glb";
 import { labelsForPart, visibilityStore } from "../../../state/visibility";
 import { Badge, Button, Chip, EmptyState, type IconId } from "../../../system";
 import type { SolidIndex } from "../../../viewport/scene";
@@ -139,11 +140,14 @@ export function ViewportAbsence({
   state,
   refusalReason,
   part = null,
+  onRetry,
 }: {
   readonly state: Exclude<GlbState, "ready">;
   readonly refusalReason: string | null;
   /** The selected part's name — a server fact — for the `not-built` state. */
   readonly part?: string | null;
+  /** Present only for a fetch/refusal failure, never malformed GLB bytes. */
+  readonly onRetry?: (() => void) | undefined;
 }): React.JSX.Element {
   if (state === "not-built") {
     // §5.5 C10: the title names the part and the state; the body is exactly
@@ -185,6 +189,13 @@ export function ViewportAbsence({
         <EmptyState
           icon={ABSENCE_ICON[state]}
           title={copy.viewport.absenceTitle[state]}
+          {...(onRetry === undefined ? {} : {
+            action: (
+              <Button variant="secondary" onClick={onRetry} data-glb-retry="">
+                {copy.viewport.retry}
+              </Button>
+            ),
+          })}
           {...(prose
             ? {
                 body: (
@@ -205,6 +216,11 @@ export function ViewportAbsence({
       </div>
     </div>
   );
+}
+
+/** Explicit retry is safe only before GLB parsing/scene loading rejects bytes. */
+export function canRetryGlb(error: Error | null, loadError: string | null): boolean {
+  return loadError === null && error !== null && !(error instanceof GlbFormatError);
 }
 
 export function Viewport(): React.JSX.Element {
@@ -231,6 +247,7 @@ export function Viewport(): React.JSX.Element {
     appearanceStore.getSnapshot,
   );
   const glb = useGlb(artifactRef);
+  const refetchGlb = glb.retryGlb;
   // §5.5 C10: the `not-built` absence needs the selected part's build STATE,
   // and only while the pin is empty — with an artifact pinned the projection
   // is irrelevant to the well and the query stays off.
@@ -241,6 +258,7 @@ export function Viewport(): React.JSX.Element {
   const engineRef = useRef<ViewportEngine | null>(null);
   const indexRef = useRef<SolidIndex | null>(null);
   const loadedRefRef = useRef<string | null>(null);
+  const retryCameraRef = useRef<{ artifactRef: string; camera: CameraSnapshot } | null>(null);
   // What the engine last framed to: the view **and** whether explode was
   // engaged, because the server frames those two states to different extents
   // (`scene.ts::boundsAt`). §5.5's orbit snapshot writes a *name* for a camera
@@ -249,6 +267,21 @@ export function Viewport(): React.JSX.Element {
   // write and the effect below sees no change.
   const framedRef = useRef<string | null>(null);
   const framingKey = `${view}|${explodeT > 0 ? "exploded" : "collapsed"}`;
+  const retryGlb = useCallback((): void => {
+    if (artifactRef === null) return;
+    const engine = engineRef.current;
+    retryCameraRef.current = engine !== null && loadedRefRef.current !== null
+      ? { artifactRef, camera: engine.cameraSnapshot() }
+      : null;
+    // The retry control is replaced by the canvas/loading state. Hand focus to
+    // the stable viewport surface before starting the read rather than letting
+    // it fall back to the document body.
+    canvasRef.current?.focus({ preventScroll: true });
+    refetchGlb();
+  }, [artifactRef, refetchGlb]);
+  useEffect(() => {
+    if (retryCameraRef.current?.artifactRef !== artifactRef) retryCameraRef.current = null;
+  }, [artifactRef]);
   const [engineReady, setEngineReady] = useState(false);
   // The engine as *state* as well as a ref. Its one consumer was `AxisTriad`,
   // which subscribed to the engine's frame signal; the triad is struck, so the
@@ -257,7 +290,18 @@ export function Viewport(): React.JSX.Element {
   // below clears it on teardown and a ref would hide that from React.
   const [, setEngine] = useState<ViewportEngine | null>(null);
   const [webglError, setWebglError] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadFailure, setLoadFailure] = useState<{
+    artifactRef: string;
+    message: string;
+  } | null>(null);
+  const loadError = loadFailure?.artifactRef === artifactRef ? loadFailure.message : null;
+  // Every artifact transition owns a new generation even when byte fetching
+  // fails before `engine.load` starts. This invalidates a slow parser from A
+  // while B is fetching/refused, rather than letting A clear or poison B.
+  const loadAttemptRef = useRef(0);
+  useEffect(() => {
+    loadAttemptRef.current += 1;
+  }, [artifactRef]);
   const [bounds, setBounds] = useState<SceneBounds | null>(null);
   /** §5.5 C18: the stage column's width, for the bottom band's yield ladder. */
   const [stageWidth, setStageWidth] = useState<number | null>(null);
@@ -411,14 +455,19 @@ export function Viewport(): React.JSX.Element {
       return;
     }
     let cancelled = false;
+    const attempt = ++loadAttemptRef.current;
+    const ownsLoad = (): boolean =>
+      !cancelled
+      && loadAttemptRef.current === attempt
+      && workspaceStore.getSnapshot().artifact_ref === loadedRef;
     void engine
-      .load(bytes, geometry)
+      .load(bytes, geometry, ownsLoad)
       .then((index) => {
-        if (cancelled) return;
+        if (!ownsLoad() || index === null) return;
         // The outcome is reported from the callback, never synchronously in the
         // effect body: the load is the external system, and React learns what
         // happened when it has happened.
-        setLoadError(null);
+        setLoadFailure(null);
         indexRef.current = index;
         loadedRefRef.current = loadedRef;
         setLoadedIntoScene(loadedRef);
@@ -426,10 +475,15 @@ export function Viewport(): React.JSX.Element {
         engine.setExplode(explodeT);
         engine.setHidden(hidden);
         engine.frame(view, explodeT > 0);
+        const retryCamera = retryCameraRef.current;
+        if (retryCamera?.artifactRef === loadedRef) {
+          engine.restoreCamera(retryCamera.camera);
+          retryCameraRef.current = null;
+        }
         framedRef.current = framingKey;
       })
       .catch((error: unknown) => {
-        if (!cancelled) setLoadError(String(error));
+        if (ownsLoad()) setLoadFailure({ artifactRef: loadedRef, message: String(error) });
       });
     return () => {
       cancelled = true;
@@ -506,8 +560,14 @@ export function Viewport(): React.JSX.Element {
               ? "empty"
               : "ready";
 
-  const refusalReason =
-    glb.error instanceof WorkspaceError ? glb.error.reason : loadError === null ? null : "malformed_gltf";
+  const refusalReason = glb.error instanceof WorkspaceError
+    ? glb.error.reason
+    : glb.error instanceof GlbFormatError || loadError !== null
+      ? "malformed_gltf"
+      : glb.error !== null
+        ? "transport_error"
+        : null;
+  const glbRetryable = canRetryGlb(glb.error, loadError);
 
   // §5.3: "preview" while the browser is clipping, and the plate's own state
   // replaces it. `channel_overlay === "section"` is §4.5's switch for the plate.
@@ -605,7 +665,12 @@ export function Viewport(): React.JSX.Element {
         // with a shape, an icon, a heading and its prose in a legible ink. The
         // shipped absence was an italic 3.10:1 sentence in the middle of a black
         // rectangle, which reads as a bug rather than as a designed state.
-        <ViewportAbsence state={state} refusalReason={refusalReason} part={part} />
+        <ViewportAbsence
+          state={state}
+          refusalReason={refusalReason}
+          part={part}
+          {...(glbRetryable ? { onRetry: retryGlb } : {})}
+        />
       )}
 
       {sectionState === "preview" ? (

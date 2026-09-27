@@ -56,12 +56,38 @@ def test_coalesce_key_distinguishes_tool_call_id() -> None:
     assert len([e for e in q.drain() if e.kind == "progress"]) == 2
 
 
-def test_durable_bound_overflow_signals() -> None:
+def test_durable_bound_overflow_signals_without_exceeding_the_bound() -> None:
     q = PerClientQueue(bound=4)
     fits = [q.push(HephaestusEvent(run_id="r", seq=i, kind="audit")) for i in range(6)]
-    assert fits[:4] == [True, True, True, True]
-    assert fits[4] is False  # 5th non-droppable event overflows the bound
+    assert fits[:3] == [True, True, True]
+    assert fits[3:] == [False, False, False]
     assert q.overflowed
+    assert q.size == 3  # one slot remains available for the authoritative terminal
+
+
+def test_distinct_progress_keys_keep_total_queue_memory_bounded() -> None:
+    q = PerClientQueue(bound=4)
+    for seq in range(100):
+        assert q.push(
+            HephaestusEvent(run_id="r", seq=seq, kind="progress", tool_call_id=f"tool-{seq}")
+        )
+        assert q.size <= q.bound
+    drained = q.drain()
+    assert len(drained) == 3
+    assert [event.seq for event in drained] == [97, 98, 99]
+
+
+def test_overflow_latches_and_only_the_terminal_uses_the_reserved_slot() -> None:
+    q = PerClientQueue(bound=4)
+    for seq in range(3):
+        assert q.push(HephaestusEvent(run_id="r", seq=seq, kind="audit"))
+    assert not q.push(HephaestusEvent(run_id="r", seq=3, kind="tool_result"))
+    for seq in range(4, 100):
+        assert not q.push(HephaestusEvent(run_id="r", seq=seq, kind="audit"))
+        assert q.size == 3
+    assert q.push(HephaestusEvent(run_id="r", seq=2**62, kind="terminal"))
+    assert q.size == q.bound
+    assert [event.kind for event in q.drain()][-1] == "terminal"
 
 
 # -- flood: coalescing preserves every never-drop event --------------------
@@ -80,6 +106,26 @@ def test_flood_coalescing_preserves_all_critical_events(store: OpStore) -> None:
     drained = q.drain()
     assert sum(1 for e in drained if e.kind == "audit") == critical
     assert sum(1 for e in drained if e.kind == "progress") == 1  # one key -> latest only
+
+
+def test_observer_distinct_progress_flood_is_bounded_without_run_cancellation(
+    store: OpStore,
+) -> None:
+    cancelled: list[str] = []
+    pump = EventPump(AdmissionControl(store.db), cancel_run=cancelled.append, bound=8)
+    observer = pump.add_observer("slow")
+    for seq in range(100):
+        pump.on_event(
+            HephaestusEvent(
+                run_id="run-progress",
+                seq=seq,
+                kind="progress",
+                tool_call_id=f"tool-{seq}",
+            )
+        )
+        assert observer.queue.size <= 8
+    assert not observer.resync_required
+    assert cancelled == []
 
 
 # -- durable terminal + ack ------------------------------------------------
@@ -133,6 +179,28 @@ def test_stalled_consumer_still_one_durable_ack_per_run(store: OpStore) -> None:
         assert pump.acked_terminals[f"run-{i}"] == f"t-{i}"
 
 
+def test_terminal_only_saturation_detaches_client_for_explicit_resync(store: OpStore) -> None:
+    admission = AdmissionControl(store.db)
+    pump = EventPump(admission, bound=2)
+    stalled = pump.add_client("stalled")
+    for i in range(3):
+        admission.admit(f"run-{i}")
+        pump.on_terminal({"run_id": f"run-{i}", "terminal_id": f"t-{i}", "state": "completed"})
+
+    # Every terminal is durable and acknowledged, while the finite queue names
+    # its incomplete view and is no longer registered as if it were complete.
+    assert stalled.overflowed
+    assert [event.run_id for event in stalled.drain()] == ["run-0", "run-1"]
+    for i in range(3):
+        row = admission.get(f"run-{i}")
+        assert row.terminal_acked_at is not None
+        assert pump.acked_terminals[f"run-{i}"] == f"t-{i}"
+    replacement = pump.add_client("stalled")
+    assert replacement is not stalled
+    assert replacement.size == 0
+    assert not replacement.overflowed
+
+
 # -- backpressure-cancel ---------------------------------------------------
 
 
@@ -145,11 +213,18 @@ def test_backpressure_cancels_run_and_routes_terminal(store: OpStore) -> None:
         cancel_run=cancelled.append,
         bound=8,
     )
-    pump.add_client("stalled")
+    queue = pump.add_client("stalled")
     # flood non-droppable events past the bound
     for seq in range(50):
         pump.on_event(HephaestusEvent(run_id="run-bp", seq=seq, kind="tool_result"))
     assert cancelled == ["run-bp"]
+    drained = queue.drain()
+    assert len(drained) == 8
+    assert drained[-1].kind == "terminal"
+    # The overflowing client was detached after receiving the terminal, so
+    # post-overflow durable events cannot regrow its queue.
+    pump.on_event(HephaestusEvent(run_id="another-run", seq=100, kind="audit"))
+    assert queue.size == 0
     term = admission.get_terminal("run-bp")
     assert term is not None
     assert term.state.value == "failed"

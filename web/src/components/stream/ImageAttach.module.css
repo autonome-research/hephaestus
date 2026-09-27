@@ -29,6 +29,12 @@
   list-style: none;
 }
 
+.note {
+  composes: body from "../../system/type.module.css";
+  flex-basis: 100%;
+  color: var(--ink-muted);
+}
+
 .held {
   position: relative;
   display: flex;

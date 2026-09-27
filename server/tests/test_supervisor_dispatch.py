@@ -34,14 +34,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from hephaestus.agent_bridge.app import BridgeRuntime
+from hephaestus.agent_bridge.app import BridgeRuntime, _Run  # pyright: ignore[reportPrivateUsage]
 from hephaestus.agent_bridge.protocol import ErrorCode
 from hephaestus.agent_bridge.supervisor import (
     ProcessLossEvent,
     Supervisor,
     SupervisorConfig,
+    SupervisorError,
 )
 from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
+from hephaestus.http.sessions import AskAbandoned, PendingQuestions
 from hephaestus.testing.tools_fixture import scaffold
 from opstore.types import TerminalState
 
@@ -368,14 +370,15 @@ def test_a_store_fault_on_one_run_does_not_cost_the_other_its_terminal(
     rt.admission.admit_run("bad")
     rt.admission.admit_run("good")
 
-    real_ingest = rt.admission.ingest_terminal
+    pump_admission = rt._pump._admission  # pyright: ignore[reportPrivateUsage]
+    real_ingest = pump_admission.insert_terminal
 
     def flaky_ingest(run_id: str, *args: Any, **kwargs: Any) -> Any:
         if run_id == "bad":
             raise RuntimeError("database is locked")
         return real_ingest(run_id, *args, **kwargs)
 
-    monkeypatch.setattr(rt.admission, "ingest_terminal", flaky_ingest)
+    monkeypatch.setattr(pump_admission, "insert_terminal", flaky_ingest)
 
     rt._on_process_loss(  # pyright: ignore[reportPrivateUsage]
         ProcessLossEvent(
@@ -422,7 +425,8 @@ def test_a_recovery_fault_detail_is_redacted_through_bridgeruntime(
     def raising_ingest(run_id: str, *args: Any, **kwargs: Any) -> Any:
         raise RuntimeError(f"connect failed: {secret}")
 
-    monkeypatch.setattr(rt.admission, "ingest_terminal", raising_ingest)
+    pump_admission = rt._pump._admission  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(pump_admission, "insert_terminal", raising_ingest)
 
     rt._on_process_loss(  # pyright: ignore[reportPrivateUsage]
         ProcessLossEvent(
@@ -512,14 +516,15 @@ def test_one_runs_failed_terminal_does_not_cost_the_others_theirs(
     """
     runtime.admission.admit_run("run-good")
     runtime.admission.admit_run("run-bad")
-    real = runtime.admission.ingest_terminal
+    pump_admission = runtime._pump._admission  # pyright: ignore[reportPrivateUsage]
+    real = pump_admission.insert_terminal
 
     def flaky(run_id: str, terminal_id: str, state: Any, data: Any = None) -> Any:
         if run_id == "run-bad":
             raise RuntimeError("database is locked: /var/db/tok-abcdefghijkl/state.db")
         return real(run_id, terminal_id, state, data)
 
-    monkeypatch.setattr(runtime.admission, "ingest_terminal", flaky)
+    monkeypatch.setattr(pump_admission, "insert_terminal", flaky)
     runtime._sup.add_redaction("tok-abcdefghijkl")  # pyright: ignore[reportPrivateUsage]
 
     runtime._on_process_loss(  # pyright: ignore[reportPrivateUsage]
@@ -548,6 +553,146 @@ def test_one_runs_failed_terminal_does_not_cost_the_others_theirs(
     assert faults[0]["run_id"] == "run-bad"
     assert "RuntimeError" in faults[0]["detail"]
     assert "tok-abcdefghijkl" not in faults[0]["detail"]
+
+
+def test_process_loss_durably_settles_active_prompt_before_releasing_authority(
+    runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    outcome: list[BaseException] = []
+
+    def blocked_call(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        entered.set()
+        assert release.wait(5)
+        raise SupervisorError(
+            "sidecar exited",
+            error={"code": ErrorCode.PROCESS_DOWN, "message": "sidecar exited"},
+        )
+
+    monkeypatch.setattr(runtime, "_call_for_session", blocked_call)
+    observer = runtime._pump.add_observer(  # pyright: ignore[reportPrivateUsage]
+        "process-loss-observer"
+    )
+
+    def prompt() -> None:
+        try:
+            runtime.prompt("session-a", "make a bracket", run_id="run-active")
+        except BaseException as exc:
+            outcome.append(exc)
+
+    thread = threading.Thread(target=prompt)
+    thread.start()
+    assert entered.wait(5)
+
+    runtime._on_process_loss(  # pyright: ignore[reportPrivateUsage]
+        ProcessLossEvent(
+            reason="crash",
+            returncode=9,
+            tracked_run_ids=frozenset({"run-active"}),
+            restart_generation=1,
+        )
+    )
+
+    terminal = runtime.admission.get_terminal("run-active")
+    assert terminal is not None and terminal.state is TerminalState.INTERRUPTED
+    assert runtime.admission.get("run-active").terminal_acked_at is not None
+    assert any(event.kind == "terminal" for event in observer.drain())
+    assert "run-active" not in runtime.live_run_ids()
+    assert "run-active" not in runtime._answerers  # pyright: ignore[reportPrivateUsage]
+    assert "run-active" not in runtime._sup._tracked_runs  # pyright: ignore[reportPrivateUsage]
+
+    # Settlement, not the failed RPC return, releases admission for a valid follow-up.
+    followup = _Run(run_id="run-followup", session_id="session-a")
+    runtime._admit_turn(followup, None)  # pyright: ignore[reportPrivateUsage]
+    with runtime._lock:  # pyright: ignore[reportPrivateUsage]
+        runtime._runs.pop(followup.run_id)  # pyright: ignore[reportPrivateUsage]
+
+    release.set()
+    thread.join(5)
+    assert not thread.is_alive()
+    assert len(outcome) == 1 and isinstance(outcome[0], SupervisorError)
+
+
+def test_process_loss_abandons_ask_user_waiter_without_fabricating_an_answer(
+    runtime: BridgeRuntime,
+) -> None:
+    questions = PendingQuestions()
+    answerer = questions.answerer("session-q")
+    run = _Run(run_id="run-question", session_id="session-q")
+    runtime._admit_turn(run, answerer)  # pyright: ignore[reportPrivateUsage]
+    runtime.admission.admit_run(run.run_id)
+    runtime._sup.track_run(run.run_id)  # pyright: ignore[reportPrivateUsage]
+    outcome: list[BaseException] = []
+
+    def ask() -> None:
+        try:
+            answerer({"run_id": run.run_id, "question_id": "question-1", "question": "Choose"})
+        except BaseException as exc:
+            outcome.append(exc)
+
+    thread = threading.Thread(target=ask, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 5
+    while not questions.open_questions() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert questions.open_questions()
+
+    runtime._on_process_loss(  # pyright: ignore[reportPrivateUsage]
+        ProcessLossEvent(
+            reason="crash",
+            returncode=9,
+            tracked_run_ids=frozenset({run.run_id}),
+            restart_generation=1,
+        )
+    )
+
+    thread.join(5)
+    assert not thread.is_alive(), "the ask_user waiter remained suspended after process loss"
+    assert len(outcome) == 1 and isinstance(outcome[0], AskAbandoned)
+    assert questions.get("question-1") is None
+    assert run.run_id not in runtime.live_run_ids()
+
+
+def test_recovery_lookup_failure_is_isolated_to_its_run(
+    runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for run_id in ("run-lookup-bad", "run-lookup-good"):
+        run = _Run(run_id=run_id, session_id=f"session-{run_id}")
+        runtime._admit_turn(run, None)  # pyright: ignore[reportPrivateUsage]
+        runtime.admission.admit_run(run_id)
+        runtime._sup.track_run(run_id)  # pyright: ignore[reportPrivateUsage]
+
+    real_get = runtime.admission.get_terminal
+
+    def flaky_get(run_id: str) -> Any:
+        if run_id == "run-lookup-bad":
+            raise RuntimeError("lookup unavailable")
+        return real_get(run_id)
+
+    monkeypatch.setattr(runtime.admission, "get_terminal", flaky_get)
+    runtime._on_process_loss(  # pyright: ignore[reportPrivateUsage]
+        ProcessLossEvent(
+            reason="crash",
+            returncode=9,
+            tracked_run_ids=frozenset({"run-lookup-bad", "run-lookup-good"}),
+            restart_generation=1,
+        )
+    )
+
+    assert real_get("run-lookup-good") is not None
+    assert real_get("run-lookup-bad") is None
+    assert "run-lookup-good" not in runtime.live_run_ids()
+    assert "run-lookup-bad" in runtime.live_run_ids()
+    faults = [
+        row
+        for row in runtime._sup.restart_events  # pyright: ignore[reportPrivateUsage]
+        if row["reason"] == "recovery_fault"
+    ]
+    assert len(faults) == 1
+    assert faults[0]["run_id"] == "run-lookup-bad"
+    assert faults[0]["detail"].startswith("lookup: RuntimeError")
 
 
 def test_an_expected_recovery_refusal_stays_silent(

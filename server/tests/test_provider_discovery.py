@@ -28,10 +28,13 @@ from typing import Any
 import pytest
 from hephaestus.http.providers import (
     ADOPTION_KINDS,
+    CREDENTIAL_READS_MAX,
     DiscoveryRegistry,
     credential_reads,
+    credential_reads_dropped,
     discover_sources,
     read_providers_file,
+    record_credential_read,
     reset_credential_reads,
 )
 from hephaestus.testing.workspace import Workspace, uuid7, workspace
@@ -347,6 +350,19 @@ def test_discovery_never_runs_on_any_other_code_path(discovering: Workspace) -> 
     # …and the explicit call is the one thing that does read.
     _offers(discovering)
     assert {read.reason for read in credential_reads()} == {"discover"}
+
+
+def test_credential_read_ledger_is_bounded_and_reports_truncation(tmp_path: Path) -> None:
+    reset_credential_reads()
+    total = CREDENTIAL_READS_MAX + 7
+    for index in range(total):
+        record_credential_read(tmp_path / f"credential-{index}.json", "discover")
+
+    retained = credential_reads()
+    assert len(retained) == CREDENTIAL_READS_MAX
+    assert credential_reads_dropped() == 7
+    assert retained[0].path.endswith("credential-7.json")
+    assert retained[-1].path.endswith(f"credential-{total - 1}.json")
 
 
 def test_every_credential_read_outside_the_project_is_recorded_with_its_reason(

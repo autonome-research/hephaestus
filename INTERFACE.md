@@ -5379,6 +5379,14 @@ thinking_level: "low" | "medium" | "high"; // default medium
 
 All three are closed at HTTP and sidecar boundaries. Effort is applied through
 Pi's thinking-level API before the turn. Pi may clamp it to model capability.
+The effective value after that clamp is not inferred from the request:
+`POST /sessions/{id}/prompt` returns `effective_thinking_level`, and the durable
+turn marker projects the same field on its `user_prompts` history row. Its
+closed vocabulary is Pi's `off | minimal | low | medium | high | xhigh | max`;
+`null` on the prompt response or absence in history means a legacy sidecar did
+not report it. The model control displays that effective value separately from
+the next-turn requested preference, so a non-reasoning model cannot continue to
+look as though it used High merely because High was requested.
 Plan mode is enforced before prompting by replacing the active tool set with a
 fail-closed inspection subset: `read_*`, `list_*`, `search_*`, `inspect_*`,
 `measure`, `compare_*`, `query_snapshot`, and `get_delegation_status` when the

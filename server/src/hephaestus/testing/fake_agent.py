@@ -46,6 +46,7 @@ from hephaestus.agent_bridge.model_selection import (
 from hephaestus.agent_bridge.protocol import ErrorCode
 from hephaestus.agent_bridge.sessions import RunInFlightError
 from hephaestus.agent_bridge.supervisor import SupervisorError
+from hephaestus.agent_bridge.turn_control import DfmMode, InteractionMode, ThinkingLevel
 from opstore.admission import AdmissionControl
 from opstore.errors import NotFoundError
 
@@ -132,6 +133,7 @@ class FakeAgent:
         #: that prepended the block — this records the two halves as the route
         #: passed them.
         self.prompts: list[tuple[str, str | None]] = []
+        self.turn_controls: list[tuple[str, str, str]] = []
         self.rebinds = 0
         self.closed = False
         # -- §23 credential state ------------------------------------------
@@ -344,6 +346,9 @@ class FakeAgent:
         on_event: Callable[[dict[str, Any]], None] | None = None,
         timeout: float | None = None,
         expected_model_revision: ModelRevision | None = None,
+        interaction_mode: InteractionMode = "modeling",
+        dfm_mode: DfmMode = "off",
+        thinking_level: ThinkingLevel = "medium",
     ) -> PromptResult:
         run = run_id or self.new_run_id()
         with self._lock:
@@ -359,6 +364,7 @@ class FakeAgent:
             self._active_models[session_id] = run
             self._run_sessions[run] = session_id
             self.prompts.append((text, context))
+            self.turn_controls.append((interaction_mode, dfm_mode, thinking_level))
         try:
             script = self.on_prompt
             if script is not None:
@@ -368,7 +374,13 @@ class FakeAgent:
                 self._active_models.pop(session_id, None)
         with self._lock:
             events = list(self._run_events.get(run, []))
-        return PromptResult(run_id=run, status="completed", events=events, terminal=None)
+        return PromptResult(
+            run_id=run,
+            status="completed",
+            events=events,
+            terminal=None,
+            effective_thinking_level=thinking_level,
+        )
 
     def cancel(self, run_id: str) -> None:
         """Cancel a run, refusing an id this backend never issued.

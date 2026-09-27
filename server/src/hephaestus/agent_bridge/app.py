@@ -45,11 +45,13 @@ from hephaestus.core.executor.sandbox.base import ExecBackend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
 from hephaestus.core.project_store.retention import DefaultProtectedRoots
 from hephaestus.core.project_store.store import ProjectStore
+from opstore.admission import TerminalRecord
 from opstore.errors import NotFoundError, TerminalConflictError
 from opstore.types import JSONValue, TerminalState
 
 from opstore import OpStore
 
+from . import turn_control
 from .admission import BridgeAdmission, bridge_store_config
 from .cad_ops import (
     CadOps,
@@ -267,6 +269,8 @@ class PromptResult:
     terminal: dict[str, Any] | None
     #: Events the run's bounded buffer dropped before ``events`` was taken.
     events_dropped: int = 0
+    #: Pi's actual value after model-capability clamping; ``None`` for a legacy child.
+    effective_thinking_level: turn_control.EffectiveThinkingLevel | None = None
 
     def kinds(self) -> list[str]:
         """The ordered event kinds (handy for shape assertions)."""
@@ -1850,6 +1854,9 @@ class BridgeRuntime:
         on_event: EventCallback | None = None,
         timeout: float | None = None,
         expected_model_revision: ModelRevision | None = None,
+        interaction_mode: turn_control.InteractionMode = turn_control.DEFAULT_INTERACTION_MODE,
+        dfm_mode: turn_control.DfmMode = turn_control.DEFAULT_DFM_MODE,
+        thinking_level: turn_control.ThinkingLevel = turn_control.DEFAULT_THINKING_LEVEL,
     ) -> PromptResult:
         """Run one prompt turn; stream normalized events; return its outcome.
 
@@ -1871,6 +1878,16 @@ class BridgeRuntime:
         the rung that exists to catch a design that does not meet its brief would
         be measuring the workspace's own context block.
         """
+        # §7A.10A: this is a second closed boundary, not trust in the HTTP
+        # caller. Private/older callers receive defaults from the signature;
+        # explicit null/empty/wrong values are refused before admission or any
+        # request-text binding.
+        try:
+            interaction_mode = turn_control.interaction_mode(interaction_mode)
+            dfm_mode = turn_control.dfm_mode(dfm_mode)
+            thinking_level = turn_control.thinking_level(thinking_level)
+        except ValueError as exc:
+            raise ModelSelectionError("invalid_params", data={"message": str(exc)}) from exc
         if expected_model_revision is not None:
             expected_model_revision = revision(expected_model_revision)
         run_id = run_id or self.new_run_id()
@@ -1911,6 +1928,12 @@ class BridgeRuntime:
                 "session_id": session_id,
                 "run_id": run_id,
                 "prompt": text,
+                # Always explicit on this bridge hop. Omission defaults exist
+                # only for older/private callers at their own boundary; an
+                # admitted web turn has one immutable per-run snapshot.
+                "interaction_mode": interaction_mode,
+                "dfm_mode": dfm_mode,
+                "thinking_level": thinking_level,
             }
             if expected_model_revision is not None:
                 params["expected_model_revision"] = expected_model_revision
@@ -1935,6 +1958,9 @@ class BridgeRuntime:
                 timeout=TURN_SECONDS if timeout is None else timeout,
             )
             status = str(result.get("status", "completed"))
+            effective_level = turn_control.effective_thinking_level(
+                result.get("effective_thinking_level")
+            )
         except SupervisorError as exc:
             awaiting_settlement = not exc.error or exc.error.get("code") in (
                 ErrorCode.TIMEOUT,
@@ -1993,6 +2019,7 @@ class BridgeRuntime:
             events=list(run.events),
             terminal=run.terminal,
             events_dropped=run.events_dropped,
+            effective_thinking_level=effective_level,
         )
 
     def _admit_turn(
@@ -2291,26 +2318,40 @@ class BridgeRuntime:
     def _on_terminal(self, params: dict[str, Any]) -> None:
         """Record the terminal for the synchronous caller (the pump made it durable)."""
         run_id = str(params.get("run_id", ""))
+        winner = self._admission.get_terminal(run_id)
+        if winner is None:  # defensive: the pump must make it durable first
+            return
+        self._settle_runtime_terminal(winner, release_runtime=False)
+
+    def _settle_runtime_terminal(self, winner: TerminalRecord, *, release_runtime: bool) -> None:
+        """Apply in-memory settlement only after ``winner`` is durable and acked."""
+        run_id = winner.run_id
         self._sup.untrack_run(run_id)
+        release = False
         with self._lock:
             run = self._runs.get(run_id)
             if run is not None:
-                winner = self._admission.get_terminal(run_id)
-                run.terminal = (
-                    dict(params)
-                    if winner is None
-                    else {
-                        "run_id": run_id,
-                        "terminal_id": winner.terminal_id,
-                        "state": str(winner.state),
-                        "payload": winner.data,
-                    }
-                )
-            if run_id in self._detached_runs:
+                run.terminal = {
+                    "run_id": run_id,
+                    "terminal_id": winner.terminal_id,
+                    "state": str(winner.state),
+                    "payload": winner.data,
+                }
+            if release_runtime or run_id in self._detached_runs:
                 self._detached_runs.discard(run_id)
                 self._runs.pop(run_id, None)
                 self._answerers.pop(run_id, None)
-                release_run_request_text(run_id)
+                release = True
+        if release:
+            release_run_request_text(run_id)
+
+    def _abandon_answerer(self, run_id: str) -> None:
+        """Release a web ``ask_user`` suspension, if this answerer exposes one."""
+        with self._lock:
+            answerer = self._answerers.get(run_id)
+        abandon = getattr(answerer, "abandon_run", None)
+        if callable(abandon):
+            abandon(run_id)
 
     def _ack_terminal(self, run_id: str, terminal_id: str) -> None:
         """Pump callback: the terminal is durable — name it back to the sidecar."""
@@ -2321,51 +2362,58 @@ class BridgeRuntime:
         self._sup.notify("cancel", {"run_id": run_id})
 
     def _on_process_loss(self, event: ProcessLossEvent) -> None:
-        """Mark generic tracked runs interrupted when the sidecar is lost.
+        """Reconcile every tracked run through durable terminal settlement.
 
-        J-build-state-2. The ``continue`` is deliberate and is the reason this
-        loop catches at all: one run whose terminal cannot be written must not
-        cost the *other* tracked runs theirs. What changed is which failures are
-        expected and what happens to the rest.
+        Each lookup and settlement has its own exception boundary, so a store
+        fault for one run is archived against that run and cannot abort later
+        runs. An existing terminal remains authoritative; otherwise an honest
+        ``interrupted`` terminal is synthesized. Only after the pump has made
+        the winner durable, released admission, and notified clients do we
+        abandon ``ask_user`` and clear runtime/supervisor ownership.
 
-        Two are expected and stay silent, because both mean the row is already
-        in the state this loop wants it in: ``NotFoundError`` — a run this
-        runtime never admitted, so there is no admission row to terminate — and
-        ``TerminalConflictError`` — another writer won the race the
-        ``get_terminal`` guard above is already testing for. Anything else (a
-        busy database, a full disk, a corrupted state file) leaves the run with
-        **no** terminal and its admission slot occupied, which is precisely the
-        "job appearing live forever" the digest forbids; it is recorded as
-        archived evidence on the supervisor's restart list, naming the run.
-        Recorded, not repaired: the next startup reconstruction is what repairs
-        it, and pretending here to have written a terminal would be the same
-        silence with an extra step.
-
-        The acknowledgement gets the same treatment: an insert that succeeds
-        followed by an ack that fails is a distinct state (the terminal exists,
-        the slot is still held) that only the next start resolves.
+        ``NotFoundError`` remains an expected miss for a run this runtime never
+        admitted. Other failures retain that run's unresolved in-memory and
+        supervisor state for later reconstruction rather than inventing success.
         """
         for run_id in event.tracked_run_ids:
-            existing = self._admission.get_terminal(run_id)
-            if existing is not None:
-                continue
-            terminal_id = f"interrupted:{run_id}"
             try:
-                self._admission.ingest_terminal(
-                    run_id,
-                    terminal_id,
-                    TerminalState.INTERRUPTED,
-                    {"reason": "interrupted"},
-                )
+                existing = self._admission.get_terminal(run_id)
+            except Exception as exc:
+                self._record_recovery_fault(run_id, "lookup", exc, event)
+                continue
+
+            params: dict[str, Any]
+            if existing is None:
+                params = {
+                    "run_id": run_id,
+                    "terminal_id": f"interrupted:{run_id}",
+                    "state": str(TerminalState.INTERRUPTED),
+                    "payload": {"reason": "interrupted"},
+                }
+            else:
+                # Another terminal already won. Reconcile and publish that
+                # durable truth; never replace it with a fabricated interruption.
+                params = {
+                    "run_id": run_id,
+                    "terminal_id": existing.terminal_id,
+                    "state": str(existing.state),
+                    "payload": existing.data,
+                }
+            try:
+                settled = self._pump.reconcile_terminal(params)
             except (NotFoundError, TerminalConflictError):
                 continue
             except Exception as exc:
                 self._record_recovery_fault(run_id, "terminal", exc, event)
                 continue
             try:
-                self._admission.acknowledge(run_id, terminal_id)
+                self._abandon_answerer(run_id)
             except Exception as exc:
-                self._record_recovery_fault(run_id, "acknowledge", exc, event)
+                # The terminal is still authoritative and admission is already
+                # released. Archive the waiter fault, then clear runtime
+                # authority rather than making a settled run look live.
+                self._record_recovery_fault(run_id, "answerer", exc, event)
+            self._settle_runtime_terminal(settled.record, release_runtime=True)
 
     def _record_recovery_fault(
         self, run_id: str, stage: str, exc: BaseException, event: ProcessLossEvent

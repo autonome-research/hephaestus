@@ -21,11 +21,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readToolResult } from "../../src/api/events";
+import { WorkspaceError } from "../../src/api/client";
 import type { SessionsDocument } from "../../src/api/sessions";
 import { SessionTabs } from "../../src/components/stream/SessionTabs";
 import { StreamPanel } from "../../src/components/stream/StreamPanel";
 import { Transcript } from "../../src/components/stream/Transcript";
 import { copy } from "../../src/copy";
+import { conversationStore } from "../../src/stream/conversation";
 import { emptyHistory } from "../../src/stream/history";
 import { emptyLive } from "../../src/stream/live";
 import { parseToolResult } from "../../src/stream/toolResult";
@@ -41,6 +43,7 @@ import type { ThreadTab } from "../../src/stream/thread";
 import { useStream, type StreamView } from "../../src/stream/useStream";
 import { DEFAULT_STATE } from "../../src/state/workspace";
 import { workspaceStore } from "../../src/state/react";
+import { idleExecution, modelState } from "../fixtures/models";
 import { allHistoryFrames, fixture } from "./fixture";
 
 // The panel's own session-thread wiring is mocked here (`useStream` opens a
@@ -804,6 +807,7 @@ describe("StreamPanel — the strip's membership is the listing, not one thread 
       resyncs: 0,
       runId: null,
       clearRunId: () => undefined,
+      retryHistory: () => undefined,
       echo: () => undefined,
       refuseEcho: () => undefined,
       midRunAttach: false,
@@ -813,21 +817,26 @@ describe("StreamPanel — the strip's membership is the listing, not one thread 
     };
   }
 
-  function mount(sessionsDoc: SessionsDocument, selected: string): { host: HTMLElement; root: Root } {
+  function mount(sessionsDoc: SessionsDocument, selected: string): {
+    host: HTMLElement;
+    root: Root;
+    rerender: () => void;
+  } {
     workspaceStore.reset({ ...DEFAULT_STATE, session: selected });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(["sessions"], sessionsDoc);
     const host = document.createElement("div");
     document.body.appendChild(host);
     const root = createRoot(host);
-    act(() => {
+    const rerender = () => {
       root.render(
         <QueryClientProvider client={client}>
           <StreamPanel />
         </QueryClientProvider>,
       );
-    });
-    return { host, root };
+    };
+    act(rerender);
+    return { host, root, rerender };
   }
 
   it("renders three tabs from a three-row listing when the selected session's own thread has only one node", () => {
@@ -916,6 +925,122 @@ describe("StreamPanel — the strip's membership is the listing, not one thread 
       act(() => {
         root.unmount();
       });
+      host.remove();
+    }
+  });
+
+  it("gates the composer on failed history and exposes explicit read retry plus New conversation", () => {
+    const selected = "sess-failed";
+    const retryHistory = vi.fn();
+    vi.mocked(useStream).mockReturnValue(fakeStream({
+      history: { ...emptyHistory(), state: "failed", error: new Error("read failed") },
+      retryHistory,
+    }));
+    const { host, root } = mount({ status: "ok", sessions: [
+      { session_id: selected, profile: "orchestrator", part: null, parent_session_id: null, thread_state: "linked" },
+    ], profiles: [] }, selected);
+    try {
+      expect(host.querySelector("[data-composer]")?.getAttribute("data-disabled-reason"))
+        .toBe("history_unavailable");
+      expect(host.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).toBe("true");
+      expect(host.querySelector("[data-session-create]")).not.toBeNull();
+      act(() => host.querySelector<HTMLButtonElement>("[data-history-retry]")?.click());
+      expect(retryHistory).toHaveBeenCalledTimes(1);
+    } finally {
+      act(() => root.unmount());
+      host.remove();
+    }
+  });
+
+  it("keeps every send path blocked and focus owned through failed and successful retries", () => {
+    const selected = "sess-retry";
+    const retryHistory = vi.fn();
+    const echo = vi.fn();
+    let stream = fakeStream({
+      history: { ...emptyHistory(), state: "failed", error: new Error("read failed") },
+      retryHistory,
+      echo,
+    });
+    vi.mocked(useStream).mockImplementation(() => stream);
+    const sessionsDoc: SessionsDocument = { status: "ok", sessions: [
+      { session_id: selected, profile: "orchestrator", part: null, parent_session_id: null, thread_state: "linked" },
+    ], profiles: [] };
+    const { host, root, rerender } = mount(sessionsDoc, selected);
+    try {
+      const input = host.querySelector<HTMLTextAreaElement>("[data-composer-input]")!;
+      act(() => conversationStore.update(selected, conversation => ({
+        ...conversation,
+        model: modelState,
+        modelChecking: false,
+        checking: false,
+        execution: idleExecution,
+        draft: { text: "Draft survives history recovery", revision: 1 },
+      })));
+      const retry = host.querySelector<HTMLButtonElement>("[data-history-retry]")!;
+      retry.focus();
+      act(() => retry.click());
+      expect(retryHistory).toHaveBeenCalledTimes(1);
+
+      stream = { ...stream, history: { ...stream.history, state: "retrying", error: null } };
+      act(rerender);
+      expect(host.querySelector("[data-composer]")?.getAttribute("data-disabled-reason"))
+        .toBe("history_unavailable");
+      expect(host.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).toBe("true");
+      expect(document.activeElement).toBe(host.querySelector("[data-history-retry]"));
+      act(() => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        host.querySelector("[data-composer]")?.dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true }),
+        );
+        host.querySelector<HTMLButtonElement>("[data-composer-send]")?.click();
+      });
+      expect(echo).not.toHaveBeenCalled();
+
+      stream = {
+        ...stream,
+        history: { ...stream.history, state: "failed", error: new Error("still unavailable") },
+      };
+      act(rerender);
+      expect(document.activeElement).toBe(host.querySelector("[data-history-retry]"));
+      expect(input.value).toBe("Draft survives history recovery");
+
+      act(() => host.querySelector<HTMLButtonElement>("[data-history-retry]")?.click());
+      stream = { ...stream, history: { ...stream.history, state: "retrying", error: null } };
+      act(rerender);
+      stream = { ...stream, history: { ...stream.history, state: "complete", error: null } };
+      act(rerender);
+      expect(document.activeElement).toBe(input);
+      expect(input.value).toBe("Draft survives history recovery");
+      expect(host.querySelector("[data-composer]")?.getAttribute("data-disabled-reason"))
+        .not.toBe("history_unavailable");
+      expect(host.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).not.toBe("true");
+    } finally {
+      act(() => root.unmount());
+      host.remove();
+    }
+  });
+
+  it.each([
+    ["runtime_unavailable", new WorkspaceError(503, "process_down", "gone")],
+    ["unknown_session", new WorkspaceError(404, "unknown_session", "gone")],
+  ] as const)("gates the composer on authoritative %s failures", (reason, error) => {
+    const selected = `sess-${reason}`;
+    vi.mocked(useStream).mockReturnValue(fakeStream({
+      history: {
+        ...emptyHistory(),
+        state: reason === "unknown_session" ? "failed" : "complete",
+        error: reason === "unknown_session" ? error : null,
+      },
+      error,
+    }));
+    const { host, root } = mount({ status: "ok", sessions: [
+      { session_id: selected, profile: "orchestrator", part: null, parent_session_id: null, thread_state: "linked" },
+    ], profiles: [] }, selected);
+    try {
+      expect(host.querySelector("[data-composer]")?.getAttribute("data-disabled-reason")).toBe(reason);
+      expect(host.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).toBe("true");
+    } finally {
+      act(() => root.unmount());
       host.remove();
     }
   });

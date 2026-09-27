@@ -55,7 +55,7 @@ import { historicalItem, type TranscriptItem } from "./transcript";
  */
 export const MAX_HISTORY_PAGES = 400;
 
-export type HistoryLoadState = "loading" | "complete" | "truncated" | "failed";
+export type HistoryLoadState = "loading" | "retrying" | "complete" | "truncated" | "failed";
 
 export interface HistoryProgress {
   readonly items: readonly TranscriptItem[];

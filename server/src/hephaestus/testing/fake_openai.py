@@ -60,6 +60,7 @@ class FakeOpenAI:
     provider_id: str = "heph-fake"
     context_window: int = 128000
     max_tokens: int = 4096
+    reasoning: bool = True
     requests: list[RequestInfo] = field(default_factory=list[RequestInfo])
     _script: list[TurnResolver] = field(default_factory=list["TurnResolver"])
     _cursor: int = 0
@@ -111,6 +112,7 @@ class FakeOpenAI:
                     "contextWindow": self.context_window,
                     "maxTokens": self.max_tokens,
                     "input": ["text", "image"],
+                    "reasoning": self.reasoning,
                 }
             ],
         }

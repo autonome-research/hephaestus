@@ -266,6 +266,8 @@ export interface TurnOutcome {
  */
 export interface HistoryUserPrompt {
   readonly run_id?: string;
+  /** Pi's actual value after model-capability clamping for this recorded turn. */
+  readonly effective_thinking_level?: EffectiveThinkingLevel;
   /** THE IDENTITY when present (§2.8(2)). Absent from a pre-amendment sidecar. */
   readonly turn?: number;
   readonly seq: number;
@@ -500,6 +502,11 @@ export type DfmMode = (typeof DFM_MODES)[number];
 export const THINKING_LEVELS = ["low", "medium", "high"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
+export const EFFECTIVE_THINKING_LEVELS = [
+  "off", "minimal", "low", "medium", "high", "xhigh", "max",
+] as const;
+export type EffectiveThinkingLevel = (typeof EFFECTIVE_THINKING_LEVELS)[number];
+
 export interface PromptOptions {
   readonly interaction_mode: InteractionMode;
   readonly dfm_mode: DfmMode;
@@ -512,6 +519,8 @@ export interface PromptDocument {
   readonly run_id: string;
   /** The turn's outcome. §7A.6 makes THIS the authority that the turn is over. */
   readonly run_status: string;
+  /** Pi's actual value after model-capability clamping; null/absent is legacy. */
+  readonly effective_thinking_level?: EffectiveThinkingLevel | null;
   readonly events: readonly HistoryEventFrame[];
   readonly terminal: Readonly<Record<string, unknown>> | null;
   /** The block actually sent, echoed; `null` when none was (§7A.3). */

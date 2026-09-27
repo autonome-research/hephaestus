@@ -40,8 +40,9 @@
   pointer-events: none;
 }
 
-/* The unbuilt route is an actual action; other absence plates remain inert. */
-.absent [data-unbuilt-conversation] { pointer-events: auto; }
+/* Named absence remedies are actual actions; the surrounding plate stays inert. */
+.absent [data-unbuilt-conversation],
+.absent [data-glb-retry] { pointer-events: auto; }
 
 /* Absence copy is chrome words, so it sits on a plate the way the readout
    does. Painting `--ink-base` straight onto `--viewport-ground` is the

@@ -98,6 +98,45 @@ describe('resize preserves camera intent', () => {
   });
 });
 
+describe("camera restoration after a transient geometry retry", () => {
+  for (const ortho of [true, false]) {
+    it(`restores the actual orbit, pan and zoom after replacement framing (${ortho})`, () => {
+      const canvas = document.createElement("canvas"); document.body.append(canvas);
+      const engine = new ViewportEngine(canvas, { onCameraSettled: () => undefined });
+      const live = engine as unknown as Internals;
+      try {
+        engine.resize(800, 600);
+        live.bounds = new Box3(new Vector3(-60, -25, -10), new Vector3(60, 25, 10));
+        engine.setOrtho(ortho);
+        engine.frame("iso", false);
+        live.controls.dispatchEvent({ type: "start" });
+        live.camera.position.add(new Vector3(19, -11, 7));
+        live.controls.target.add(new Vector3(6, 4, -3));
+        if (live.camera instanceof OrthographicCamera) live.camera.zoom = 1.65;
+        else live.camera.position.addScaledVector(
+          live.camera.position.clone().sub(live.controls.target).normalize(),
+          24,
+        );
+        live.controls.update();
+        live.controls.dispatchEvent({ type: "end" });
+        const held = engine.cameraSnapshot();
+        expect(held.fit).toBe(false);
+
+        // A successful replacement establishes fresh scene framing first. The
+        // retry path then restores the operator-owned camera byte for byte.
+        live.bounds = new Box3(new Vector3(-120, -45, -15), new Vector3(120, 45, 15));
+        engine.frame("+X", false);
+        expect(engine.cameraSnapshot()).not.toEqual(held);
+        engine.restoreCamera(held);
+        expect(engine.cameraSnapshot()).toEqual(held);
+      } finally {
+        engine.dispose();
+        canvas.remove();
+      }
+    });
+  }
+});
+
 describe("ordinary axis drag", () => {
   for (const view of ["iso", "+Z"]) for (const ortho of [true, false]) {
     it(`orbits on the screen axes, keeps Shift pan/Fit, and settles (${view}, ${ortho ? "ortho" : "perspective"})`, () => {

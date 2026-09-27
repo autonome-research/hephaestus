@@ -91,7 +91,13 @@ export function loginPollFailureReason(status: Record<string, unknown>): string 
     const code = (nested as { code?: unknown }).code;
     if (typeof code === "string") return code;
   }
-  return typeof status.reason === "string" ? status.reason : "authorization_expired";
+  if (typeof status.reason === "string") return status.reason;
+  const state = nested !== null && typeof nested === "object"
+    ? (nested as { state?: unknown }).state
+    : status.state;
+  if (state === "cancelled") return "authorization_cancelled";
+  if (state === "failed") return "authorization_failed";
+  return "authorization_expired";
 }
 
 export function loginPollOutcome(status: Record<string, unknown>): "pending" | "complete" | "failed" {
@@ -139,6 +145,9 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
   // the submit control is disabled with a reason while it holds.
   const [scope, setScope] = useState<CredentialScope | null>(null);
   const [flow, setFlow] = useState<FlowDocument | null>(null);
+  // Only an explicit terminal status releases local cancellation ownership.
+  // Transport errors leave this false because the server flow may still live.
+  const [flowTerminal, setFlowTerminal] = useState(false);
   const [paste, setPaste] = useState("");
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -149,7 +158,9 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
     // Once Pi owns an active flow, the dialog remains its visible owner until
     // cancellation is acknowledged. Closing optimistically on a failed relay
     // strands that flow and makes the next begin refuse as already in progress.
-    if (flow === null) {
+    if (flow === null || flowTerminal) {
+      setFlow(null);
+      setFlowTerminal(false);
       onClose();
       return;
     }
@@ -163,7 +174,7 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
     }).finally(() => {
       setBusy(false);
     });
-  }, [busy, flow, provider.id, onClose]);
+  }, [busy, flow, flowTerminal, provider.id, onClose]);
 
   useEffect(() => {
     if (!open || flow === null) return;
@@ -185,6 +196,7 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
             if (outcome === "failed") {
               const reason = loginPollFailureReason(status);
               const known = copy.providers.refusal as Readonly<Record<string, string>>;
+              setFlowTerminal(true);
               setRefusal(known[reason] ?? copy.errors.title);
               return;
             }
@@ -242,9 +254,17 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
   };
 
   const begin = (type: AuthFlowType): void => {
+    setFlowTerminal(false);
     void run(async () => {
       setFlow(await beginLogin(provider.id, type));
     });
+  };
+
+  const retryTerminalFlow = (): void => {
+    if (!flowTerminal || flow === null) return;
+    const type = flow.type;
+    setFlow(null);
+    begin(type);
   };
 
   const complete = (): void => {
@@ -308,6 +328,18 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
             <p className={styles["refusal"]} data-signin-refusal role="alert">
               {refusal}
             </p>
+          )}
+          {!flowTerminal || flow === null ? null : (
+            <div className={styles["actions"]}>
+              <Button
+                variant="primary"
+                onClick={retryTerminalFlow}
+                data-signin-retry=""
+                {...(busy ? { disabled: true as const, reason: copy.providers.dialog.waiting } : {})}
+              >
+                {copy.providers.dialog.retry}
+              </Button>
+            </div>
           )}
         </PanelBody>
       </Panel>

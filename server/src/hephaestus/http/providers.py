@@ -43,7 +43,7 @@ import secrets
 import stat
 import threading
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -63,6 +63,7 @@ __all__ = [
     "AUTH_HEALTH",
     "AUTH_SOURCES",
     "CATALOG_AUTH_METHODS",
+    "CREDENTIAL_READS_MAX",
     "CREDENTIAL_READ_REASONS",
     "CREDENTIAL_SCOPES",
     "DISCOVERY_MAX_OFFERS",
@@ -76,6 +77,7 @@ __all__ = [
     "acknowledge_hosts",
     "adopt_offer",
     "credential_reads",
+    "credential_reads_dropped",
     "discover_sources",
     "guard_unlinked",
     "is_loopback_host",
@@ -213,24 +215,46 @@ class CredentialRead:
     at: float
 
 
-_READS: list[CredentialRead] = []
+#: Retained diagnostic rows. This is a live process assertion aid, not the
+#: durable audit subsystem that the product does not currently have.
+CREDENTIAL_READS_MAX: Final[int] = 1024
+
+_reads: deque[CredentialRead] = deque()
+_reads_dropped = 0
+_reads_lock = threading.Lock()
 
 
 def record_credential_read(path: Path, reason: str) -> None:
-    """Record that a path outside the project was opened, and why."""
+    """Record one external credential read with bounded, explicit retention."""
     if reason not in CREDENTIAL_READ_REASONS:  # pragma: no cover - guarded at call sites
         raise ValueError(f"credential read reason {reason!r} is outside the closed vocabulary")
-    _READS.append(CredentialRead(path=str(path), reason=reason, at=time.time()))
+    read = CredentialRead(path=str(path), reason=reason, at=time.time())
+    global _reads_dropped
+    with _reads_lock:
+        if len(_reads) == CREDENTIAL_READS_MAX:
+            _reads.popleft()
+            _reads_dropped += 1
+        _reads.append(read)
 
 
 def credential_reads() -> tuple[CredentialRead, ...]:
-    """Every recorded read, oldest first. The G10C Tier 1 assertion reads this."""
-    return tuple(_READS)
+    """Retained reads, oldest first; consult :func:`credential_reads_dropped`."""
+    with _reads_lock:
+        return tuple(_reads)
+
+
+def credential_reads_dropped() -> int:
+    """Number of oldest rows omitted by this process's retention bound."""
+    with _reads_lock:
+        return _reads_dropped
 
 
 def reset_credential_reads() -> None:
-    """Clear the ledger (tests only; a serve never needs to forget)."""
-    _READS.clear()
+    """Clear retained rows and truncation count (tests only)."""
+    global _reads_dropped
+    with _reads_lock:
+        _reads.clear()
+        _reads_dropped = 0
 
 
 def read_outside_project(path: Path, reason: str) -> str | None:
@@ -718,7 +742,7 @@ def register_catalog_provider(
     window that a client-side merge cannot close.
     """
     if auth_type not in CATALOG_AUTH_METHODS:
-        raise _refuse(400, "unsupported_auth_type", "unknown provider authentication method")
+        raise _refuse(422, "unsupported_auth_type", "unknown provider authentication method")
     provider_id = catalog_entry.get("id")
     if not isinstance(provider_id, str) or not provider_id:
         raise _refuse(404, "provider_unknown", "the runtime catalog has no such provider")

@@ -80,9 +80,16 @@ KEY_REQUIRED_CASES: dict[tuple[str, str], tuple[str, dict[str, Any]]] = {
         "/parts/widget/doc",
         {"artifact_ref": f"artifact:build:sha256:{'0' * 64}", "kind": "bom"},
     ),
-    # §23.6's spec-only write (Stage 10B, approved 2026-08-28). A CONFIG
-    # mutation with no tool behind it, so it joins the row above it in
-    # `NON_TOOL_KEY_ROUTES` too. The body is one that would genuinely write —
+    # §23.6's provider mutations (Stage 10B, approved 2026-08-28). Registering
+    # a native catalog provider and writing a complete spec are both genuine
+    # config writes; `_providers_on_disk` makes their no-execution claim
+    # falsifiable before either request reaches provider dispatch.
+    ("POST", "/providers/register"): (
+        "/providers/register",
+        {"provider_id": "anthropic", "auth_type": "api_key"},
+    ),
+    # The spec-only write has no tool behind it, so it joins the other ledger
+    # extension routes in `NON_TOOL_KEY_ROUTES` too. Its body would genuinely write —
     # `_providers_on_disk` below is what makes "no execution" falsifiable for
     # this row, exactly as `_exports_on_disk` does for §22.2's three.
     ("PUT", "/providers/specs"): (
@@ -176,13 +183,14 @@ def test_the_key_required_table_is_the_routes_the_spec_enumerates() -> None:
         ("POST", "/parts/{part}/doc"),
     } <= set(KEY_REQUIRED_ROUTES)
     # REPOINTED a second time, with its own amendment cited. §23.14 item 8 puts
-    # `PUT /providers/specs` "in the non-tool ledger extension §19.7 already
-    # requires for `POST /project/config/dfm` and `POST /git/tag`" — the same
-    # key space, the same recorded-outcome ledger. It is a *config* write with
-    # no tool behind it, which is precisely what that extension is for.
+    # the provider config writes in the non-tool ledger extension §19.7 already
+    # used by `POST /project/config/dfm` and `POST /git/tag` — the same key space,
+    # the same recorded-outcome ledger. They have no tool behind them, which is
+    # precisely what that extension is for.
     assert set(NON_TOOL_KEY_ROUTES) == {
         ("POST", "/project/config/dfm"),
         ("POST", "/git/tag"),
+        ("POST", "/providers/register"),
         ("PUT", "/providers/specs"),
     }
     assert set(NON_TOOL_KEY_ROUTES) < set(KEY_REQUIRED_ROUTES)

@@ -28,6 +28,7 @@ import { existsSync } from "node:fs";
 import { profileDefinition, sessionDirFor, type SessionProfile } from "./profiles.js";
 import { hephaestusInlineExtension } from "./extension.js";
 import type { PiModel } from "./runtime.js";
+import { activeToolsForTurn, type TurnControl } from "./turn-control.js";
 import { RpcError } from "../rpc.js";
 import { loadSelection, saveSelection, modelError, modelRef, resolvedModel, sameModel, type ModelRef, type ModelRevision, type ModelResolver, type SessionModelState } from "./model-selection.js";
 
@@ -115,6 +116,12 @@ export interface SessionServiceDeps {
 interface RunEntry {
   readonly sessionId: string;
   readonly controller: AbortController;
+}
+
+export interface AppliedTurnControl {
+  readonly previousThinkingLevel: AgentSession["thinkingLevel"];
+  readonly effectiveThinkingLevel: AgentSession["thinkingLevel"];
+  readonly activeTools: readonly string[];
 }
 
 /**
@@ -349,6 +356,54 @@ export class SessionService {
     if (!managed) throw modelError("unknown_session", { session_id: id });
     const current = managed.liveSession?.model;
     return { ...managed.modelState, revision: { ...managed.modelState.revision }, current: current ? resolvedModel(current) : null };
+  }
+
+  /** Apply one admitted turn's Pi-native effort and fail-closed tool set. */
+  applyTurnControl(id: string, control: TurnControl): AppliedTurnControl {
+    const managed = this.sessions.get(id);
+    if (!managed) throw modelError("unknown_session", { session_id: id });
+    const session = managed.session;
+    const previousThinkingLevel = session.thinkingLevel;
+    const registered = new Set(session.getAllTools().map((tool) => tool.name));
+    const availableProfileTools = managed.build.tools.filter((name) => registered.has(name));
+    const requestedTools = activeToolsForTurn(availableProfileTools, control.interactionMode);
+    try {
+      session.setActiveToolsByName(requestedTools);
+      const activeTools = session.getActiveToolNames();
+      if (activeTools.length !== requestedTools.length || activeTools.some((name, index) => name !== requestedTools[index])) {
+        // Pi deliberately ignores unknown names. Compare the effective registered
+        // profile intersection so a requested restriction can never degrade into
+        // a broader active set.
+        throw modelError("invalid_params", { reason: "turn_tool_application_failed" });
+      }
+      session.setThinkingLevel(control.thinkingLevel);
+      return { previousThinkingLevel, effectiveThinkingLevel: session.thinkingLevel, activeTools };
+    } catch (error) {
+      // Transactional application: no partially applied Plan restriction or
+      // effort setting may survive a refusal before provider execution.
+      session.setActiveToolsByName(availableProfileTools);
+      if (session.thinkingLevel !== previousThinkingLevel) session.setThinkingLevel(previousThinkingLevel);
+      throw error;
+    }
+  }
+
+  /** Leave no Plan/effort state behind while never broadening profile rights. */
+  restoreTurnControl(id: string, previousThinkingLevel: AgentSession["thinkingLevel"]): boolean {
+    const managed = this.sessions.get(id);
+    if (!managed?.liveSession) return false;
+    try {
+      const registered = new Set(managed.liveSession.getAllTools().map((tool) => tool.name));
+      const availableProfileTools = managed.build.tools.filter((name) => registered.has(name));
+      managed.liveSession.setActiveToolsByName(availableProfileTools);
+      managed.liveSession.setThinkingLevel(previousThinkingLevel);
+      const restored = managed.liveSession.getActiveToolNames();
+      return restored.length === availableProfileTools.length
+        && restored.every((name, index) => name === availableProfileTools[index]);
+    } catch {
+      // The handler still has to settle/end the run. `false` makes that terminal
+      // failed without allowing a cleanup exception to strand admission.
+      return false;
+    }
   }
 
   private checkIdle(id: string): ManagedSession {

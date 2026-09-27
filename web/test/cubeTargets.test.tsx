@@ -195,6 +195,10 @@ describe("ViewCube — the drawn cells are the visible inventory (§5.2)", () =>
       "text/html",
     );
 
+    const cube = dom.querySelector("[data-view-cube]");
+    expect(cube?.getAttribute("role")).toBe("group");
+    expect(cube?.hasAttribute("tabindex")).toBe(false);
+
     const hits = [...dom.querySelectorAll("[data-cube-hit]")];
     const byKind = { face: 0, edge: 0, corner: 0 } as Record<CubeTarget["kind"], number>;
     for (const hit of hits) {

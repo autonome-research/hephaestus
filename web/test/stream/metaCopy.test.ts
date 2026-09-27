@@ -174,8 +174,12 @@ describe("§7A.10(f) — the composer's resting copy is one sentence", () => {
     // scanned by the `copy.composer`-only loop above.
     expect(Object.keys(copy.composer.disabled).sort()).toEqual([
       "agent_unavailable",
+      "history_unavailable",
+      "images_unsupported",
       "no_session",
       "run_in_flight",
+      "runtime_unavailable",
+      "unknown_session",
     ]);
     for (const value of Object.values(copy.attach.cause)) {
       expect(value).not.toBe("");

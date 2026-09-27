@@ -95,6 +95,10 @@ describe("loginPollOutcome", () => {
     expect(loginPollOutcome(rateLimited)).toBe("failed");
     expect(loginPollFailureReason(rateLimited)).toBe("provider_rate_limited");
     expect(loginPollOutcome({ status: "error", reason: "authorization_expired" })).toBe("failed");
+    expect(loginPollFailureReason({ status: "ok", flow: { state: "cancelled" } }))
+      .toBe("authorization_cancelled");
+    expect(loginPollFailureReason({ status: "ok", flow: { state: "failed" } }))
+      .toBe("authorization_failed");
     expect(loginPollFailureReason({ status: "error", reason: "provider_unreachable" }))
       .toBe("provider_unreachable");
   });
@@ -239,6 +243,60 @@ describe("SignInDialog polls and cancels (#76)", () => {
       expect(mounted.host.querySelector("[data-signin-dialog]")).not.toBeNull();
       expect(mounted.host.querySelector("[data-signin-refusal]")?.textContent)
         .toContain("no agent runtime");
+    } finally {
+      drop(mounted);
+    }
+  });
+
+  it.each([
+    ["expired", "authorization_expired"],
+    ["cancelled", "authorization_cancelled"],
+    ["failed", "authorization_failed"],
+  ] as const)("offers a fresh retry after terminal %s", async (state, code) => {
+    vi.mocked(providers.beginLogin)
+      .mockResolvedValueOnce(deviceFlow())
+      .mockResolvedValueOnce(deviceFlow({ user_code: "HEPH-RETRY" }));
+    vi.mocked(providers.loginStatus).mockResolvedValue({
+      status: "ok",
+      flow: { state, code },
+    });
+    const mounted = live(
+      <SignInDialog provider={row()} open onClose={() => undefined} onSignedIn={() => undefined} />,
+    );
+    try {
+      act(() => mounted.host.querySelector<HTMLButtonElement>('[data-signin-begin="device_code"]')?.click());
+      await act(async () => Promise.resolve());
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(mounted.host.querySelector("[data-signin-refusal]")).not.toBeNull();
+      const retry = mounted.host.querySelector<HTMLButtonElement>("[data-signin-retry]");
+      expect(retry).not.toBeNull();
+      act(() => retry?.click());
+      await act(async () => Promise.resolve());
+      expect(providers.beginLogin).toHaveBeenCalledTimes(2);
+      expect(mounted.host.querySelector('[data-signin-device-code="HEPH-RETRY"]')).not.toBeNull();
+    } finally {
+      drop(mounted);
+    }
+  });
+
+  it("dismisses a confirmed terminal flow without trying to cancel it", async () => {
+    vi.mocked(providers.beginLogin).mockResolvedValue(deviceFlow());
+    vi.mocked(providers.loginStatus).mockResolvedValue({
+      status: "ok",
+      flow: { state: "expired", code: "authorization_expired" },
+    });
+    vi.mocked(providers.cancelLogin).mockRejectedValue(new Error("must not be called"));
+    const onClose = vi.fn();
+    const mounted = live(
+      <SignInDialog provider={row()} open onClose={onClose} onSignedIn={() => undefined} />,
+    );
+    try {
+      act(() => mounted.host.querySelector<HTMLButtonElement>('[data-signin-begin="device_code"]')?.click());
+      await act(async () => Promise.resolve());
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      act(() => mounted.host.querySelector<HTMLElement>("[data-popover-scrim]")?.click());
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(providers.cancelLogin).not.toHaveBeenCalled();
     } finally {
       drop(mounted);
     }

@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from . import turn_control
 from .app import AskUserAnswerer, PromptResult
 from .model_selection import ModelRevision, model_ref, model_state, models_document
 from .serve_record import (
@@ -233,6 +234,9 @@ class ServerAgentClient:
             status=str(body.get("run_status", "completed")),
             events=events,
             terminal=cast("dict[str, Any] | None", body.get("terminal")),
+            effective_thinking_level=turn_control.effective_thinking_level(
+                body.get("effective_thinking_level")
+            ),
         )
 
     def cancel(self, run_id: str) -> None:

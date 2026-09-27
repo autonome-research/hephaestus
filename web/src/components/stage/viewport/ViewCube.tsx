@@ -155,7 +155,6 @@ export function ViewCube({ onRefit }: ViewCubeProps = {}): React.JSX.Element {
       className={styles["cube"]}
       data-view-cube=""
       role="group"
-      tabIndex={0}
       aria-label={copy.viewport.viewCube.label}
     >
       <div className={styles["scene"]}>

@@ -109,6 +109,23 @@ export function StreamPanel(): React.JSX.Element {
   const rows = useMemo(() => sessions.data?.sessions ?? EMPTY_SESSIONS, [sessions.data]);
   const profiles = useMemo(() => sessions.data?.profiles ?? EMPTY_PROFILES, [sessions.data]);
   const stream = useStream(selected);
+  const retryHistoryRead = stream.retryHistory;
+  const historyRetryActive = useRef(false);
+  const retryHistory = useCallback(() => {
+    historyRetryActive.current = true;
+    retryHistoryRead();
+  }, [retryHistoryRead]);
+  useEffect(() => {
+    if (!historyRetryActive.current) return;
+    if (stream.history.state === "retrying" || stream.history.state === "failed") {
+      document.querySelector<HTMLElement>("[data-history-retry]")?.focus({ preventScroll: true });
+      return;
+    }
+    if (stream.history.state === "complete" || stream.history.state === "truncated") {
+      historyRetryActive.current = false;
+      document.querySelector<HTMLElement>("[data-composer-input]")?.focus({ preventScroll: true });
+    }
+  }, [stream.history.state]);
   const [createTarget, setCreateTarget] = useState<{ profile: "orchestrator" | "part"; part: string | null; opener: HTMLElement | null } | null>(null);
   const creating = createTarget !== null;
   const [focusNonce, setFocusNonce] = useState(0);
@@ -187,11 +204,20 @@ export function StreamPanel(): React.JSX.Element {
     sessionsFault ??
     streamFault ??
     (promptFault.sid === selected ? promptFault.value : null);
+  const streamReason = stream.error instanceof WorkspaceError ? stream.error.reason : null;
+  const historyWriteBlocked = stream.history.state === "failed" || stream.history.state === "retrying";
   const cannotPrompt = sessionCannotPrompt({
     runtimeFault: fault,
-    historyFailed: stream.history.state === "failed",
-    streamReason: stream.error instanceof WorkspaceError ? stream.error.reason : null,
+    historyFailed: historyWriteBlocked,
+    streamReason,
   });
+  const promptBlock = fault !== null
+    ? { reason: "runtime_unavailable" as const, message: copy.composer.disabled.runtime_unavailable }
+    : streamReason === "unknown_session"
+      ? { reason: "unknown_session" as const, message: copy.composer.disabled.unknown_session }
+      : historyWriteBlocked
+        ? { reason: "history_unavailable" as const, message: copy.composer.disabled.history_unavailable }
+        : null;
 
   // -- §7A.11, the observer's half ----------------------------------------
   //
@@ -437,8 +463,21 @@ export function StreamPanel(): React.JSX.Element {
                 starts this session's first turn, so a second create affordance
                 in the middle of the column would be the "wall of buttons" §7.1
                 rules out. */}
-            {stream.history.state === "failed" ? (
-              <p className={styles["historyNote"]} role="status">{copy.stream.historyFailed}</p>
+            {stream.history.state === "failed" || stream.history.state === "retrying" ? (
+              <div className={styles["historyNote"]} role="status">
+                <span>{stream.history.state === "retrying" ? copy.stream.historyLoading : copy.stream.historyFailed}</span>{" "}
+                <Button
+                  variant="secondary"
+                  data-history-retry=""
+                  onClick={retryHistory}
+                  {...(stream.history.state === "retrying"
+                    ? { disabled: true as const, reason: copy.stream.historyLoading }
+                    : {})}
+                >
+                  {copy.stream.historyRetry}
+                </Button>
+                {createAction}
+              </div>
             ) : null}
             {stream.history.state === "loading" ? (
               <p className={styles["historyNote"]} role="status" data-transcript-loading="">{copy.stream.historyLoading}</p>
@@ -498,6 +537,7 @@ export function StreamPanel(): React.JSX.Element {
         currentTurn={stream.currentTurn}
         attach={attach}
         agentUnavailable={unavailable}
+        promptBlock={promptBlock}
         liveRunId={stream.runId}
         streamLive={stream.status === "live"}
         terminals={stream.terminals}

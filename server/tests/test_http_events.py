@@ -187,13 +187,10 @@ def test_overflow_drops_the_observer_with_4409_and_never_cancels_the_run(
         agent.emit("run-flood", 9999, "text_delta", payload={"text": "after"})
         assert observer.queue.size == before
 
-        # Everything buffered is still deliverable — the socket drains before it
-        # closes, so a resync loses only what arrived AFTER the drop. The count
-        # is the bound plus the one event that tipped it: ``PerClientQueue.push``
-        # appends first and reports the overflow, so the tipping event is kept
-        # rather than discarded. Keeping it is the right half of the tradeoff —
-        # it is a durable kind, and the client is about to be told to resync.
-        assert len(observer.drain()) == BUFFERED_EVENTS_MAX + 1
+        # The queue is strictly bounded and reserves one slot for a terminal.
+        # The tipping durable event is not hidden as delivered: it is refused,
+        # and 4409 tells the observer to resync rather than cancelling the run.
+        assert len(observer.drain()) == BUFFERED_EVENTS_MAX - 1
 
 
 class _StalledSocket:

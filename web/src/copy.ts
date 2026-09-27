@@ -453,6 +453,7 @@ export const copy = {
       "Loading the newly pinned artifact. Until it arrives this is the last artifact that finished loading, not the one named in the header.",
     /** §5.1: the route never serves an unlinked GLB, so a refusal is an answer. */
     refused: "The server did not serve geometry for this artifact.",
+    retry: "Retry geometry",
     /**
      * WebGL is the one capability this client cannot substitute for. Saying so
      * beats a black rectangle: §4.4's rule is that a weak state says why it is
@@ -1178,6 +1179,7 @@ export const copy = {
     historyTruncated:
       "Stopped after the page limit for one reopen; this transcript is longer than what is shown.",
     historyFailed: "The recorded transcript could not be read.",
+    historyRetry: "Retry transcript read",
     /*
      * `historyFailedShort` is REMOVED (§7A.10(e)(2), amended 2026-09-01). It
      * was a duplicate of `historyFailed` byte for byte and its only reader was
@@ -1607,6 +1609,14 @@ export const copy = {
       run_in_flight:
         "A task is active. This draft is not sent or queued. Wait for it to finish, or use Stop.",
       no_session: "No session is selected, so this message has nowhere to go.",
+      history_unavailable:
+        "The recorded transcript could not be read. Retry the read before sending.",
+      runtime_unavailable:
+        "This conversation's runtime is not available. Start a new conversation instead of retrying this prompt.",
+      unknown_session:
+        "The runtime no longer knows this conversation. Start a new conversation instead.",
+      images_unsupported:
+        "Images are held on this page only and cannot be sent yet. Remove them to send the text.",
     },
     /**
      * `run_in_flight` disables SEND, never the text box.
@@ -1693,11 +1703,13 @@ export const copy = {
       "Include this page's view and selection in the context the agent is told.",
     plan: "Plan",
     /** The image attachment control and what it says when it holds files. */
-    attachImage: "Attach an image",
+    attachImage: "Hold an image",
     attachImageWhy:
-      "Send a photo, a screenshot or a sketch with this message, by picking a file or pasting one into the box.",
+      "Hold a photo, screenshot or sketch with this draft because images cannot be sent yet.",
     attachedImages: (count: number): string =>
-      count === 1 ? "1 image attached" : `${String(count)} images attached`,
+      count === 1 ? "1 image held" : `${String(count)} images held`,
+    imagesHeld:
+      "Held on this page only; image transport is unavailable, so remove every image before sending text.",
     removeImage: (name: string): string => `Remove ${name}`,
     /** The two chat modes, on one control. `modeling` is the server's word. */
     modeBuild: "Build",
@@ -1715,9 +1727,15 @@ export const copy = {
     contextButton: "Context",
     contextSources: (count: number): string => count === 1 ? "1 context source" : `${count} context sources`,
     effort: "Effort",
+    effortOff: "Off",
+    effortMinimal: "Minimal",
     effortLow: "Low",
     effortMedium: "Medium",
     effortHigh: "High",
+    effortExtraHigh: "Extra high",
+    effortMax: "Maximum",
+    effortEffective: "effective",
+    effortRequested: "requested",
     stopTurn: "Stop current turn",
     sendMessage: "Send message",
     dfmAutoRun: "DFM auto-run",
@@ -1947,6 +1965,7 @@ export const copy = {
         "The redirect goes to an address nothing is listening on, so the browser will show an error. Copy what is in its address bar and paste it here.",
       submit: "Sign in",
       cancel: "Cancel",
+      retry: "Try again",
       waiting: "Waiting for you to finish in the other tab…",
     },
 
@@ -1957,7 +1976,9 @@ export const copy = {
         "The approved-variable list and the borrowed-credential path are prepared outside the workspace and cannot be written from this page.",
       auth_source_linked:
         "This project's credential file is a link into another file. Remove the link before signing in or out.",
+      authorization_cancelled: "That sign-in was cancelled. Start again when you are ready.",
       authorization_expired: "That sign-in is no longer valid. Start it again.",
+      authorization_failed: "The provider did not authorize that sign-in. Start it again.",
       authorization_input_malformed:
         "That does not look like a redirect address or an authorization code.",
       authorization_state_mismatch:

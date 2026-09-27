@@ -50,6 +50,14 @@ from hephaestus.agent_bridge.session_edges import (
     THREAD_UNLINKED,
     SessionEdgeStore,
 )
+from hephaestus.agent_bridge.turn_control import (
+    DEFAULT_DFM_MODE,
+    DEFAULT_INTERACTION_MODE,
+    DEFAULT_THINKING_LEVEL,
+    DfmMode,
+    InteractionMode,
+    ThinkingLevel,
+)
 from opstore.errors import NotFoundError
 
 from .errors import HttpRefusal
@@ -164,6 +172,9 @@ class SessionBackend(Protocol):
         on_event: Callable[[dict[str, Any]], None] | None = ...,
         timeout: float | None = ...,
         expected_model_revision: ModelRevision | None = ...,
+        interaction_mode: InteractionMode = ...,
+        dfm_mode: DfmMode = ...,
+        thinking_level: ThinkingLevel = ...,
     ) -> PromptResult: ...
 
     def cancel(self, run_id: str) -> None: ...
@@ -329,10 +340,19 @@ class PendingQuestions:
         serving process has no stdin to prompt on.
         """
 
-        def answer(params: dict[str, Any]) -> Any:
-            return self.ask(session_id, params)
+        registry = self
 
-        return answer
+        class Answerer:
+            def __call__(self, params: dict[str, Any]) -> Any:
+                return registry.ask(session_id, params)
+
+            def abandon_run(self, run_id: str) -> int:
+                return registry.abandon_run(run_id)
+
+        # BridgeRuntime uses ``abandon_run`` only after a durable process-loss
+        # terminal. Plain CLI/scripted callables remain valid and simply have no
+        # suspension registry to release.
+        return Answerer()
 
     def ask(self, session_id: str, params: dict[str, Any], *, timeout: float | None = None) -> Any:
         """Suspend until someone answers; return the selection.
@@ -809,6 +829,9 @@ class WorkspaceSessions:
         context: str | None = None,
         include_events: bool = True,
         expected_model_revision: ModelRevision | None = None,
+        interaction_mode: InteractionMode = DEFAULT_INTERACTION_MODE,
+        dfm_mode: DfmMode = DEFAULT_DFM_MODE,
+        thinking_level: ThinkingLevel = DEFAULT_THINKING_LEVEL,
     ) -> dict[str, Any]:
         """One prompt turn, blocking, projected onto the wire.
 
@@ -854,6 +877,9 @@ class WorkspaceSessions:
             context=context,
             answerer=self.questions.answerer(session_id),
             expected_model_revision=expected_model_revision,
+            interaction_mode=interaction_mode,
+            dfm_mode=dfm_mode,
+            thinking_level=thinking_level,
         )
         # What the turn EMITTED, not what survived: the backend's own buffer is
         # bounded by the same key (J-http-limits-4's memory half), so
@@ -873,6 +899,9 @@ class WorkspaceSessions:
             "session_id": session_id,
             "run_id": result.run_id,
             "run_status": result.status,
+            # Pi's value after capability clamping, not the requested preference.
+            # ``None`` names a legacy sidecar that did not report the fact.
+            "effective_thinking_level": result.effective_thinking_level,
             "events": kept,
             # Named absences, both of them: a client that asked for no events
             # must be able to tell that from a turn that emitted none, and a

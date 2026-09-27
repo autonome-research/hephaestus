@@ -147,6 +147,7 @@ import {
   createSession,
   sendPrompt,
   type DfmMode,
+  type EffectiveThinkingLevel,
   type InteractionMode,
   type ProfileCapability,
   type ThinkingLevel,
@@ -190,8 +191,16 @@ import styles from "./Composer.module.css";
 export const COMPOSER_STATES = ["idle", "sending", "running", "disabled"] as const;
 export type ComposerState = (typeof COMPOSER_STATES)[number];
 
-/** §7A.10's closed `data-disabled-reason` vocabulary. `null` when enabled. */
-export const DISABLED_REASONS = ["agent_unavailable", "run_in_flight", "no_session"] as const;
+/** Closed `data-disabled-reason` vocabulary. `null` when enabled. */
+export const DISABLED_REASONS = [
+  "agent_unavailable",
+  "run_in_flight",
+  "no_session",
+  "history_unavailable",
+  "runtime_unavailable",
+  "unknown_session",
+  "images_unsupported",
+] as const;
 export type DisabledReason = (typeof DISABLED_REASONS)[number];
 
 /** §7A.10's `data-send-state`. `unknown` is §7A.5's honest failure. */
@@ -209,6 +218,11 @@ export interface ComposerProps {
   readonly attach: AttachProjection | null;
   /** `true` when the session routes are refusing `agent_unavailable`. */
   readonly agentUnavailable: boolean;
+  /** An authoritative selected-session refusal, independent of transport state. */
+  readonly promptBlock?: {
+    readonly reason: "history_unavailable" | "runtime_unavailable" | "unknown_session";
+    readonly message: string;
+  } | null | undefined;
   /** Legacy transport hint for sending/running chrome; NOT a Stop authority. */
   readonly liveRunId: string | null;
   /** Legacy transport hint. A known authoritative run can be stopped offline. */
@@ -332,11 +346,17 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       phase: "refused", reason: attempt.reason ?? "", message: attempt.reason ?? "",
       data: { session_id: attempt.holderSession, run_id: attempt.holderRun },
     } : { phase: "idle" };
-  // Held images (2026-09-20). They live in the composer because a cancelled
-  // message must leave nothing behind; see `ImageAttach.tsx` for why they are
-  // collected but not yet put on the wire.
-  const [images, setImages] = useState<readonly HeldImage[]>([]);
-  useRevokeOnUnmount(images);
+  // Held images are keyed by session just like drafts. Switching tabs must
+  // neither carry an image into another conversation nor discard the original
+  // conversation's held intent.
+  const imageOwner = sessionId ?? "";
+  const [imagesBySession, setImagesBySession] = useState<Readonly<Record<string, readonly HeldImage[]>>>({});
+  const images = imagesBySession[imageOwner] ?? [];
+  const setImages = useCallback((next: readonly HeldImage[]) => {
+    setImagesBySession((current) => ({ ...current, [imageOwner]: next }));
+  }, [imageOwner]);
+  const allImages = useMemo(() => Object.values(imagesBySession).flat(), [imagesBySession]);
+  useRevokeOnUnmount(allImages);
   const dropped = conversation.contextDropped;
   const added = conversation.contextAdded;
   const [controls, setControls] = useState<{
@@ -344,9 +364,11 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     readonly interactionMode: InteractionMode;
     readonly dfmMode: DfmMode;
     readonly thinkingLevel: ThinkingLevel;
-  }>({ sessionId, interactionMode: "modeling", dfmMode: "off", thinkingLevel: "medium" });
+    readonly effectiveThinkingLevel: EffectiveThinkingLevel | null;
+  }>({ sessionId, interactionMode: "modeling", dfmMode: "off", thinkingLevel: "medium", effectiveThinkingLevel: null });
   const turnControls = useMemo(() => controls.sessionId === sessionId ? controls
-    : { sessionId, interactionMode: "modeling" as const, dfmMode: "off" as const, thinkingLevel: "medium" as const }, [controls, sessionId]);
+    : { sessionId, interactionMode: "modeling" as const, dfmMode: "off" as const,
+      thinkingLevel: "medium" as const, effectiveThinkingLevel: null }, [controls, sessionId]);
   const updateControls = (patch: Partial<typeof turnControls>) => {
     setControls({ ...turnControls, ...patch, sessionId });
   };
@@ -409,20 +431,19 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 
   // -- the two closed vocabularies (§7A.10) -------------------------------
   //
-  // Ordered most-specific first, and every branch is a fact the SERVER stated:
-  // `agent_unavailable` is the refusal `GET /sessions` returned, `run_in_flight`
-  // is the 409 a previous submit received (with the holding ids in its payload),
-  // and `no_session` is this tab's own emptiness. Nothing here is inferred from
-  // watching the stream — a client that guessed "a run looks live" would be
-  // disabling on a derivation the server never made.
+  // Ordered most-specific first. Runtime/history/session blocks come from the
+  // parent's authoritative reads; held images come from this form's exact local
+  // list. Disconnected transport alone remains intentionally absent.
   const refusedRunInFlight = post.phase === "refused" && post.reason === "run_in_flight";
   const disabledReason: DisabledReason | null = agentUnavailable
     ? "agent_unavailable"
-    : sessionId === null
+    : props.promptBlock?.reason ?? (sessionId === null
       ? "no_session"
       : turn.runId !== null
         ? "run_in_flight"
-        : null;
+        : images.length > 0
+          ? "images_unsupported"
+          : null);
 
   const composerState: ComposerState =
     disabledReason !== null || (!turn.canSend && post.phase !== "sending")
@@ -546,6 +567,12 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       })
         .then((document) => {
           setPost({ phase: "idle" });
+          if (document.effective_thinking_level !== undefined
+            && document.effective_thinking_level !== null) {
+            setControls((current) => current.sessionId === sid
+              ? { ...current, effectiveThinkingLevel: document.effective_thinking_level ?? null }
+              : current);
+          }
           conversationStore.response(sid, document);
           sessionPromptStore.remember(sid, opening);
           props.onRuntimeFault?.(null);
@@ -680,7 +707,9 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       && (turn.runId !== null || sending || post.phase === "unknown")
       ? `${turn.status}. ${copy.composer.nextDraftHint}`
     : disabledReason !== null
-      ? copy.composer.disabled[disabledReason]
+      ? props.promptBlock?.reason === disabledReason
+        ? props.promptBlock.message
+        : copy.composer.disabled[disabledReason]
       : conversation.modelPending || conversation.model?.state === "changing"
         ? copy.models.changing
       : conversation.modelChecking || conversation.model?.state !== "ready"
@@ -703,7 +732,9 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const unavailableReasonId = useId();
   const sendDescribes = disabledReason === "agent_unavailable";
   const sendHint =
-    !turn.canSend || agentUnavailable ? copy.composer.sendHintBusy : copy.composer.sendHint;
+    !turn.canSend || (disabledReason !== null && disabledReason !== "no_session")
+      ? copy.composer.sendHintBusy
+      : copy.composer.sendHint;
 
   // Enter sends; `stream/composerGate.ts` decides which keystroke that is.
   //
@@ -867,7 +898,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
             const held = imagesFromTransfer(event.clipboardData);
             if (held.length === 0) return;
             event.preventDefault();
-            setImages((was) => [...was, ...held]);
+            setImages([...images, ...held]);
           }}
           onDragOver={(event) => {
             if ([...event.dataTransfer.types].includes("Files")) event.preventDefault();
@@ -876,7 +907,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
             const held = imagesFromTransfer(event.dataTransfer);
             if (held.length === 0) return;
             event.preventDefault();
-            setImages((was) => [...was, ...held]);
+            setImages([...images, ...held]);
           }}
         >
           <TextInput
@@ -893,7 +924,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
             className={styles["grow"]}
             data-composer-input=""
           />
-          <ImageStrip images={images} onChange={setImages} />
+          <ImageStrip images={images} onChange={setImages} sessionId={sessionId} />
         </div>
         {/* The message box's own bottom row (2026-09-20). The two settings that
             change what THIS message means — model/effort and Plan — sit at the
@@ -906,7 +937,8 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           <div className={styles["shellBarLeading"]}>
             <ModelPicker key={sessionId ?? "new"} sessionId={sessionId}
               effort={turnControls.thinkingLevel}
-              onEffort={(thinkingLevel) => updateControls({ thinkingLevel })} />
+              effectiveEffort={turnControls.effectiveThinkingLevel}
+              onEffort={(thinkingLevel) => updateControls({ thinkingLevel, effectiveThinkingLevel: null })} />
             {/* The view toggle says which way it is set IN THE GLYPH
                 (2026-09-20). It was one `view` icon whose only off-state
                 signal was the pressed fill, which is state by colour alone
