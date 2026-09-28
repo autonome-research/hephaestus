@@ -49,7 +49,7 @@ import { WorkspaceError } from "../../../api/client";
 import { copy } from "../../../copy";
 import { useBuild } from "../../../api/queries";
 import { useWorkspace, workspaceStore } from "../../../state/react";
-import { NoWebglError, ViewportEngine, type CameraSnapshot } from "../../../viewport/engine";
+import { NoWebglError, ViewportEngine } from "../../../viewport/engine";
 import { plateOwnsWell as plateOwnsWellFor, parseSectionPlane } from "../../../viewport/section";
 import { installViewportHandle } from "../../../viewport/testHook";
 import { cameraPoseStore } from "../../../state/cameraPose";
@@ -258,7 +258,7 @@ export function Viewport(): React.JSX.Element {
   const engineRef = useRef<ViewportEngine | null>(null);
   const indexRef = useRef<SolidIndex | null>(null);
   const loadedRefRef = useRef<string | null>(null);
-  const retryCameraRef = useRef<{ artifactRef: string; camera: CameraSnapshot } | null>(null);
+  const retryArtifactRef = useRef<string | null>(null);
   // What the engine last framed to: the view **and** whether explode was
   // engaged, because the server frames those two states to different extents
   // (`scene.ts::boundsAt`). §5.5's orbit snapshot writes a *name* for a camera
@@ -269,10 +269,8 @@ export function Viewport(): React.JSX.Element {
   const framingKey = `${view}|${explodeT > 0 ? "exploded" : "collapsed"}`;
   const retryGlb = useCallback((): void => {
     if (artifactRef === null) return;
-    const engine = engineRef.current;
-    retryCameraRef.current = engine !== null && loadedRefRef.current !== null
-      ? { artifactRef, camera: engine.cameraSnapshot() }
-      : null;
+    // Remember ownership, not a camera snapshot: later camera actions win.
+    retryArtifactRef.current = loadedRefRef.current !== null ? artifactRef : null;
     // The retry control is replaced by the canvas/loading state. Hand focus to
     // the stable viewport surface before starting the read rather than letting
     // it fall back to the document body.
@@ -280,7 +278,7 @@ export function Viewport(): React.JSX.Element {
     refetchGlb();
   }, [artifactRef, refetchGlb]);
   useEffect(() => {
-    if (retryCameraRef.current?.artifactRef !== artifactRef) retryCameraRef.current = null;
+    if (retryArtifactRef.current !== artifactRef) retryArtifactRef.current = null;
   }, [artifactRef]);
   const [engineReady, setEngineReady] = useState(false);
   // The engine as *state* as well as a ref. Its one consumer was `AxisTriad`,
@@ -472,15 +470,19 @@ export function Viewport(): React.JSX.Element {
         loadedRefRef.current = loadedRef;
         setLoadedIntoScene(loadedRef);
         setBounds(engine.boundsBox());
-        engine.setExplode(explodeT);
+        const live = workspaceStore.getSnapshot();
+        engine.setExplode(live.explode_t);
         engine.setHidden(hidden);
-        engine.frame(view, explodeT > 0);
-        const retryCamera = retryCameraRef.current;
-        if (retryCamera?.artifactRef === loadedRef) {
-          engine.restoreCamera(retryCamera.camera);
-          retryCameraRef.current = null;
+        if (retryArtifactRef.current === loadedRef) {
+          engine.frame(live.view, live.explode_t > 0, { preserveCamera: true });
+          retryArtifactRef.current = null;
+          // Preservation did not apply new navigation. Keep the acknowledged
+          // key so a view/explode change queued before this callback still
+          // reaches the camera effect; already-applied or held intent stays put.
+        } else {
+          engine.frame(live.view, live.explode_t > 0);
+          framedRef.current = `${live.view}|${live.explode_t > 0 ? "exploded" : "collapsed"}`;
         }
-        framedRef.current = framingKey;
       })
       .catch((error: unknown) => {
         if (ownsLoad()) setLoadFailure({ artifactRef: loadedRef, message: String(error) });
@@ -488,9 +490,9 @@ export function Viewport(): React.JSX.Element {
     return () => {
       cancelled = true;
     };
-    // `explodeT`/`hidden`/`view` are seeded from their current values on load and
-    // then owned by the three effects below; listing them here would reload the
-    // GLB on every slider tick.
+    // Camera/explode intent is read at completion, not from this async closure.
+    // `hidden` is seeded on load and then owned by its effect below; listing it
+    // here would reload the GLB on every visibility change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bytes, geometry, loadedRef, artifactRef, engineReady]);
 

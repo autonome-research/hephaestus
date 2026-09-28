@@ -331,20 +331,39 @@ export class ViewportEngine {
    * when explode engages or disengages — never between two non-zero `t` values,
    * so no drag re-fits the camera.
    */
-  frame(view: string, exploded: boolean): void {
-    const bounds = exploded ? this.explodedBounds : this.bounds;
+  frame(view: string, exploded: boolean, { preserveCamera = false } = {}): void {
+    // A transport retry refreshes scene metadata, not camera navigation. Keep
+    // the LIVE fit intent (including its actual view/full-explode bound), or
+    // the live held camera and any gesture still settling. A click-time camera
+    // snapshot would overwrite actions made while the replacement was loading.
+    const intent = preserveCamera && this.fit !== null ? this.fit : { view, exploded };
+    const bounds = intent.exploded ? this.explodedBounds : this.bounds;
     if (bounds === null || bounds.isEmpty()) return;
-    const framing = framingFor(bounds, view, this.aspect());
+    const framing = framingFor(bounds, intent.view, this.aspect());
     if (framing === null) return;
-    // An explicit view/Fit supersedes any sub-pixel inertia from the previous
-    // gesture. Finish it against the old pose before writing the new framing.
-    this.flushControlsDamping();
     this.framing = framing;
-    this.fit = { view, exploded };
-    this.applyCurrentFraming(framing);
-    this.controls.target.set(framing.target[0], framing.target[1], framing.target[2]);
-    this.alignControlsUp();
-    this.controls.update();
+    if (preserveCamera) {
+      // Refresh depth coverage for the replacement around the retained eye,
+      // not the temporary named-view eye. Perspective is owned by render's
+      // holdDepthRange; orthographic depth does not affect its held extents.
+      if (this.ortho) {
+        const depth = bounds.getCenter(new Vector3()).sub(this.camera.position)
+          .dot(this.camera.getWorldDirection(new Vector3()));
+        const radius = bounds.getSize(new Vector3()).length() / 2;
+        this.orthoCamera.near = Math.max(depth - radius - 1, 0.01);
+        this.orthoCamera.far = Math.max(this.orthoCamera.near + 1, depth + radius + 1);
+        this.orthoCamera.updateProjectionMatrix();
+      }
+    } else {
+      // An explicit view/Fit supersedes any sub-pixel inertia from the previous
+      // gesture. Finish it against the old pose before writing the new framing.
+      this.flushControlsDamping();
+      this.fit = { view, exploded };
+      this.applyCurrentFraming(framing);
+      this.controls.target.set(framing.target[0], framing.target[1], framing.target[2]);
+      this.alignControlsUp();
+      this.controls.update();
+    }
     // §3.11.5's grid is stepped off the span this framing just fixed — the same
     // number `GridReadout` prints — so it is rebuilt exactly when that number
     // changes and at no other time. §5.2's "framed once and held" therefore
@@ -519,8 +538,17 @@ export class ViewportEngine {
       // `applyPerspectiveFraming`, which now derives the distance from the
       // fov — the two chased each other until the fov saturated at 180° and
       // `scale()` returned 2.8e7. A perspective camera is re-fitted by
-      // re-applying the framing, which is the line below.
-      if (!this.ortho) applyPerspectiveFraming(this.perspCamera, fitted);
+      // re-applying the extent along the LIVE ray. After retry the new bounds
+      // may have a different centre; resize must not aim at that centre while
+      // OrbitControls still owns the retained target.
+      if (!this.ortho) {
+        applyPerspectiveFraming(this.perspCamera, {
+          ...fitted,
+          eye: this.perspCamera.position.toArray(),
+          target: this.controls.target.toArray(),
+          up: this.perspCamera.up.toArray(),
+        });
+      }
       this.rebuildGrid();
     }
     // Held mode keeps the actual vertical extent/zoom, not an old fit's scale.
@@ -647,46 +675,6 @@ export class ViewportEngine {
           }
         : null,
     };
-  }
-
-  /**
-   * Restore a held operator camera after replacement geometry has been framed.
-   *
-   * A transient GLB retry still needs the normal frame call to establish the
-   * new scene's bounds, depth range and grid. The retry is not camera
-   * navigation, though, so the caller snapshots the live orbit/pan/zoom first
-   * and restores it here after that frame. Marking the result non-fit prevents
-   * a later resize from silently reapplying the temporary framing.
-   */
-  restoreCamera(snapshot: CameraSnapshot): void {
-    const projection = this.ortho ? "orthographic" : "perspective";
-    if (snapshot.projection !== projection) return;
-    this.zoomPending = 1;
-    this.interacting = false;
-    this.camera.position.fromArray([...snapshot.eye]);
-    this.camera.up.fromArray([...snapshot.up]);
-    this.controls.target.fromArray([...snapshot.target]);
-    if (this.camera === this.orthoCamera) {
-      this.orthoCamera.zoom = snapshot.zoom;
-      if (snapshot.frustum !== null) {
-        this.orthoCamera.left = snapshot.frustum.left;
-        this.orthoCamera.right = snapshot.frustum.right;
-        this.orthoCamera.top = snapshot.frustum.top;
-        this.orthoCamera.bottom = snapshot.frustum.bottom;
-      }
-      this.orthoCamera.updateProjectionMatrix();
-    }
-    this.camera.lookAt(this.controls.target);
-    this.alignControlsUp();
-    this.controls.update();
-    // OrbitControls may introduce sub-ulp position changes while synchronising
-    // its spherical state. Reapply the authoritative snapshot afterwards.
-    this.camera.position.fromArray([...snapshot.eye]);
-    this.camera.up.fromArray([...snapshot.up]);
-    this.controls.target.fromArray([...snapshot.target]);
-    this.camera.lookAt(this.controls.target);
-    this.fit = null;
-    this.render();
   }
 
   /**

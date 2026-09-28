@@ -1,7 +1,8 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
-import { Box3, OrthographicCamera, Vector3 } from 'three';
+import { Box3, BoxGeometry, Group, Mesh, MeshStandardMaterial, OrthographicCamera, Vector3 } from 'three';
+import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import type { PerspectiveCamera, Vector2 } from 'three';
 import type * as Three from 'three';
 import type { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -17,7 +18,7 @@ vi.mock('three', async importOriginal => {
   } };
 });
 // Test-only inspection of engine internals; no mutable browser hook is shipped.
-type Internals = { bounds: Box3; camera: OrthographicCamera | PerspectiveCamera; controls: OrbitControls };
+type Internals = { bounds: Box3; explodedBounds: Box3; camera: OrthographicCamera | PerspectiveCamera; controls: OrbitControls };
 
 type CameraFrame = { right: Vector3; up: Vector3; away: Vector3 };
 function cameraFrame(live: Internals): CameraFrame {
@@ -122,17 +123,196 @@ describe("camera restoration after a transient geometry retry", () => {
         const held = engine.cameraSnapshot();
         expect(held.fit).toBe(false);
 
-        // A successful replacement establishes fresh scene framing first. The
-        // retry path then restores the operator-owned camera byte for byte.
+        // A successful replacement establishes fresh scene metadata without
+        // navigating away from the operator-owned camera, even temporarily.
         live.bounds = new Box3(new Vector3(-120, -45, -15), new Vector3(120, 45, 15));
-        engine.frame("+X", false);
-        expect(engine.cameraSnapshot()).not.toEqual(held);
-        engine.restoreCamera(held);
+        const frames: unknown[] = [];
+        engine.onFrame(() => frames.push(engine.cameraSnapshot()));
+        engine.frame("+X", false, { preserveCamera: true });
+        expect(frames).toEqual([held]);
         expect(engine.cameraSnapshot()).toEqual(held);
       } finally {
         engine.dispose();
         canvas.remove();
       }
+    });
+  }
+});
+
+describe("retry keeps live camera intent", () => {
+  for (const fit of [true, false]) it(`stale A completion cannot mutate B's scene or camera (${fit})`, async () => {
+    const canvas = document.createElement("canvas"); document.body.append(canvas);
+    const engine = new ViewportEngine(canvas, { onCameraSettled: () => undefined });
+    const live = engine as unknown as Internals;
+    const payload = () => {
+      const scene = new Group();
+      const mesh = new Mesh(new BoxGeometry(120, 50, 20), new MeshStandardMaterial());
+      scene.add(mesh);
+      return { scene, parser: { associations: new Map([[mesh, { meshes: 0 }]]) } } as unknown as GLTF;
+    };
+    const documents = [payload(), payload(), payload()];
+    let releaseA!: (gltf: GLTF) => void;
+    const parse = vi.spyOn(GLTFLoader.prototype, "parseAsync")
+      .mockResolvedValueOnce(documents[0]!)
+      .mockImplementationOnce(() => new Promise<GLTF>((resolve) => { releaseA = resolve; }))
+      .mockResolvedValueOnce(documents[2]!);
+    const geometry = { mesh_count: 1, solids: [{ mesh_index: 0, solid_index: 7, label: "fixture", explode_offset: [40, 0, 0] as const, primitive_count: 1 }] };
+    try {
+      await engine.load(new ArrayBuffer(0), geometry);
+      engine.frame("+Z", false);
+      if (!fit) {
+        live.controls.dispatchEvent({ type: "start" });
+        live.camera.position.add(new Vector3(8, 6, 4));
+        live.controls.target.add(new Vector3(3, 2, 1));
+        live.camera.zoom = 1.7;
+        live.controls.update(); live.controls.dispatchEvent({ type: "end" });
+      }
+      const before = engine.cameraSnapshot();
+      expect(before.fit).toBe(fit);
+      let owner = "A";
+      const a = engine.load(new ArrayBuffer(0), geometry, () => owner === "A");
+      owner = "B";
+      const b = await engine.load(new ArrayBuffer(0), geometry, () => owner === "B");
+      engine.frame("+X", false, { preserveCamera: true });
+      expect(engine.cameraSnapshot()).toEqual(before);
+      const bounds = engine.boundsBox();
+      releaseA(documents[1]!);
+      expect(await a).toBeNull();
+      expect(engine.solidIndex()).toBe(b);
+      expect(engine.boundsBox()).toEqual(bounds);
+      expect(engine.cameraSnapshot()).toEqual(before);
+      engine.resize(400, 600);
+      expect(engine.cameraSnapshot().fit).toBe(fit);
+      if (!fit) expect(engine.scale()).toBe(before.scale);
+    } finally {
+      engine.dispose(); canvas.remove(); parse.mockRestore();
+      for (const gltf of documents) gltf.scene.traverse((object) => {
+        if (object instanceof Mesh) {
+          object.geometry.dispose();
+          if (object.material instanceof MeshStandardMaterial) object.material.dispose();
+        }
+      });
+    }
+  });
+
+  for (const ortho of [true, false]) it(`keeps later projection/resize and pending wheel motion (${ortho})`, () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    const drain = () => {
+      for (let count = 0; frames.length > 0 && count < 400; count += 1) frames.shift()!(count * 16);
+      expect(frames).toHaveLength(0);
+    };
+    const canvases = [document.createElement("canvas"), document.createElement("canvas")];
+    const engines = canvases.map((canvas) => {
+      document.body.append(canvas);
+      const engine = new ViewportEngine(canvas, { onCameraSettled: () => undefined });
+      (engine as unknown as Internals).bounds = new Box3(new Vector3(-60, -25, -10), new Vector3(60, 25, 10));
+      engine.frame("iso", false); engine.setOrtho(ortho);
+      return engine;
+    });
+    try {
+      drain();
+      for (const engine of engines) {
+        engine.setOrtho(!ortho);
+        engine.resize(640, 480);
+        engine.canvas.dispatchEvent(new WheelEvent("wheel", { deltaY: -140 }));
+      }
+      const [retried, control] = engines as [ViewportEngine, ViewportEngine];
+      const before = retried.cameraSnapshot();
+      retried.frame("+X", false, { preserveCamera: true });
+      expect(retried.cameraSnapshot()).toEqual(before);
+      drain();
+      expect(retried.cameraSnapshot()).toEqual(control.cameraSnapshot());
+      expect(retried.cameraSnapshot()).not.toEqual(before);
+      expect(retried.cameraSnapshot().fit).toBe(false);
+      for (const engine of engines) engine.resize(400, 480);
+      expect(retried.cameraSnapshot()).toEqual(control.cameraSnapshot());
+    } finally {
+      for (const engine of engines) engine.dispose();
+      for (const canvas of canvases) canvas.remove();
+    }
+  });
+
+  for (const ortho of [true, false]) for (const exploded of [false, true]) for (const fit of [true, false]) {
+    it(`keeps ${fit ? "Fit" : "held"}, its real bounds/view, resize and projection (${ortho}, ${exploded})`, () => {
+      const canvas = document.createElement("canvas"); document.body.append(canvas);
+      const settled = vi.fn();
+      const engine = new ViewportEngine(canvas, { onCameraSettled: settled });
+      const live = engine as unknown as Internals;
+      try {
+        live.bounds = new Box3(new Vector3(-60, -25, -10), new Vector3(60, 25, 10));
+        live.explodedBounds = new Box3(new Vector3(-240, -35, -20), new Vector3(240, 35, 20));
+        engine.resize(800, 600);
+        engine.setOrtho(ortho);
+        engine.frame("+Z", exploded);
+        if (!fit) {
+          live.controls.dispatchEvent({ type: "start" });
+          live.camera.position.add(new Vector3(19, -11, 7));
+          live.controls.target.add(new Vector3(6, 4, -3));
+          live.camera.zoom = 1.65;
+          live.controls.update();
+          live.controls.dispatchEvent({ type: "end" });
+        }
+        const before = engine.cameraSnapshot();
+        expect(before.fit).toBe(fit);
+        settled.mockClear();
+        // The replacement has different extents. A transport retry must not
+        // navigate, nor infer Fit's view/explode intent from a rounded UI name.
+        const shift = new Vector3(45, -30, 20);
+        live.bounds = new Box3(new Vector3(-120, -45, -15), new Vector3(120, 45, 15)).translate(shift);
+        live.explodedBounds = new Box3(new Vector3(-480, -55, -25), new Vector3(480, 55, 25)).translate(shift);
+        engine.frame("+X", !exploded, { preserveCamera: true });
+        expect(engine.cameraSnapshot()).toEqual(before);
+        if (ortho) {
+          // Depth must cover the replacement from the RETAINED eye, rather
+          // than the farther-away eye a temporary replacement fit would use.
+          const bounds = (fit ? exploded : !exploded) ? live.explodedBounds : live.bounds;
+          const depth = bounds.getCenter(new Vector3()).sub(live.camera.position)
+            .dot(live.camera.getWorldDirection(new Vector3()));
+          const radius = bounds.getSize(new Vector3()).length() / 2;
+          expect(live.camera.near).toBeLessThanOrEqual(Math.max(depth - radius, 0.01));
+          expect(live.camera.far).toBeGreaterThan(depth + radius);
+        }
+        for (const width of [400, 950]) {
+          engine.resize(width, 600);
+          const resized = engine.cameraSnapshot();
+          expect(resized.fit).toBe(fit);
+          expect(resized.zoom).toBe(before.zoom);
+          expect(resized.target).toEqual(before.target);
+          expect(resized.up).toEqual(before.up);
+          if (!fit || ortho) expect(resized.eye).toEqual(before.eye);
+          if (!fit) expect(resized.scale).toBe(before.scale);
+          else {
+            const framing = framingFor(exploded ? live.explodedBounds : live.bounds, "+Z", width / 600)!;
+            if (ortho) expect(resized.scale).toBeCloseTo(framing.halfHeight, 10);
+            else {
+              const expected = new Vector3(...framing.eye).sub(new Vector3(...framing.target)).normalize();
+              const actual = new Vector3(...resized.eye).sub(new Vector3(...resized.target)).normalize();
+              expect(actual.distanceTo(expected)).toBeLessThan(1e-12);
+              expect(resized.scale).toBeCloseTo(Math.hypot(framing.halfWidth, framing.halfHeight) * 1.05 / Math.cos(35 * Math.PI / 360), 10);
+            }
+          }
+        }
+        const beforeToggle = engine.cameraSnapshot();
+        engine.setOrtho(!ortho);
+        expect(engine.cameraSnapshot().fit).toBe(fit);
+        if (fit) {
+          const switched = engine.cameraSnapshot();
+          // Explicitly framing the actual intent must produce the same result
+          // as projection navigation after retry (not +X / !exploded).
+          engine.frame("+Z", exploded);
+          expect(engine.cameraSnapshot()).toEqual(switched);
+        } else {
+          const switched = engine.cameraSnapshot();
+          expect(switched.target).toEqual(beforeToggle.target);
+          expect(switched.up).toEqual(beforeToggle.up);
+          const beforeDirection = new Vector3(...beforeToggle.eye).sub(new Vector3(...beforeToggle.target)).normalize();
+          const afterDirection = new Vector3(...switched.eye).sub(new Vector3(...switched.target)).normalize();
+          expect(afterDirection.distanceTo(beforeDirection)).toBeLessThan(1e-12);
+        }
+        expect(settled).not.toHaveBeenCalled();
+      } finally { engine.dispose(); canvas.remove(); }
     });
   }
 });
