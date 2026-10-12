@@ -8,8 +8,8 @@
 > published digest, strict runtime discovery, and real macOS evidence land
 > atomically, secure production behavior remains unchanged.
 
-The image built here contains the two production workers and the private
-capability-probe worker. Its entry point accepts only `manifest` or the
+The image built here contains build/DFM, the private containment probe and the
+fixed stdlib-only storage-control worker. Its entry point accepts only `manifest` or the
 versioned `run` grammar documented by `oci_launcher`; it has no default worker
 command. Select a published image by immutable OCI digest, never by a floating
 tag.
@@ -95,11 +95,15 @@ following in addition to launcher rlimits:
 - private PID and UTS namespaces, verified by PID 1 and the fixed container
   hostname rather than assumed from runtime defaults;
 - the invoking Darwin user's numeric, non-root UID and GID, passed explicitly
-  and verified by the live probe (so the worker can write the private host-owned
-  staging bind without making it world-writable);
+  and verified by the live probe; writable tmpfs ownership is assigned explicitly;
 - cgroup memory, CPU, and PID limits;
-- a bounded tmpfs mounted at `/tmp`;
-- exactly one writable bind, the per-job staging directory at `/work`;
+- separate `/work` and `/tmp` tmpfs mounts with kernel aggregate byte and inode
+  limits, mode 0700 and `nosuid,nodev,noexec`;
+- exactly one bind: a bounded per-job snapshot at `/inputs`, **read-only**;
+- no host output mount; bounded framed stdout artifact export before worker exit;
+- explicit logging driver `none`, empty log path and disabled healthchecks;
+- a fixed read-only 4 KiB / one-inode tmpfs masking Docker's otherwise writable
+  `/dev/mqueue`, plus actual denial checks for other runtime storage surfaces;
 - no project-root bind, no container socket, and no other host paths;
 - stdin, stdout, and stderr as the only protocol channels;
 - host-enforced wall-clock termination of the entire container;
@@ -107,6 +111,26 @@ following in addition to launcher rlimits:
 - rejection of every non-empty `SandboxSpec.ro_binds` value; and
 - exact conversion of `SandboxSpec.worker_args` through
   `approved_module_for_worker_args()` with no argument passthrough.
+
+Active versions are **profile 5 / protocol 3 / manifest 4**, transfer version 1.
+Manifest 4 adds mandatory trusted pre-workload installed-source/package/version
+inventory, bound by the host to the daemon-attested immutable image and platform.
+Assembly, publication and freshness use this identity, never host CAD metadata.
+See `docs/macos-execution-identity.md`. Images must be rebuilt; prior manifest-3
+storage reports do not certify the updated source/image.
+Profile 5 requires no-follow file type and Linux null character-device identity
+(major 1 / minor 3) for runtime proc masks. Explicit ENOENT is allowed only when
+mountinfo also has no mount at that path; missing evidence or writable regular-file,
+directory, symlink or wrong-device substitutions refuse. Profile-4 images/probes
+are rejected; protocol and transfer grammars are unchanged. Manifest-3 images
+also refuse because their execution inventory is missing.
+The manifest declares exact ordinary/control storage policies and the RO mqueue
+mask. Older images and launcher grammars refuse. A `run` invocation contains only
+version, approved module, CPU/AS/NPROC limits, fixed policy name and transfer nonce.
+The launcher verifies storage and execs the worker with a fixed transport-mode
+argument; worker PID 1 semantics are unchanged. Native build/DFM protocols remain
+native. Input declarations include mesh/point facts sidecars; admission precedes
+host staging writes. CAD import conversion isolation is not newly certified.
 
 Host launch clears the inherited container environment before the launcher
 starts, because ambient loader variables take effect before Python can apply
@@ -116,12 +140,62 @@ worker environment. Capability probing must reject root execution,
 missing required limits, unlimited limits, limits looser than requested, or
 any protocol/envelope mismatch.
 
-The backend uses create followed by attached start, reads worker status from
-container inspection rather than the attach client, bounds both output streams,
-and treats unconfirmed kill/removal as `sandbox_denied`. Execution is gated on
-a passing live report cached only by that backend instance. Its probe is strict:
-missing raw rlimit, capability, mount, network, or cgroup evidence is a failure,
-not an inferred success.
+The backend uses create, effective image/security/mount/log configuration
+inspection, then attached start. Stdout is streamed into confined bounded host
+collection, not accumulated as an artifact-sized buffer. Only complete framing,
+EOF, result/artifact agreement, matching build source-map JSON, typed successful
+non-OOM terminal state and confirmed removal permit exclusive artifact installation.
+Existing assembly/publication gates still apply; transfer hashes are not CAD
+provenance. Every post-submission exit has an unconditional owned-container cleanup guard,
+including grouped receiver/host-unlink failures. Unconfirmed cleanup retains the
+known ID and poisons reuse; ambiguous creates remain separately fail-closed.
+The standalone backend remains a synchronous foundation. Explicit local
+`SupervisedOciBackend` injection now adds a fresh per-operation owner, durable
+pre-create names/acknowledged IDs, delivered cancellation, bounded client/group
+reaping and exact-resource recovery. Unknown requests or abrupt owner/client
+death retain pending state; absence polling never settles them. See
+`docs/macos-supervision.md` for supported interfaces and cleanup limits. Host
+regressions are not live cancellation acceptance.
+Execution is gated on a passing report cached only by that backend instance and
+its fixed storage policy. Missing raw limits, capacities/inodes, writable-surface,
+network or cgroup evidence fails, never implies success.
+
+Local native ARM64 storage evidence and reproduction are documented in
+`docs/macos-staging.md`. The tested small policy is 8 MiB/128 inodes at `/work`
+and 2 MiB/64 inodes at `/tmp`. Ordinary defaults are 128 MiB/2048 and 16 MiB/256;
+those are ceilings, not demonstrated CAD capacity. Real stdlib storage controls
+passed under profile 4; the stricter profile-5 review follow-up and its fresh
+source-specific results are tracked in `docs/macos-staging.md`. Fresh manifest-4 image/storage and real supervised CAD/provenance/cancellation,
+timeout/failure acceptance now pass in the experimental executor CLI. See
+`docs/macos-executor-stage.md` and `docs/macos-progress.md` for source-specific
+reports and reruns. The final independent local experimental run is recorded at
+`dist/macos-final-reviewed-20261012T152211Z/report.json` (`accepted:true`),
+including all 13 required stages: rendering, authenticated native Chrome, actual
+HTTP build and cleanup among them. Its source manifests still matched current
+files at PR packaging; exact hashes and limitations are in progress. Generated
+reports remain local, not shipped in Git. Repeat runs must use fresh reports and
+sessions rather than reuse a recorded pass. Production discovery is unchanged. The interrupted `...review-final` stays failed and its
+unresolved parent-reap record permanently refuses reuse; see progress for exact
+reconciliation. Root pyright and the native HTTP-boundary fixture remain failed,
+not waived or evidence of full-suite success.
+
+## Separate experimental renderer
+
+`docker/renderer/Dockerfile` now provides a separate native ARM64 Mesa/EGL image
+with an independently locked native/render dependency closure. It reuses this
+source-wheel recipe and the containment/transfer/supervisor mechanisms, **not**
+the CAD worker allowlist or image entrypoint. The executor remains renderer-free
+and rejects render workloads; the renderer rejects build/DFM/arbitrary modules.
+Shared profile 5/protocol 3/manifest 4/transfer 1 are unchanged; disjoint renderer
+manifest extension 1 / API 2 are exact-validated (API 1 now refuses). See `docs/macos-renderer.md`
+for live results, limits and explicit injection. Fresh core inspection, exact
+selection, measured kernel sections and linked GLB publication now pass through
+`_mint_bundle`. Scoped renderer-stage success alone is not workspace/browser
+acceptance; the later complete report above exercises both. Tested explicit local
+launch/use/stop instructions are in `docs/macos-workspace.md`. Browser picking
+proves raycast/context resolution, not the absent selection-popover workflow;
+open dimension findings are retained, so build success is not design-requirement
+completion. Production stays closed.
 
 ## Still blocked: production activation
 

@@ -19,6 +19,24 @@ no MCP. The operator UI (`heph serve --web`) is optional. MCP is optional.
 | [registry-pinning.md](registry-pinning.md) | Pinning skills/parts/materials/DFM registries |
 | [leaderboard.md](leaderboard.md) | Generated model leaderboard |
 
+## Experimental macOS development
+
+These guides describe explicit local ARM64 OCI injection, **not production
+backend activation or full-product macOS support**. Start with the workspace
+instructions; the progress log retains both failed and accepted local evidence.
+
+| Page | What it covers |
+|---|---|
+| [macos-workspace.md](macos-workspace.md) | Prepare, start, use and stop the native Mac workspace |
+| [macos-feasibility.md](macos-feasibility.md) | Architecture, independent local acceptance and limitations |
+| [macos-progress.md](macos-progress.md) | Source-specific evidence and historical review results |
+| [macos-executor-stage.md](macos-executor-stage.md) | Experimental executor integration and live controls |
+| [macos-network-diagnostic.md](macos-network-diagnostic.md) | LinuxKit network evidence and fail-closed controls |
+| [macos-staging.md](macos-staging.md) | Byte/inode quotas, bounded input and framed artifact transfer |
+| [macos-supervision.md](macos-supervision.md) | Durable ownership, cancellation and exact cleanup |
+| [macos-execution-identity.md](macos-execution-identity.md) | Image-bound provenance, publication and freshness |
+| [macos-renderer.md](macos-renderer.md) | Isolated Mesa/EGL rendering, selection and GLB linkage |
+
 Contributing: [CONTRIBUTING.md](../CONTRIBUTING.md), and
 [registry-contributions.md](registry-contributions.md) for a DFM pack,
 material, part generator, or skill.
