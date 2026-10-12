@@ -1009,7 +1009,10 @@ class CheckRegistry:
 
 def _build123d_exports() -> dict[str, object]:
     import build123d
+    from hephaestus.core.executor.vocabulary import BUILD123D_EXPORTS
 
+    if frozenset(build123d.__all__) != BUILD123D_EXPORTS:
+        raise ValidationError("build123d parser/runtime vocabulary mismatch", kind="contract")
     return {name: getattr(build123d, name) for name in build123d.__all__}
 
 
@@ -1110,27 +1113,15 @@ if TYPE_CHECKING:
 
 @cache
 def _selector_names() -> frozenset[str]:
-    """Assemble :data:`SELECTOR_NAMES` once, on first use.
+    """The pinned declared vocabulary; indexing must not import a host CAD kernel.
 
-    A parse-time rule cannot cite a runtime dict, so ``PARTS_STORE.md`` §2.1
-    requires a *declared constant*; deriving it from :func:`build_namespace`
-    rather than transcribing 200 names is what keeps one definition of the
-    namespace instead of two that could disagree (mission rule 6).
-
-    Computed lazily and cached because the derivation imports ``build123d``
-    (~2.3 s), and ``_parts.py`` — which reaches this through
-    ``parse_generator`` — indexes registries on the CLI and server startup
-    paths. A registry with no ``interface`` region pays nothing at all.
+    Actual worker namespace construction checks exact parity with this public
+    wheel-derived declaration. The host cannot broaden its selector authority
+    by installing a different kernel, and no unavailable dependency is guessed.
     """
-    namespace = build_namespace(
-        param_state=ParamState(scope="part", overrides={}),
-        hc=HcNamespace({}),
-        part=PartOutput(),
-        tag_registry=_selector_tag_registry(),
-        check_registry=CheckRegistry(),
-        imports=ImportRegistry({}),
-    )
-    return injected_names(namespace) - _DUNDERS - _HANDLES
+    from hephaestus.core.executor.vocabulary import BUILD123D_EXPORTS
+
+    return (BUILD123D_EXPORTS | {"math", "Param"}) - _DUNDERS - _HANDLES
 
 
 def _selector_tag_registry() -> TagRegistry:

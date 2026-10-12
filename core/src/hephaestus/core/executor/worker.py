@@ -29,7 +29,7 @@ import io
 import json
 import sys
 import traceback
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, cast
@@ -336,7 +336,9 @@ def _globals_failure(exc: BaseException, globals_source: str) -> dict[str, JSONV
     }
 
 
-def execute_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
+def execute_job(
+    job: Mapping[str, JSONValue], *, input_dir: Path | None = None
+) -> dict[str, JSONValue]:
     """Run one build job and return the worker result record (pure protocol)."""
     part_name = str(job.get("part", "part"))
     script = str(job.get("script", ""))
@@ -399,7 +401,7 @@ def execute_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
     tag_registry = TagRegistry()
     check_registry = CheckRegistry()
     imports = ImportRegistry(
-        staged_paths(out_dir, _string_map(job.get("imports"), "imports")),
+        staged_paths(out_dir, _string_map(job.get("imports"), "imports"), input_dir=input_dir),
         failures=_string_map(job.get("import_errors"), "import_errors"),
     )
     namespace = build_namespace(
@@ -782,10 +784,14 @@ def _raise_bad_geometry(value: object) -> None:
     )
 
 
-def main() -> int:
+def main(*, oci_args: Sequence[str] = ()) -> int:
     """Protocol entrypoint: JSON job on stdin, JSON result on stdout."""
+    from hephaestus.core.executor.sandbox.oci_protocol import BUILD_WORKER
+    from hephaestus.core.executor.sandbox.oci_worker_io import worker_io
+
+    transport = worker_io(oci_args)
     try:
-        job_raw: object = json.loads(sys.stdin.read())
+        job_raw: object = transport.read() if transport else json.loads(sys.stdin.read())
     except json.JSONDecodeError as exc:
         print(f"worker: invalid job JSON: {exc}", file=sys.stderr)
         return 2
@@ -793,15 +799,20 @@ def main() -> int:
         print("worker: job must be a JSON object", file=sys.stderr)
         return 2
     try:
-        result = execute_job(job_raw)
+        if transport and job_raw.get("out_dir") != ".":
+            raise ValueError("OCI output path must be fixed")
+        result = execute_job(job_raw, input_dir=Path("/inputs") if transport else None)
     except Exception as exc:
         print(f"worker: internal error: {type(exc).__name__}: {exc}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         return 3
-    json.dump(result, sys.stdout)
-    sys.stdout.flush()
+    if transport:
+        transport.send(result, BUILD_WORKER)
+    else:
+        json.dump(result, sys.stdout)
+        sys.stdout.flush()
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(oci_args=sys.argv[1:]))

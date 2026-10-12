@@ -8,7 +8,6 @@ intentionally outside this module and remains disabled.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import errno
 import json
@@ -23,14 +22,17 @@ import stat
 import subprocess
 import tempfile
 import time
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import BinaryIO, Literal, Protocol, cast
 
-from hephaestus.core.errors import SandboxDeniedError
+from hephaestus.core.errors import SandboxDeniedError, ValidationError
+from hephaestus.core.executor.cancellation import Cancellation, ExecutionCancelled
+from hephaestus.core.executor.identity import ExecutionIdentity
 from hephaestus.core.executor.sandbox.base import CapabilityReport, ExecOutcome, SandboxSpec
+from hephaestus.core.executor.sandbox.oci_network import network_isolated
 from hephaestus.core.executor.sandbox.oci_protocol import (
     EXEC_STDERR_MAX_BYTES,
     EXEC_STDOUT_MAX_BYTES,
@@ -39,7 +41,6 @@ from hephaestus.core.executor.sandbox.oci_protocol import (
     MAX_NPROC,
     OCI_HOSTNAME,
     OCI_PROFILE_VERSION,
-    OCI_TMPFS_BYTES,
     PROBE_STDERR_MAX_BYTES,
     PROBE_STDOUT_MAX_BYTES,
     PROBE_WORKER,
@@ -48,6 +49,11 @@ from hephaestus.core.executor.sandbox.oci_protocol import (
     approved_module_for_worker_args,
     manifest_bytes,
 )
+
+from .oci_ownership import OwnershipJournal
+from .oci_storage import storage_valid
+from .oci_storage_policy import MQUEUE_MASK, REQUEST_MAX_BYTES, STORAGE_POLICIES, StoragePolicy
+from .oci_transfer import FileRecord, Receiver, encode, snapshot_inputs, unique_json
 
 RuntimeKind = Literal["docker", "podman"]
 OciPlatform = Literal["linux/amd64", "linux/arm64"]
@@ -213,11 +219,21 @@ class OciTransport(Protocol):
         stdout_limit: int,
         stderr_limit: int,
         env: Mapping[str, str],
+        stdout_consumer: Callable[[bytes], None] | None = None,
     ) -> TransportResult: ...
 
 
 class SubprocessTransport:
     """Bounded, shell-free subprocess transport used by the real backend."""
+
+    def __init__(
+        self,
+        *,
+        cancellation: Cancellation | None = None,
+        ownership: OwnershipJournal | None = None,
+    ) -> None:
+        self.cancellation = cancellation
+        self.ownership = ownership
 
     def run(
         self,
@@ -228,22 +244,40 @@ class SubprocessTransport:
         stdout_limit: int,
         stderr_limit: int,
         env: Mapping[str, str],
+        stdout_consumer: Callable[[bytes], None] | None = None,
     ) -> TransportResult:
         if timeout <= 0:
             raise TransportTimeout()
-        proc = subprocess.Popen(
-            tuple(argv),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            close_fds=True,
-            start_new_session=True,
-            env=dict(env),
-        )
+        if self.cancellation is not None and "start" in argv:
+            self.cancellation.check()
         selector = selectors.DefaultSelector()
+        try:
+            if self.ownership is not None:
+                self.ownership.launching_client()
+            proc = subprocess.Popen(
+                tuple(argv),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                close_fds=True,
+                start_new_session=True,
+                env=dict(env),
+            )
+        except BaseException:
+            selector.close()
+            raise
         stdout = bytearray()
         stderr = bytearray()
+        stdout_count = 0
         try:
+            if self.ownership is not None:
+                self.ownership.client(proc.pid, reaped=False)
+            # Never interrupt create on user cancellation: receive its bounded
+            # response first. Cleanup/control calls must also remain deliverable.
+            control = self.cancellation if "start" in argv else None
+            if control is not None:
+                control.check()
+                selector.register(control.reader, selectors.EVENT_READ, "cancel")
             assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
             for stream in (proc.stdin, proc.stdout, proc.stderr):
                 os.set_blocking(stream.fileno(), False)
@@ -255,7 +289,7 @@ class SubprocessTransport:
                 proc.stdin.close()
             sent = 0
             deadline = time.monotonic() + timeout
-            while selector.get_map():
+            while any(key.data != "cancel" for key in selector.get_map().values()):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TransportTimeout(bytes(stdout), bytes(stderr))
@@ -263,6 +297,9 @@ class SubprocessTransport:
                 if not events:
                     raise TransportTimeout(bytes(stdout), bytes(stderr))
                 for key, _ in events:
+                    if key.data == "cancel":
+                        assert control is not None
+                        control.check()
                     stream = cast(BinaryIO, key.fileobj)
                     channel = cast(str, key.data)
                     if channel == "stdin":
@@ -285,6 +322,12 @@ class SubprocessTransport:
                         selector.unregister(stream)
                         stream.close()
                         continue
+                    if channel == "stdout" and stdout_consumer is not None:
+                        stdout_count += len(chunk)
+                        if stdout_count > stdout_limit:
+                            raise TransportOutputLimit("stdout")
+                        stdout_consumer(chunk)
+                        continue
                     target, limit = (
                         (stdout, stdout_limit) if channel == "stdout" else (stderr, stderr_limit)
                     )
@@ -295,21 +338,36 @@ class SubprocessTransport:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TransportTimeout(bytes(stdout), bytes(stderr))
-            try:
-                proc.wait(timeout=remaining)
-            except subprocess.TimeoutExpired as exc:
-                raise TransportTimeout(bytes(stdout), bytes(stderr)) from exc
-            return TransportResult(int(proc.returncode), bytes(stdout), bytes(stderr))
-        except BaseException:
-            with contextlib.suppress(ProcessLookupError):
+            # Keep the group leader waitable (unreaped) until descendants have
+            # been signalled: after wait()/poll(), its PID could be reused.
+            while os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+                if control is not None:
+                    control.check()
+                if time.monotonic() >= deadline:
+                    raise TransportTimeout(bytes(stdout), bytes(stderr))
+                time.sleep(0.01)
+            # Darwin returns EPERM for a group containing only its zombie
+            # leader. Reap then independently require group absence; an actual
+            # unkillable descendant still refuses in _reap_group.
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(proc.pid, signal.SIGKILL)
-            if proc.poll() is None:
+            proc.wait(timeout=5.0)
+            self._reap_group(proc)
+            return TransportResult(int(proc.returncode), bytes(stdout), bytes(stderr))
+        except BaseException as exc:
+            if isinstance(exc, ExecutionCancelled):
+                exc.stdout, exc.stderr = bytes(stdout), bytes(stderr)
+            if proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                # Do not poll/reap before signalling this owned process group.
                 with contextlib.suppress(OSError):
                     proc.kill()
             try:
                 proc.wait(timeout=5.0)
             except subprocess.TimeoutExpired as exc:
                 raise TransportReapError("OCI runtime client could not be reaped") from exc
+            self._reap_group(proc)
             raise
         finally:
             selector.close()
@@ -317,6 +375,23 @@ class SubprocessTransport:
                 if stream is not None:
                     with contextlib.suppress(OSError):
                         stream.close()
+
+    def _reap_group(self, proc: subprocess.Popen[bytes]) -> None:
+        # Signalling happened before wait/reap while PID ownership was certain.
+        # This check may refuse on surviving zombies, but never kills a reused PID.
+        deadline = time.monotonic() + 2.0
+        while True:
+            try:
+                os.killpg(proc.pid, 0)
+            except ProcessLookupError:
+                break
+            except PermissionError:
+                pass  # Darwin zombie-only group; NOT proof of absence.
+            if time.monotonic() >= deadline:
+                raise TransportReapError("OCI client process group remains")
+            time.sleep(0.01)
+        if self.ownership is not None:
+            self.ownership.client(proc.pid, reaped=True)
 
 
 def _unsafe_argument(value: str) -> bool:
@@ -339,6 +414,25 @@ def _runtime_prefix(runtime: OciRuntime) -> list[str]:
     return list(runtime.prefix)
 
 
+def _profile_modules(profile: str) -> frozenset[str]:
+    if profile == "executor":
+        from .oci_protocol import APPROVED_MODULES
+
+        return APPROVED_MODULES
+    if profile == "renderer":
+        from hephaestus.core.render.oci_protocol import RENDER_MODULES
+
+        return RENDER_MODULES
+    raise ValueError("unsupported OCI runtime profile")
+
+
+def _profile_entrypoint(profile: str) -> tuple[str, ...]:
+    _profile_modules(profile)
+    if profile == "renderer":
+        return (*AUDITED_ENTRYPOINT[:-1], "hephaestus.core.render.oci_launcher")
+    return AUDITED_ENTRYPOINT
+
+
 def build_create_argv(
     runtime: OciRuntime,
     image_ref: str,
@@ -348,12 +442,19 @@ def build_create_argv(
     *,
     identity: OciIdentity,
     command_tail: Sequence[str] | None = None,
+    input_snapshot: Path | None = None,
+    storage_policy: str = "ordinary",
+    nonce: str = "0" * 64,
+    runtime_profile: str = "executor",
 ) -> tuple[str, ...]:
     """Build the canonical create argv.  This function starts no process."""
     image = str(parse_immutable_image_ref(image_ref))
     _validated_name(container_name)
-    module, directory = _preflight(spec, image_ref, platform)
-    source = directory.path
+    module, directory = _preflight(spec, image_ref, platform, runtime_profile)
+    if storage_policy not in STORAGE_POLICIES or re.fullmatch(r"[0-9a-f]{64}", nonce) is None:
+        raise ValueError("invalid storage invocation")
+    policy = STORAGE_POLICIES[storage_policy]
+    source = input_snapshot or directory.path / "inputs"
     source_text = str(source)
     if _unsafe_mount_path(source_text):
         raise ValueError("rw_out_dir cannot be represented safely as an OCI mount")
@@ -370,6 +471,8 @@ def build_create_argv(
             str(spec.rlimits.cpu_seconds),
             str(spec.rlimits.address_space_bytes),
             str(spec.rlimits.nproc),
+            storage_policy,
+            nonce,
         )
     )
     return (
@@ -384,6 +487,8 @@ def build_create_argv(
         "--user",
         f"{identity.uid}:{identity.gid}",
         "--read-only",
+        "--log-driver=none",
+        "--no-healthcheck",
         "--network",
         "none",
         "--ipc",
@@ -403,13 +508,24 @@ def build_create_argv(
         "--cpus",
         "1.0",
         "--tmpfs",
-        f"/tmp:rw,nosuid,nodev,noexec,size={OCI_TMPFS_BYTES},mode=1777",
+        "/tmp:" + _tmpfs_options(policy.tmp_bytes, policy.tmp_inodes, identity),
+        "--tmpfs",
+        "/work:" + _tmpfs_options(policy.work_bytes, policy.work_inodes, identity),
+        "--tmpfs",
+        "/dev/mqueue:" + MQUEUE_MASK,
         "--mount",
-        f"type=bind,source={source_text},destination=/work,bind-propagation=rprivate",
+        f"type=bind,source={source_text},destination=/inputs,readonly,bind-propagation=rprivate",
         "--workdir",
         "/work",
         image,
         *tail,
+    )
+
+
+def _tmpfs_options(size: int, inodes: int, identity: OciIdentity) -> str:
+    return (
+        f"rw,nosuid,nodev,noexec,size={size},nr_inodes={inodes},"
+        f"mode=0700,uid={identity.uid},gid={identity.gid}"
     )
 
 
@@ -454,13 +570,27 @@ class _DirectoryIdentity:
     inode: int
 
 
-def _preflight(spec: SandboxSpec, image_ref: str, platform: str) -> tuple[str, _DirectoryIdentity]:
+def _preflight(
+    spec: SandboxSpec, image_ref: str, platform: str, runtime_profile: str = "executor"
+) -> tuple[str, _DirectoryIdentity]:
     parse_immutable_image_ref(image_ref)
     if platform not in {"linux/amd64", "linux/arm64"}:
         raise ValueError("unsupported OCI platform")
+    if runtime_profile == "renderer" and platform != "linux/arm64":
+        raise ValueError("experimental renderer requires native linux/arm64")
     if spec.ro_binds:
         raise ValueError("OCI backend refuses all ro_binds")
-    module = approved_module_for_worker_args(spec.worker_args)
+    if runtime_profile == "executor":
+        module = approved_module_for_worker_args(spec.worker_args)
+    else:
+        modules = _profile_modules(runtime_profile)
+        if (
+            len(spec.worker_args) != 2
+            or spec.worker_args[0] != "-m"
+            or spec.worker_args[1] not in modules
+        ):
+            raise ValueError("worker arguments are not allowlisted for profile")
+        module = spec.worker_args[1]
     limits = (
         (spec.rlimits.cpu_seconds, MAX_CPU_SECONDS),
         (spec.rlimits.address_space_bytes, MAX_ADDRESS_SPACE_BYTES),
@@ -469,6 +599,10 @@ def _preflight(spec: SandboxSpec, image_ref: str, platform: str) -> tuple[str, _
     if any(type(value) is not int or not 1 <= value <= maximum for value, maximum in limits):
         raise ValueError("OCI resource limit is outside protocol bounds")
     wall = spec.wall_clock_s
+    if runtime_profile == "renderer" and (
+        spec.rlimits.address_space_bytes > 2 * 1024**3 or spec.rlimits.nproc > 256 or wall > 180
+    ):
+        raise ValueError("experimental renderer resource envelope exceeded")
     if isinstance(wall, bool) or not math.isfinite(wall) or wall <= 0:
         raise ValueError("OCI wall clock must be finite and positive")
     stated = Path(spec.rw_out_dir)
@@ -526,26 +660,120 @@ class OciBackend:
         *,
         identity: OciIdentity | None = None,
         transport: OciTransport | None = None,
+        storage_policy: str = "ordinary",
+        ownership: OwnershipJournal | None = None,
+        cancellation: Cancellation | None = None,
+        scratch_dir: Path | None = None,
+        runtime_profile: str = "executor",
     ) -> None:
+        _profile_modules(runtime_profile)
+        if runtime_profile == "renderer" and platform != "linux/arm64":
+            raise ValueError("experimental renderer requires native linux/arm64")
+        self._runtime_profile = runtime_profile
+        if storage_policy not in STORAGE_POLICIES:
+            raise ValueError("unsupported storage policy")
+        self.ownership = ownership
+        self.cancellation = cancellation
+        self.scratch_dir = scratch_dir
+        if ownership is not None:
+            ownership.require_clean()
+        self._storage_policy_name = storage_policy
+        self._image_id: str | None = None
+        self._execution_identity: ExecutionIdentity | None = None
+        self.last_effective_config: dict[str, object] | None = None
+        self.last_input_records: dict[str, FileRecord] = {}
+        self.last_transfer_records: dict[str, FileRecord] = {}
+        self.last_transfer_observation: dict[str, object] = {}
+        self.last_container_id: str | None = None
+        self.last_probe_response: object = None
         self.runtime = runtime
         self.image_ref = str(parse_immutable_image_ref(image_ref))
         self.platform: OciPlatform = platform_for_machine() if platform is None else platform
         self.identity = identity or OciIdentity(os.geteuid(), os.getegid())
         if self.platform not in {"linux/amd64", "linux/arm64"}:
             raise ValueError("unsupported OCI platform")
-        self._transport: OciTransport = transport or SubprocessTransport()
+        self._transport: OciTransport = transport or SubprocessTransport(
+            cancellation=cancellation, ownership=ownership
+        )
         self._passing_report: CapabilityReport | None = None
+        # Diagnostic ownership only, NOT a durable external supervisor. Unsettled
+        # creates poison this instance even after best-effort name cleanup.
+        self._unsettled_creates: set[str] = set()
+        self._unreconciled_containers: set[str] = set()
+        self._last_terminal_state: Mapping[str, object] | None = None
+
+    @property
+    def storage_policy_name(self) -> str:
+        return self._storage_policy_name
+
+    @property
+    def storage_policy(self) -> StoragePolicy:
+        return STORAGE_POLICIES[self._storage_policy_name]
+
+    @property
+    def unsettled_creates(self) -> frozenset[str]:
+        return frozenset(self._unsettled_creates)
+
+    @property
+    def unreconciled_containers(self) -> frozenset[str]:
+        return frozenset(self._unreconciled_containers)
+
+    @property
+    def last_terminal_state(self) -> Mapping[str, object] | None:
+        """Validated state retained before removal; not durable live evidence."""
+        return self._last_terminal_state
 
     @property
     def name(self) -> str:
         return f"oci-{self.runtime.kind}"
+
+    def execution_identity(self) -> ExecutionIdentity:
+        """Identity from this instance's trusted manifest run, not workload stdout.
+
+        No daemon call on freshness reads. Poisoned ownership or configuration
+        changes invalidate the cached capability rather than silently reusing it.
+        """
+        identity = self._execution_identity
+        report = self._passing_report
+        if (
+            report is None
+            or not report.available
+            or report.backend != self.name
+            or any(report.features.get(name) is not True for name in REQUIRED_OCI_FEATURES)
+            or identity is None
+            or self._unsettled_creates
+            or self._unreconciled_containers
+            or identity.to_json()["image_ref"] != self.image_ref
+            or identity.to_json()["image_id"] != self._image_id
+            or identity.to_json()["platform"] != self.platform
+        ):
+            raise SandboxDeniedError("trusted OCI execution identity unavailable or changed")
+        return identity
 
     def probe(self) -> CapabilityReport:
         """Validate runtime/image and run fresh manifest and containment containers.
 
         Only a passing report is retained, and only in this backend instance.
         """
+        if self._unsettled_creates:
+            return CapabilityReport(
+                backend=self.name,
+                available=False,
+                reason="OCI create settlement requires external supervision",
+                features={},
+            )
+        if self._unreconciled_containers:
+            return CapabilityReport(
+                backend=self.name,
+                available=False,
+                reason="OCI owned-container reconciliation required",
+                features={},
+            )
         if self._passing_report is not None:
+            try:
+                self.execution_identity()
+            except SandboxDeniedError as exc:
+                return CapabilityReport(backend=self.name, available=False, reason=str(exc))
             return self._passing_report
         try:
             self._validate_runtime()
@@ -553,12 +781,15 @@ class OciBackend:
             features = self._live_probe()
             if any(features.get(name) is not True for name in REQUIRED_OCI_FEATURES):
                 raise SandboxDeniedError("live OCI containment evidence is incomplete")
+            if self._execution_identity is None or self._image_id is None:
+                raise SandboxDeniedError("live OCI execution identity is incomplete")
         except (
             OSError,
             TypeError,
             UnicodeError,
             ValueError,
             SandboxDeniedError,
+            ValidationError,
             TransportTimeout,
             TransportOutputLimit,
         ) as exc:
@@ -581,10 +812,12 @@ class OciBackend:
     def execute(self, spec: SandboxSpec, stdin_payload: bytes) -> ExecOutcome:
         # Preflight deliberately runs before checking the capability gate, so a
         # malformed request never reaches (or depends on) transport state.
-        _preflight(spec, self.image_ref, self.platform)
+        _preflight(spec, self.image_ref, self.platform, self._runtime_profile)
         report = self._passing_report
         if (
             report is None
+            or self._unreconciled_containers
+            or self._unsettled_creates
             or not report.available
             or report.backend != self.name
             or any(report.features.get(name) is not True for name in REQUIRED_OCI_FEATURES)
@@ -593,7 +826,11 @@ class OciBackend:
                 "sandbox_unavailable: OCI execution requires a passing probe "
                 "on this backend instance"
             )
-        return self._run_container(spec, stdin_payload)
+        identity = self.execution_identity()
+        outcome = self._run_container(spec, stdin_payload)
+        if self.execution_identity() != identity:
+            raise SandboxDeniedError("OCI execution identity changed during execution")
+        return replace(outcome, execution_identity=identity)
 
     def _call(
         self,
@@ -603,6 +840,7 @@ class OciBackend:
         timeout: float = 10.0,
         stdout_limit: int = PROBE_STDOUT_MAX_BYTES,
         stderr_limit: int = PROBE_STDERR_MAX_BYTES,
+        stdout_consumer: Callable[[bytes], None] | None = None,
     ) -> TransportResult:
         return self._transport.run(
             argv,
@@ -611,6 +849,7 @@ class OciBackend:
             stdout_limit=stdout_limit,
             stderr_limit=stderr_limit,
             env=RUNTIME_ENV,
+            **({"stdout_consumer": stdout_consumer} if stdout_consumer is not None else {}),
         )
 
     def _validate_runtime(self) -> None:
@@ -724,7 +963,7 @@ class OciBackend:
             or architecture not in aliases[expected_arch]
         ):
             raise SandboxDeniedError("executor image platform mismatch")
-        if config.get("Entrypoint") != list(AUDITED_ENTRYPOINT):
+        if config.get("Entrypoint") != list(_profile_entrypoint(self._runtime_profile)):
             raise SandboxDeniedError("executor image entrypoint mismatch")
         if config.get("Cmd") not in (None, []):
             raise SandboxDeniedError("executor image command must be empty")
@@ -735,15 +974,112 @@ class OciBackend:
             image_env = []
         if image_env != list(AUDITED_IMAGE_ENV):
             raise SandboxDeniedError("executor image environment mismatch")
+        if config.get("Healthcheck") not in (None, {"Test": ["NONE"]}):
+            raise SandboxDeniedError("executor image declares a healthcheck")
         image_id = value.get("Id")
         if (
             not isinstance(image_id, str)
             or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id, re.ASCII) is None
         ):
             raise SandboxDeniedError("executor image identity is missing")
+        self._image_id = image_id
+
+    def _validate_effective(
+        self,
+        container_id: str,
+        spec: SandboxSpec,
+        inputs: Path,
+        argv: Sequence[str],
+        *,
+        timeout: float,
+    ) -> None:
+        result = self._call(
+            (*self.runtime.prefix, "inspect", "--format", "{{json .}}", container_id),
+            timeout=timeout,
+        )
+        value = (
+            _json_unique(result.stdout) if result.returncode == 0 and not result.stderr else None
+        )
+        if (
+            not isinstance(value, dict)
+            or self._image_id is None
+            or value.get("Image") != self._image_id
+        ):
+            raise SandboxDeniedError("effective container image mismatch")
+        host, config, mounts = value.get("HostConfig"), value.get("Config"), value.get("Mounts")
+        if (
+            not isinstance(host, dict)
+            or not isinstance(config, dict)
+            or not isinstance(mounts, list)
+        ):
+            raise SandboxDeniedError("effective container config missing")
+        expected = {
+            "ReadonlyRootfs": True,
+            "Privileged": False,
+            "NetworkMode": "none",
+            "IpcMode": "none",
+            "PidMode": "",
+            "UTSMode": "",
+            "Memory": spec.rlimits.address_space_bytes,
+            "MemorySwap": spec.rlimits.address_space_bytes,
+            "PidsLimit": spec.rlimits.nproc,
+            "NanoCpus": 1000000000,
+            "CapDrop": ["ALL"],
+            "LogConfig": {"Type": "none", "Config": {}},
+        }
+        if any(type(host.get(k)) is not type(v) or host[k] != v for k, v in expected.items()):
+            raise SandboxDeniedError("effective resource/security/log configuration mismatch")
+        security = (
+            "no-new-privileges=true" if self.runtime.kind == "docker" else "no-new-privileges"
+        )
+        if host.get("SecurityOpt") != [security] or any(
+            host.get(k) not in (None, [], {})
+            for k in ("CapAdd", "Binds", "Devices", "DeviceRequests", "PortBindings")
+        ):
+            raise SandboxDeniedError("effective container grants extra access")
+        policy = self.storage_policy
+        tmpfs = {
+            "/work": _tmpfs_options(policy.work_bytes, policy.work_inodes, self.identity),
+            "/tmp": _tmpfs_options(policy.tmp_bytes, policy.tmp_inodes, self.identity),
+            "/dev/mqueue": MQUEUE_MASK,
+        }
+        if host.get("Tmpfs") != tmpfs or value.get("LogPath") != "":
+            raise SandboxDeniedError("effective tmpfs/logging mismatch")
+        if (
+            config.get("Entrypoint") != list(_profile_entrypoint(self._runtime_profile))
+            or config.get("Cmd") != list(argv[argv.index(self.image_ref) + 1 :])
+            or config.get("Env") != list(AUDITED_IMAGE_ENV)
+            or config.get("WorkingDir") != "/work"
+            or config.get("User") != f"{self.identity.uid}:{self.identity.gid}"
+            or config.get("Hostname") != OCI_HOSTNAME
+            or config.get("Healthcheck") != {"Test": ["NONE"]}
+            or config.get("Tty") is not False
+            or config.get("OpenStdin") is not True
+        ):
+            raise SandboxDeniedError("effective worker configuration mismatch")
+        if len(mounts) != 1 or not isinstance(mounts[0], dict):
+            raise SandboxDeniedError("unexpected effective mounts")
+        mount = mounts[0]
+        if (
+            any(
+                mount.get(k) != v
+                for k, v in {
+                    "Type": "bind",
+                    "Source": str(inputs),
+                    "Destination": "/inputs",
+                    "RW": False,
+                    "Propagation": "rprivate",
+                }.items()
+            )
+            or type(mount.get("RW")) is not bool
+        ):
+            raise SandboxDeniedError("effective input mount mismatch")
+        self.last_effective_config = value
 
     def _live_probe(self) -> dict[str, bool]:
-        with tempfile.TemporaryDirectory(prefix="heph-oci-probe-") as temporary:
+        with tempfile.TemporaryDirectory(
+            prefix="heph-oci-probe-", dir=self.scratch_dir
+        ) as temporary:
             root = Path(temporary)
             manifest_dir = root / "manifest"
             manifest_dir.mkdir()
@@ -755,13 +1091,9 @@ class OciBackend:
                 stdout_limit=PROBE_STDOUT_MAX_BYTES,
                 stderr_limit=PROBE_STDERR_MAX_BYTES,
             )
-            if (
-                manifest.timed_out
-                or manifest.exit_code != 0
-                or manifest.stderr
-                or manifest.stdout != manifest_bytes()
-            ):
+            if manifest.timed_out or manifest.exit_code != 0 or manifest.stderr:
                 raise SandboxDeniedError("executor manifest verification failed")
+            self._accept_manifest(manifest.stdout)
 
             probe_dir = root / "containment"
             probe_dir.mkdir()
@@ -781,13 +1113,35 @@ class OciBackend:
             if outcome.timed_out or outcome.exit_code != 0 or outcome.stderr:
                 raise SandboxDeniedError("OCI containment probe process failed")
             value = _json_unique(outcome.stdout)
+            self.last_probe_response = value
             return _validate_probe_response(
                 value,
                 nonce,
                 probe_spec,
                 probe_dir,
                 self.identity,
+                self.storage_policy,
             )
+
+    def _accept_manifest(self, payload: bytes) -> None:
+        value = _json_unique(payload)
+        if not isinstance(value, dict):
+            raise SandboxDeniedError("executor manifest verification failed")
+        inventory = value.get("execution_identity")
+        # Exact canonical bytes reject extra fields, old versions and coercions.
+        expected_manifest = manifest_bytes
+        if self._runtime_profile == "renderer":
+            from hephaestus.core.render.oci_protocol import manifest_bytes as render_manifest
+
+            expected_manifest = render_manifest
+        if payload != expected_manifest(inventory) or self._image_id is None:
+            raise SandboxDeniedError("executor manifest verification failed")
+        self._execution_identity = ExecutionIdentity.for_oci(
+            image_ref=self.image_ref,
+            image_id=self._image_id,
+            platform=self.platform,
+            runtime=inventory,
+        )
 
     def _run_container(
         self,
@@ -798,7 +1152,97 @@ class OciBackend:
         stdout_limit: int = EXEC_STDOUT_MAX_BYTES,
         stderr_limit: int = EXEC_STDERR_MAX_BYTES,
     ) -> ExecOutcome:
-        _, directory = _preflight(spec, self.image_ref, self.platform)
+        module, directory = _preflight(spec, self.image_ref, self.platform, self._runtime_profile)
+        if len(stdin_payload) > REQUEST_MAX_BYTES:
+            raise ValueError("request byte limit")
+        if command_tail is None:
+            job = unique_json(stdin_payload)
+            if not isinstance(job, dict):
+                raise ValueError("job must be an object")
+            from .oci_protocol import BUILD_WORKER, DFM_WORKER
+
+            if module in {BUILD_WORKER, DFM_WORKER} and job.get("out_dir") != ".":
+                raise ValueError("OCI output path must be fixed")
+            if module == BUILD_WORKER:
+                imports = job.get("imports", {})
+                if not isinstance(imports, dict) or any(
+                    not isinstance(v, str) or v not in spec.input_files for v in imports.values()
+                ):
+                    raise ValueError("undeclared build input")
+                expected_inputs: set[str] = set()
+                for leaf in imports.values():
+                    if re.fullmatch(r"[0-9a-f]{32}\.(?:brep|hmesh|hpts)", leaf) is None:
+                        raise ValueError("invalid build input name")
+                    expected_inputs.add(leaf)
+                    if leaf.endswith((".hmesh", ".hpts")):
+                        expected_inputs.add(leaf + ".facts")
+                if expected_inputs != set(spec.input_files):
+                    raise ValueError("build input declaration disagrees with job")
+            if module == "hephaestus.core.render.oci_worker":
+                from hephaestus.core.render.oci_protocol import read_request
+
+                request = read_request(stdin_payload)
+                expected = () if request["operation"] == "probe" else ("source.brep",)
+                if spec.input_files != expected:
+                    raise ValueError("renderer input declaration mismatch")
+            if module == DFM_WORKER and (
+                job.get("brep") != "source.brep" or spec.input_files != ("source.brep",)
+            ):
+                raise ValueError("undeclared DFM input")
+        nonce = secrets.token_hex(32)
+        # Same filesystem for exclusive link installation. Host output is NEVER mounted.
+        with tempfile.TemporaryDirectory(
+            prefix=".heph-transfer-", dir=directory.path.parent
+        ) as temporary:
+            root = Path(temporary).resolve(strict=True)
+            inputs, collected = root / "inputs", root / "collected"
+            inputs.mkdir(mode=0o700)
+            collected.mkdir(mode=0o700)
+            self.last_input_records = dict(
+                snapshot_inputs(directory.path, spec.input_files, inputs, self.storage_policy)
+            )
+            with contextlib.ExitStack() as stack:
+                receiver = (
+                    None
+                    if command_tail
+                    else stack.enter_context(
+                        Receiver(collected, nonce, module, self.storage_policy)
+                    )
+                )
+                try:
+                    return self._run_staged(
+                        spec,
+                        stdin_payload,
+                        directory,
+                        inputs,
+                        nonce,
+                        receiver,
+                        command_tail,
+                        stdout_limit,
+                        stderr_limit,
+                    )
+                finally:
+                    if receiver is not None:
+                        self.last_transfer_observation = {
+                            "wire_bytes": receiver.total,
+                            "body_bytes": receiver.body_bytes,
+                            "created_files": list(receiver.created),
+                            "state": receiver.state,
+                            "installed": receiver.installed,
+                        }
+
+    def _run_staged(
+        self,
+        spec: SandboxSpec,
+        stdin_payload: bytes,
+        directory: _DirectoryIdentity,
+        inputs: Path,
+        nonce: str,
+        receiver: Receiver | None,
+        command_tail: Sequence[str] | None,
+        stdout_limit: int,
+        stderr_limit: int,
+    ) -> ExecOutcome:
         name = f"heph-exec-{secrets.token_hex(32)}"
         create_argv = build_create_argv(
             self.runtime,
@@ -808,9 +1252,26 @@ class OciBackend:
             name,
             identity=self.identity,
             command_tail=command_tail,
+            input_snapshot=inputs,
+            storage_policy=self.storage_policy_name,
+            nonce=nonce,
+            runtime_profile=self._runtime_profile,
         )
+        if self._unsettled_creates:
+            raise SandboxDeniedError("OCI create settlement requires external supervision")
+        if self.cancellation is not None:
+            self.cancellation.check()
+        if self.ownership is not None:
+            self.ownership.require_clean()
+            self.ownership.submitted(name)
+        self._last_terminal_state = None
+        self.last_container_id = None
+        self.last_transfer_records = {}
+        self.last_transfer_observation = {}
         deadline = time.monotonic() + float(spec.wall_clock_s)
         container_id: str | None = None
+        reconciled = False
+        self._unsettled_creates.add(name)  # before the daemon can receive create
         try:
             create = self._call(create_argv, timeout=_remaining(deadline))
             if create.returncode != 0 or create.stderr:
@@ -819,18 +1280,48 @@ class OciBackend:
             if len(lines) != 1:
                 raise SandboxDeniedError("runtime returned an ambiguous container id")
             container_id = _validated_container_id(lines[0])
+            if self.ownership is not None:
+                self.ownership.settled(name, container_id)
+            self._unsettled_creates.discard(name)
+            self.last_container_id = container_id
+            if self.cancellation is not None:
+                self.cancellation.check()
+            self._validate_effective(
+                container_id, spec, inputs, create_argv, timeout=_remaining(deadline)
+            )
             if not _same_directory(directory):
                 raise SandboxDeniedError("rw_out_dir changed during container creation")
+            transfer_error: ValueError | None = None
+
+            def consume(chunk: bytes) -> None:
+                nonlocal transfer_error
+                if transfer_error is None:
+                    try:
+                        assert receiver is not None
+                        receiver.feed(chunk)
+                    except ValueError as exc:
+                        transfer_error = exc
+
             try:
                 attached = self._call(
                     build_start_argv(self.runtime, container_id),
                     input=stdin_payload,
                     timeout=_remaining(deadline),
-                    stdout_limit=stdout_limit,
+                    stdout_limit=(
+                        (8 * 1024**2 + 8192)
+                        if receiver and receiver.operation == "hephaestus.core.render.oci_worker"
+                        else (
+                            self.storage_policy.result_bytes
+                            + self.storage_policy.export_bytes
+                            + 8192
+                            if receiver
+                            else stdout_limit
+                        )
+                    ),
                     stderr_limit=stderr_limit,
+                    stdout_consumer=consume if receiver else None,
                 )
             except TransportOutputLimit:
-                self._cleanup(container_id)
                 return ExecOutcome(
                     exit_code=125,
                     stdout=b"",
@@ -838,40 +1329,76 @@ class OciBackend:
                     timed_out=False,
                 )
             except TransportTimeout:
-                self._cleanup(container_id)
                 return ExecOutcome(exit_code=137, stdout=b"", stderr=b"", timed_out=True)
             try:
                 state = self._inspect_present(container_id, timeout=_remaining(deadline))
                 if state["Running"] is not False:
                     raise SandboxDeniedError("attach ended while OCI container was still running")
-                exit_code = state["ExitCode"]
-                if type(exit_code) is not int or not 0 <= exit_code <= 255:
-                    raise SandboxDeniedError("container exit status is invalid")
+                exit_code = cast(int, state["ExitCode"])
+                if state["OOMKilled"] is not False:
+                    raise SandboxDeniedError("OCI worker was OOM-killed")
                 self._remove_and_confirm(container_id)
+                reconciled = True
             except TransportTimeout:
-                self._cleanup(container_id)
                 return ExecOutcome(exit_code=137, stdout=b"", stderr=b"", timed_out=True)
-            return ExecOutcome(exit_code, attached.stdout, attached.stderr, False)
+            result = attached.stdout
+            if receiver:
+                if transfer_error is not None:
+                    raise SandboxDeniedError("OCI artifact transfer rejected") from transfer_error
+                if exit_code != 0:
+                    return ExecOutcome(exit_code, b"", attached.stderr, False)
+                if attached.returncode != 0:
+                    raise SandboxDeniedError("OCI attach client failed")
+                try:
+                    result = receiver.finish()
+                except ValueError as exc:
+                    raise SandboxDeniedError("OCI artifact transfer rejected") from exc
+                if receiver.operation == "hephaestus.core.executor.worker":
+                    from hephaestus.core.executor.artifacts import read_artifact
+
+                    response = unique_json(result)
+                    if "source_map" in receiver.files:
+                        # The host-selected collected leaf is still private, not installed.
+                        raw = read_artifact(inputs.parent / "collected", "source_map.json")
+                        source_map = unique_json(raw)
+                        if (
+                            not isinstance(response, dict)
+                            or not isinstance(response.get("source_map"), dict)
+                            or encode(source_map) != encode(response["source_map"])
+                        ):
+                            raise SandboxDeniedError("OCI source map disagrees with response")
+                if receiver.operation == "hephaestus.core.render.oci_worker":
+                    from hephaestus.core.render.oci_protocol import read_request, validate_response
+
+                    validate_response(result, read_request(stdin_payload))
+                self.last_transfer_records = dict(receiver.files)
+                if self.cancellation is not None:
+                    self.cancellation.check()
+                receiver.install(directory.path)
+                receiver.close()  # drop source links BEFORE caller can publish
+            return ExecOutcome(exit_code, result, attached.stderr, False)
         except (TransportTimeout, subprocess.TimeoutExpired):
-            self._cleanup(container_id or name)
             return ExecOutcome(exit_code=137, stdout=b"", stderr=b"", timed_out=True)
         except TransportOutputLimit:
-            self._cleanup(container_id or name)
             raise SandboxDeniedError("OCI runtime control output exceeded its bound") from None
         except UnicodeDecodeError:
-            self._cleanup(container_id or name)
             raise SandboxDeniedError("runtime returned a non-ASCII container id") from None
         except (OSError, ValueError) as exc:
-            self._cleanup(container_id or name)
             raise SandboxDeniedError("OCI runtime lifecycle failed closed") from exc
-        except SandboxDeniedError:
-            self._cleanup(container_id or name)
-            raise
-        except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
-            # Cancellation must not orphan a container.  Cleanup ambiguity is
-            # intentionally allowed to replace the cancellation fail-closed.
-            self._cleanup(container_id or name)
-            raise
+        finally:
+            # Includes BaseExceptionGroup, receiver abort/unlink failures, client
+            # reap failures and cancellation. Attach-client death is NOT worker
+            # death. Never let an exceptional path bypass owned reconciliation.
+            if not reconciled:
+                try:
+                    self._cleanup(container_id or name)
+                except BaseException:
+                    self._passing_report = None
+                    if container_id is not None:
+                        self._unreconciled_containers.add(container_id)
+                    # Preserve the original failure as exception context; no
+                    # timeout/failure outcome may hide uncertain cleanup.
+                    raise
 
     def _inspect(self, identity: str, *, timeout: float = 5.0) -> dict[str, object] | None:
         result = self._call(build_inspect_argv(self.runtime, identity), timeout=timeout)
@@ -888,10 +1415,16 @@ class OciBackend:
         if result.stderr:
             raise SandboxDeniedError("container inspection produced unexpected diagnostics")
         value = _json_unique(result.stdout)
-        if not isinstance(value, dict) or not {"Running", "ExitCode"}.issubset(value):
+        if not isinstance(value, dict) or not {"Running", "ExitCode", "OOMKilled"}.issubset(value):
             raise SandboxDeniedError("container state response is malformed")
-        if type(value["Running"]) is not bool:
-            raise SandboxDeniedError("container running state is malformed")
+        if type(value["Running"]) is not bool or type(value["OOMKilled"]) is not bool:
+            raise SandboxDeniedError("container running/OOM state is malformed")
+        if type(value["ExitCode"]) is not int or not 0 <= value["ExitCode"] <= 255:
+            raise SandboxDeniedError("container exit status is invalid")
+        if value["Running"] is False:
+            self._last_terminal_state = MappingProxyType(
+                {key: value[key] for key in ("Running", "ExitCode", "OOMKilled")}
+            )
         return value
 
     def _inspect_present(self, identity: str, *, timeout: float = 5.0) -> dict[str, object]:
@@ -906,9 +1439,32 @@ class OciBackend:
             raise SandboxDeniedError("OCI container removal failed")
         if self._inspect(identity) is not None:
             raise SandboxDeniedError("OCI container removal could not be confirmed")
+        self._record_absence(identity)
 
     def _cleanup(self, identity: str) -> None:
-        """Boundedly kill and force-remove, then require confirmed absence."""
+        """Never confuse name absence with settlement of an interrupted create.
+
+        Polling is only best-effort reclamation, not a daemon request barrier.
+        Without an external owner/reconciler this path MUST remain a failure,
+        including when every inspection reports absence.
+        """
+        if _NAME_RE.fullmatch(identity):
+            self._unsettled_creates.add(identity)
+            self._passing_report = None
+            try:
+                for attempt in range(5):
+                    if self._cleanup_known(identity):
+                        break
+                    if attempt < 4:
+                        time.sleep(0.05)
+            finally:
+                raise SandboxDeniedError(
+                    f"OCI create settlement unconfirmed; external supervisor required: {identity}"
+                )
+        self._cleanup_known(identity)
+
+    def _cleanup_known(self, identity: str) -> bool:
+        """Best-effort bounded reclamation; False means absent at first inspect."""
         failure: Exception | None = None
         try:
             state = self._inspect(identity)
@@ -916,7 +1472,8 @@ class OciBackend:
             failure = exc
             state = {}
         if state is None:
-            return
+            self._record_absence(identity)
+            return False
 
         if state.get("Running") is True:
             try:
@@ -934,7 +1491,8 @@ class OciBackend:
                     failure = exc
                     break
                 if observed is None:
-                    return
+                    self._record_absence(identity)
+                    return True
                 state = observed
                 if state.get("Running") is False:
                     break
@@ -952,10 +1510,31 @@ class OciBackend:
             remaining = state
             failure = exc
         if remaining is None:
-            return
+            self._record_absence(identity)
+            return True
         raise SandboxDeniedError(
             "OCI cleanup was ambiguous; container absence was not confirmed"
         ) from failure
+
+    def _record_absence(self, identity: str) -> None:
+        if self.ownership is not None:
+            self.ownership.absent(
+                identity, dict(self._last_terminal_state) if self._last_terminal_state else None
+            )
+
+    def reconcile_owned(self, ownership: OwnershipJournal) -> None:
+        """Explicit recovery; never signal restored host PIDs (they can be reused).
+
+        Known acknowledged creates can be removed/confirmed and reused normally.
+        Unknown daemon requests and unreaped clients remain durable refusals even
+        after a successful best-effort resource removal. No polling settles them.
+        """
+        self.ownership = ownership
+        for name, record in ownership.state["containers"].items():
+            if record["pending"] or not record["absent"]:
+                self._last_terminal_state = None
+                self._cleanup_known(record["id"] or name)
+        ownership.require_clean()
 
 
 def _remaining(deadline: float) -> float:
@@ -972,8 +1551,8 @@ def _probe_spec(path: Path) -> SandboxSpec:
         worker_args=("-m", PROBE_WORKER),
         ro_binds=(),
         rw_out_dir=path,
-        rlimits=Rlimits(MAX_CPU_SECONDS, MAX_ADDRESS_SPACE_BYTES, MAX_NPROC),
-        wall_clock_s=float(MAX_CPU_SECONDS + 30),
+        rlimits=Rlimits(15, 256 * 1024**2, 32),
+        wall_clock_s=30.0,
     )
 
 
@@ -983,6 +1562,7 @@ def _validate_probe_response(
     spec: SandboxSpec,
     probe_dir: Path,
     identity: OciIdentity,
+    storage_policy: StoragePolicy = STORAGE_POLICIES["ordinary"],
 ) -> dict[str, bool]:
     required = {
         "cgroup",
@@ -1004,13 +1584,16 @@ def _validate_probe_response(
         "tmp_capacity_bytes",
         "tmp_write_errno",
         "work_proof",
+        "storage",
     }
     if not isinstance(value, dict) or set(value) != required:
         raise SandboxDeniedError("OCI probe response schema mismatch")
     if (
         value["nonce"] != nonce
         or value["kind"] != "hephaestus_executor_probe"
+        or type(value["protocol_version"]) is not int
         or value["protocol_version"] != PROTOCOL_VERSION
+        or type(value["oci_profile_version"]) is not int
         or value["oci_profile_version"] != OCI_PROFILE_VERSION
     ):
         raise SandboxDeniedError("OCI probe identity mismatch")
@@ -1046,7 +1629,11 @@ def _validate_probe_response(
     limits_ok = isinstance(limits, dict) and set(limits) == {*expected, "RLIMIT_CORE"}
     if limits_ok:
         core = limits["RLIMIT_CORE"]
-        limits_ok = core == [0, 0]
+        limits_ok = (
+            isinstance(core, list)
+            and len(core) == 2
+            and all(type(item) is int and item == 0 for item in core)
+        )
         for key, maximum in expected.items():
             pair = limits[key]
             limits_ok = limits_ok and (
@@ -1066,19 +1653,7 @@ def _validate_probe_response(
             and type(root_write_errno) is int
             and root_write_errno in {errno.EROFS, errno.EACCES}
         )
-        proof_name = value["work_proof"]
-        proof_ok = False
-        if isinstance(proof_name, str) and proof_name == f".heph-oci-probe-{nonce}":
-            proof = probe_dir / proof_name
-            try:
-                info = proof.lstat()
-                proof_ok = (
-                    stat.S_ISREG(info.st_mode)
-                    and not proof.is_symlink()
-                    and proof.read_text("ascii") == nonce
-                )
-            except (OSError, UnicodeError):
-                proof_ok = False
+        proof_ok = value["work_proof"] == nonce
         features["work_writable"] = (
             value["cwd"] == "/work" and _mount_has(work, "/work", "rw") and proof_ok
         )
@@ -1086,22 +1661,13 @@ def _validate_probe_response(
             _mount_has(tmp, "/tmp", "rw", fs_type="tmpfs")
             and all(_mount_option(tmp, option) for option in ("nosuid", "nodev", "noexec"))
             and type(value["tmp_capacity_bytes"]) is int
-            and 0 < value["tmp_capacity_bytes"] <= OCI_TMPFS_BYTES
+            and value["tmp_capacity_bytes"] == storage_policy.tmp_bytes
             and type(value["tmp_write_errno"]) is int
             and value["tmp_write_errno"] == 0
         )
 
-    network = value["network"]
-    connect_errno = network.get("connect_errno") if isinstance(network, dict) else None
-    features["network_isolated"] = (
-        isinstance(network, dict)
-        and set(network) == {"interfaces", "routes", "connect_errno"}
-        and network["interfaces"] == ["lo"]
-        and network["routes"] == []
-        and type(connect_errno) is int
-        and connect_errno
-        in {errno.ENETUNREACH, errno.EHOSTUNREACH, errno.EAFNOSUPPORT, errno.ENETDOWN}
-    )
+    features["storage_quotas"] = storage_valid(value["storage"], storage_policy)
+    features["network_isolated"] = network_isolated(value["network"])
 
     cgroup = value["cgroup"]
     if (

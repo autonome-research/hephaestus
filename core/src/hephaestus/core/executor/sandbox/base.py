@@ -17,7 +17,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from hephaestus.core.executor.identity import ExecutionIdentity
 
 
 @dataclass(frozen=True)
@@ -48,9 +51,11 @@ class SandboxSpec:
     They deliberately contain no host interpreter path, so a backend may use
     its native or image-local Python. ``ro_binds`` are only job-specific host
     inputs; each backend owns the runtime files needed by its interpreter.
-    ``rw_out_dir`` is the host artifact-staging directory. The backend exposes
-    it as the worker's current directory and sole persistent writable output
-    surface. ``rlimits`` bound cpu/memory/processes inside the sandbox;
+    ``rw_out_dir`` is the host artifact collection directory. Native backends
+    expose it as cwd; OCI NEVER mounts it, using quota tmpfs and framed export.
+    ``input_files`` declares fixed leaves under its ``inputs/`` area for OCI's
+    bounded read-only snapshot. Other backends retain their native IO contract.
+    ``rlimits`` bound cpu/memory/processes inside the sandbox;
     ``wall_clock_s`` is the parent-enforced kill deadline.
     """
 
@@ -59,6 +64,7 @@ class SandboxSpec:
     rw_out_dir: Path
     rlimits: Rlimits
     wall_clock_s: float
+    input_files: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.worker_args:
@@ -116,6 +122,8 @@ class ExecOutcome:
     stdout: bytes
     stderr: bytes
     timed_out: bool = False
+    #: Host-owned attestation, never decoded from the script's result JSON.
+    execution_identity: ExecutionIdentity | None = None
 
 
 @runtime_checkable

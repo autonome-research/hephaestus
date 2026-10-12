@@ -428,10 +428,8 @@ def _check_interface_region(
     """
     if not tree.body:
         return ()
-    # Imported here, not at module scope: the derivation imports build123d, and
-    # a registry with no interface region must not pay for it (namespace.py's
-    # `_selector_names`). Importing a declared constant is not executing a
-    # script — the property `_parts.py` preserves is the latter.
+    # A wheel-derived declared vocabulary, also checked by actual workers.
+    # Registry indexing neither executes a generator nor imports host CAD.
     from hephaestus.core.executor.namespace import SELECTOR_NAMES
 
     locals_other_than_root = bound - {root_name}

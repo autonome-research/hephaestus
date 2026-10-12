@@ -38,7 +38,10 @@ import stat as stat_module
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
+
+if TYPE_CHECKING:
+    from hephaestus.core.executor.sandbox.oci_transfer import InputAdmission
 
 from hephaestus.core.errors import ValidationError
 
@@ -711,6 +714,7 @@ def stage_import(
     out_dir: Path,
     kind: ImportKind = "step",
     units: str | None = None,
+    admission: InputAdmission | None = None,
 ) -> Path:
     """Convert ``data`` ONCE and stage it read-only for the worker.
 
@@ -730,7 +734,9 @@ def stage_import(
     the hash names geometry, the sidecar reports history.
     """
     staged = stage_dir(out_dir) / staged_filename(content_hash, kind=kind, units=units)
-    if staged.exists():
+    if admission is not None and len(data) > admission.policy.input_bytes:
+        raise ValueError("raw import byte limit")
+    if staged.exists() and (admission is None or staged.name in admission.names):
         # Content-addressed: two declarations naming the same bytes at the same
         # declared unit (or a retried staging) resolve to the one
         # already-staged, read-only file.
@@ -739,6 +745,12 @@ def stage_import(
         payload, sidecar = _convert_step(data, path=path), None
     else:
         payload, sidecar = _convert_mesh(data, path=path, kind=kind, units=units)
+    if admission is not None:
+        files = {staged.name: payload}
+        if sidecar is not None:
+            files[_facts_filename(staged).name] = sidecar.encode("utf-8")
+        admission.write(staged.parent, files)
+        return staged
     staged.parent.mkdir(parents=True, exist_ok=True)
     staged.write_bytes(payload)
     staged.chmod(0o444)
@@ -800,7 +812,14 @@ def _convert_mesh(
     return canonical.blob, facts_to_json(canonical)
 
 
-def staged_paths(out_dir: Path, staged: Mapping[str, str]) -> dict[str, Path]:
+def staged_paths(
+    out_dir: Path, staged: Mapping[str, str], *, input_dir: Path | None = None
+) -> dict[str, Path]:
     """Resolve a job's ``{import path: staged filename}`` map to absolute paths."""
-    area = stage_dir(out_dir)
+    area = input_dir or stage_dir(out_dir)
+    if input_dir is not None:
+        from hephaestus.core.executor.sandbox.oci_transfer import input_name
+
+        for filename in staged.values():
+            input_name(filename)
     return {name: area / filename for name, filename in staged.items()}

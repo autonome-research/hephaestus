@@ -35,6 +35,8 @@ from hephaestus.core.dfm.types import DfmEvaluation, DfmRuleOutcome, TopologyDes
 from hephaestus.core.errors import HephaestusError, ValidationError
 from hephaestus.core.executor.runner import DEFAULT_RLIMITS
 from hephaestus.core.executor.sandbox.base import ExecBackend, Rlimits, SandboxSpec
+from hephaestus.core.executor.sandbox.oci_storage_policy import StoragePolicy
+from hephaestus.core.executor.sandbox.oci_transfer import InputAdmission
 from hephaestus.core.registry import DfmPack, RegistryError
 from opstore.types import JSONValue
 
@@ -158,7 +160,12 @@ def evaluate_pack(
     out_dir = scratch / "out"
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
-        (out_dir / ARTIFACT_FILENAME).write_bytes(request.brep)
+        policy = getattr(backend, "storage_policy", None)
+        admission = InputAdmission(policy) if isinstance(policy, StoragePolicy) else None
+        if admission:
+            admission.write(out_dir / "inputs", {ARTIFACT_FILENAME: request.brep})
+        else:
+            (out_dir / ARTIFACT_FILENAME).write_bytes(request.brep)
         payload = json.dumps(_job(request, pack)).encode("utf-8")
         spec = SandboxSpec(
             worker_args=dfm_worker_args(),
@@ -166,6 +173,7 @@ def evaluate_pack(
             rw_out_dir=out_dir,
             rlimits=rlimits,
             wall_clock_s=request.wall_clock_s,
+            input_files=(ARTIFACT_FILENAME,) if admission else (),
         )
         try:
             outcome = backend.execute(spec, payload)

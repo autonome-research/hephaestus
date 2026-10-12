@@ -13,18 +13,24 @@ content refs the store needs to install them.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Final, Literal, cast
 
 from hephaestus.core.addressing import GeometryIndex
 from hephaestus.core.errors import SandboxDeniedError, ValidationError
+from hephaestus.core.executor.artifacts import ARTIFACT_NAMES, read_artifact
 from hephaestus.core.executor.fingerprint import (
     FingerprintBaseline,
     TagDescriptor,
     compare,
     descriptors_from_json,
+)
+from hephaestus.core.executor.identity import (
+    IDENTITY_METADATA_KEY,
+    ExecutionIdentity,
+    backend_execution_identity,
 )
 from hephaestus.core.executor.imports import (
     ImportPayload,
@@ -33,6 +39,8 @@ from hephaestus.core.executor.imports import (
     staged_key,
 )
 from hephaestus.core.executor.sandbox.base import ExecBackend, Rlimits, SandboxSpec
+from hephaestus.core.executor.sandbox.oci_storage_policy import StoragePolicy
+from hephaestus.core.executor.sandbox.oci_transfer import InputAdmission
 from hephaestus.core.hashing import (
     consumed_hc_hash,
     effective_params_hash,
@@ -54,6 +62,8 @@ from hephaestus.core.types import (
     Warning,
 )
 from opstore.types import JSONValue
+
+from opstore import canonical_json
 
 #: Default worker resource limits (bounded, generous for CAD kernels).
 #: nproc must exceed the invoking user's live kernel task ucount or bwrap's
@@ -129,20 +139,23 @@ class UnpublishedBuild:
 
     ``result`` always has ``current=False`` and ``project_snapshot_ref=None``;
     part-scope ``checks`` are evaluated by the worker (§6) and already merged
-    into ``result``. ``artifact_files`` maps each deterministic content ref to
-    the file under ``out_dir`` whose bytes hash to it; ``check_names`` are the
-    collected CHECKS names.
+    into ``result``. ``artifact_files`` retains staging locations for diagnostics;
+    ``artifact_bytes`` holds the validated snapshot used for publication (source
+    maps are canonical JSON). ``check_names`` are the collected CHECKS names.
     """
 
     result: BuildResult
     out_dir: Path
     artifact_files: Mapping[str, Path] = field(default_factory=dict[str, Path])
+    #: Validated immutable bytes; publication must not reopen worker-writable paths.
+    artifact_bytes: Mapping[str, bytes] | None = None
     source_map: Mapping[str, JSONValue] | None = None
     geometry_index_json: Mapping[str, JSONValue] | None = None
     tag_fingerprints: Mapping[str, TagDescriptor] = field(default_factory=dict[str, TagDescriptor])
     consumed_hc: Mapping[str, JSONValue] = field(default_factory=dict[str, "JSONValue"])
     check_names: tuple[str, ...] = ()
     worker_result: Mapping[str, JSONValue] = field(default_factory=dict[str, "JSONValue"])
+    execution_identity: ExecutionIdentity | None = None
 
     def geometry_index(self) -> GeometryIndex:
         """The addressing GeometryIndex reconstructed from the worker output."""
@@ -241,7 +254,7 @@ def import_hashes(request: BuildRequest) -> dict[str, str]:
 
 
 def stage_request_imports(
-    request: BuildRequest, out_dir: Path
+    request: BuildRequest, out_dir: Path, *, admission: InputAdmission | None = None
 ) -> tuple[dict[str, str], dict[str, str]]:
     """Convert every frozen import ONCE and stage it read-only for the worker.
 
@@ -259,8 +272,18 @@ def stage_request_imports(
     refusal and not a grammar error on purpose: the declaration is perfectly
     readable, it is the *file* that cannot be admitted without one (§1.3).
     """
-    from hephaestus.geom.mesh import MESH_UNITS
-
+    if admission is not None:
+        policy = admission.policy
+        if (
+            len(request.imports) > policy.input_files
+            or sum(len(p.data) for p in request.imports.values()) > policy.input_bytes
+            or sum(
+                max(1, len(p.units)) * (1 if p.kind == "step" else 2)
+                for p in request.imports.values()
+            )
+            > policy.input_files
+        ):
+            raise SandboxDeniedError("OCI raw input aggregate exceeds staging limits")
     staged: dict[str, str] = {}
     errors: dict[str, str] = dict(request.import_errors)
     for path, payload in sorted(request.imports.items()):
@@ -271,6 +294,8 @@ def stage_request_imports(
         for unit in declared:
             key = staged_key(path, unit)
             if payload.kind != "step" and unit is None:
+                from hephaestus.geom.mesh import MESH_UNITS
+
                 # Composed through ``ImportResolutionError`` rather than as a
                 # bare string so the §1.7 code lands in the message by the same
                 # derivation every other mesh refusal uses: one code, one place
@@ -293,6 +318,7 @@ def stage_request_imports(
                     out_dir=out_dir,
                     kind=payload.kind,
                     units=unit,
+                    admission=admission,
                 )
             except ImportResolutionError as exc:
                 errors[key] = exc.message
@@ -308,6 +334,7 @@ def run_build(
     out_dir: Path,
     baseline: FingerprintBaseline | None = None,
     rlimits: Rlimits = DEFAULT_RLIMITS,
+    native_toolchain_hash: Callable[[], str] | None = None,
 ) -> UnpublishedBuild:
     """Run one build through ``backend`` and assemble the BuildResult.
 
@@ -322,8 +349,11 @@ def run_build(
         raise SandboxDeniedError(
             f"execution backend {report.backend!r} unavailable: {report.reason}"
         )
+    identity = backend_execution_identity(backend)
     out_dir.mkdir(parents=True, exist_ok=True)
-    staged, import_errors = stage_request_imports(request, out_dir)
+    policy = getattr(backend, "storage_policy", None)
+    admission = InputAdmission(policy) if isinstance(policy, StoragePolicy) else None
+    staged, import_errors = stage_request_imports(request, out_dir, admission=admission)
     job: dict[str, JSONValue] = {
         "part": request.part,
         "script": request.script,
@@ -346,8 +376,11 @@ def run_build(
         rw_out_dir=out_dir,
         rlimits=rlimits,
         wall_clock_s=request.wall_clock_s,
+        input_files=tuple(sorted(admission.names)) if admission else (),
     )
     outcome = backend.execute(spec, payload)
+    if outcome.execution_identity != identity or backend_execution_identity(backend) != identity:
+        raise SandboxDeniedError("build outcome execution identity missing or changed")
     if outcome.timed_out:
         raise ValidationError(
             f"build worker exceeded the wall clock ({request.wall_clock_s:g}s)",
@@ -368,7 +401,14 @@ def run_build(
     if not isinstance(parsed, dict):
         raise ValidationError("build worker result must be a JSON object", kind="evaluation")
     worker_result = cast("dict[str, JSONValue]", parsed)
-    return assemble_build(request, worker_result, out_dir=out_dir, baseline=baseline)
+    return assemble_build(
+        request,
+        worker_result,
+        out_dir=out_dir,
+        baseline=baseline,
+        execution_identity=identity,
+        native_toolchain_hash=native_toolchain_hash,
+    )
 
 
 def assemble_build(
@@ -377,8 +417,14 @@ def assemble_build(
     *,
     out_dir: Path,
     baseline: FingerprintBaseline | None = None,
+    execution_identity: ExecutionIdentity | None = None,
+    native_toolchain_hash: Callable[[], str] | None = None,
 ) -> UnpublishedBuild:
-    """Turn a worker result record into an :class:`UnpublishedBuild`."""
+    """Assemble using host-owned identity, never a worker-supplied fingerprint.
+
+    Omitting identity retains native toolchain hashing for native callers.
+    OCI callers must use the identity carried by their trusted backend outcome.
+    """
     status_raw = worker_result.get("status")
     if status_raw not in ("ok", "failed"):
         raise ValidationError(f"worker result: invalid status {status_raw!r}", kind="evaluation")
@@ -407,12 +453,37 @@ def assemble_build(
             )
         project_effective[name] = value
 
+    artifacts = _require_dict(worker_result.get("artifacts", {}), "artifacts")
+    if any(
+        key not in ARTIFACT_NAMES or value != ARTIFACT_NAMES[key]
+        for key, value in artifacts.items()
+    ):
+        raise ValidationError("worker artifact schema/filename mismatch", kind="evaluation")
+    expected_keys = {"build", "source_map"} if status == "ok" else {"last_good"}
+    if (status == "ok" and set(artifacts) != expected_keys) or not set(artifacts) <= expected_keys:
+        raise ValidationError("worker artifact set is incomplete or invalid", kind="evaluation")
+    validated = {key: read_artifact(out_dir, ARTIFACT_NAMES[key]) for key in artifacts}
+    source_map_raw = worker_result.get("source_map")
+    if "source_map" in validated:
+        try:
+            disk_map = json.loads(validated["source_map"])
+        except (ValueError, UnicodeError) as exc:
+            raise ValidationError("worker source map is malformed", kind="evaluation") from exc
+        if not isinstance(source_map_raw, dict) or canonical_json(disk_map) != canonical_json(
+            source_map_raw
+        ):
+            raise ValidationError("worker source map disagrees with artifact", kind="evaluation")
+
     input_hashes = InputHashes(
         script=hash_text(request.script),
         hc_dependencies=consumed_hc_hash(consumed),
         part_params=sha256_canonical_json(declaration),
         effective_params=effective_params_hash(effective),
-        toolchain=toolchain_hash(),
+        toolchain=(
+            (native_toolchain_hash or toolchain_hash)()
+            if execution_identity is None
+            else execution_identity.toolchain_hash
+        ),
         imports=import_hashes(request),
     )
     audit_hashes = AuditHashes(
@@ -420,23 +491,24 @@ def assemble_build(
         project_param_state=effective_params_hash(project_effective),
     )
 
-    artifacts = _require_dict(worker_result.get("artifacts", {}), "artifacts")
     artifact_files: dict[str, Path] = {}
+    artifact_bytes: dict[str, bytes] = {}
     artifact_ref: str | None = None
     source_map_ref: str | None = None
     last_good_ref: str | None = None
     build_file = artifacts.get("build")
     if isinstance(build_file, str):
         path = out_dir / build_file
-        artifact_ref = _artifact_ref("build", path.read_bytes())
+        artifact_ref = _artifact_ref("build", validated["build"])
         artifact_files[artifact_ref] = path
+        artifact_bytes[artifact_ref] = validated["build"]
     last_good_file = artifacts.get("last_good")
     if isinstance(last_good_file, str):
         path = out_dir / last_good_file
-        last_good_ref = _artifact_ref("build-checkpoint", path.read_bytes())
+        last_good_ref = _artifact_ref("build-checkpoint", validated["last_good"])
         artifact_files[last_good_ref] = path
+        artifact_bytes[last_good_ref] = validated["last_good"]
 
-    source_map_raw = worker_result.get("source_map")
     source_map: dict[str, JSONValue] | None = None
     if isinstance(source_map_raw, dict):
         source_map = source_map_raw
@@ -444,6 +516,7 @@ def assemble_build(
         source_map_file = artifacts.get("source_map")
         if isinstance(source_map_file, str):
             artifact_files[source_map_ref] = out_dir / source_map_file
+            artifact_bytes[source_map_ref] = canonical_json(source_map).encode("utf-8")
 
     metrics_raw = worker_result.get("metrics")
     metrics: Metrics | None = None
@@ -507,12 +580,15 @@ def assemble_build(
         warnings=tuple(warnings),
         error=error,
         metadata={
-            str(k): str(v)
-            for k, v in cast(
-                "dict[str, object]",
-                worker_result.get("metadata") or {},
-            ).items()
-            if isinstance(v, str)
+            **{
+                str(k): str(v)
+                for k, v in cast(
+                    "dict[str, object]",
+                    worker_result.get("metadata") or {},
+                ).items()
+                if isinstance(v, str) and k != IDENTITY_METADATA_KEY
+            },
+            **({IDENTITY_METADATA_KEY: execution_identity.canonical} if execution_identity else {}),
         },
         checkpoints=_checkpoints_from_worker(
             worker_result.get("checkpoints"), last_good_ref, error
@@ -524,10 +600,12 @@ def assemble_build(
         result=result,
         out_dir=out_dir,
         artifact_files=artifact_files,
+        artifact_bytes=artifact_bytes,
         source_map=source_map,
         geometry_index_json=geometry_index_json,
         tag_fingerprints=descriptors,
         consumed_hc=consumed,
         check_names=check_names,
         worker_result=dict(worker_result),
+        execution_identity=execution_identity,
     )
