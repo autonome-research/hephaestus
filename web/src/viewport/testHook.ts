@@ -53,6 +53,8 @@ export interface ViewportHandle {
   solids(): readonly ViewportSolidSnapshot[];
   /** Fresh presentation-only camera snapshot; no mutating handle. */
   camera(): ReturnType<ViewportEngine["cameraSnapshot"]> | null;
+  /** NDC hit hint only; the server must resolve it against the linked bundle. */
+  raycast(x: number, y: number): ReturnType<ViewportEngine["raycast"]>;
 }
 
 interface HandleWindow {
@@ -85,6 +87,7 @@ export function installViewportHandle(read: () => {
   index: SolidIndex | null;
   artifactRef: string | null;
   camera?: ReturnType<ViewportEngine["cameraSnapshot"]> | null;
+  raycast?: ViewportEngine["raycast"];
 }): () => void {
   const handle: ViewportHandle = {
     get artifact_ref() {
@@ -92,6 +95,7 @@ export function installViewportHandle(read: () => {
     },
     solids: () => snapshotSolids(read().index),
     camera: () => read().camera ?? null,
+    raycast: (x, y) => read().raycast?.(x, y) ?? null,
   };
   const host = window as unknown as HandleWindow;
   host[VIEWPORT_HANDLE] = handle;

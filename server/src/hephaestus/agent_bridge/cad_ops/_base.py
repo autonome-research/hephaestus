@@ -22,16 +22,16 @@ import shutil
 import tempfile
 import uuid
 from collections.abc import Generator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from hephaestus.core.checks.engine import CheckSet
 from hephaestus.core.checks.facade import GeometrySource
 from hephaestus.core.executor.artifact_geometry import ArtifactGeometry, published_source_for
 from hephaestus.core.executor.imports import ImportPayload
 from hephaestus.core.executor.runner import BuildRequest, UnpublishedBuild, run_build
-from hephaestus.core.executor.sandbox.base import ExecBackend
+from hephaestus.core.executor.sandbox.base import ExecBackend, Rlimits
 from hephaestus.core.project_store.layout import ProjectLayout
 from hephaestus.core.project_store.projections import PROJECT_SNAPSHOT_REF_PREFIX
 from hephaestus.core.project_store.publication import Publisher
@@ -48,8 +48,11 @@ from hephaestus.core.registry import TEXT_MAX_BYTES, TEXT_MAX_LINES, RegistrySet
 # the two limits but not the pager itself; importing the defining module is
 # the honest form until that package chooses to widen its own surface.
 from hephaestus.core.registry._reference import Page, paginate
-from hephaestus.core.render.inspect import RenderProject
 from opstore.types import JSONValue
+
+if TYPE_CHECKING:
+    from hephaestus.core.render.inspect import RenderProject
+    from hephaestus.core.render.oci_backend import OciRenderer
 
 from opstore import (
     Fresh,
@@ -594,7 +597,15 @@ class CadOpsState:
         store: OpStore,
         *,
         backend: ExecBackend,
+        renderer: OciRenderer | None = None,
+        render_size: tuple[int, int] | None = None,
+        build_rlimits: Rlimits | None = None,
+        build_wall_clock_s: float | None = None,
     ) -> None:
+        self._build_rlimits = build_rlimits
+        self._build_wall_clock_s = build_wall_clock_s
+        self._renderer = renderer
+        self._render_size = render_size
         self._layout = layout
         self._store = store
         # REQUIRED, with no default (ledger J-agent-wiring-4). This parameter
@@ -670,10 +681,20 @@ class CadOpsState:
         self._request_text = cleaned or None
 
     def _publisher(self) -> Publisher:
-        return Publisher(self._layout, self._store)
+        return Publisher(self._layout, self._store, backend=self._backend)
+
+    def _render_dimensions(self) -> dict[str, int]:
+        if self._render_size is None:
+            return {}
+        return {"width": self._render_size[0], "height": self._render_size[1]}
 
     def _render_project(self) -> RenderProject:
-        return RenderProject(layout=self._layout, store=self._store)
+        # Publication/freshness require no host renderer (or host CAD metadata).
+        from hephaestus.core.render.inspect import RenderProject
+
+        return RenderProject(
+            layout=self._layout, store=self._store, backend=self._backend, renderer=self._renderer
+        )
 
     def _check_set(self) -> CheckSet:
         return CheckSet(self._layout.checks_dir, self._store)
@@ -739,11 +760,14 @@ class CadOpsState:
             imports=dict(imports or {}),
             import_errors=dict(import_errors or {}),
         )
+        if self._build_wall_clock_s is not None:
+            request = replace(request, wall_clock_s=self._build_wall_clock_s)
         return run_build(
             request,
             backend=self._backend,
             out_dir=out_dir,
             baseline=cast("Any", baseline),
+            **({"rlimits": self._build_rlimits} if self._build_rlimits is not None else {}),
         )
 
     # -- geometry resolution (measure and project checks share this) --------

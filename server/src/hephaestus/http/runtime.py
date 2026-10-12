@@ -37,7 +37,7 @@ from hephaestus.agent_bridge.dispatch import Principal, ToolDispatcher
 from hephaestus.agent_bridge.session_edges import SessionEdgeStore
 from hephaestus.agent_bridge.wiring import build_dispatcher
 from hephaestus.core.errors import ValidationError
-from hephaestus.core.executor.sandbox.base import ExecBackend
+from hephaestus.core.executor.sandbox.base import ExecBackend, Rlimits
 from hephaestus.core.executor.sandbox.probe import refuse_unsafe, secure_backend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
 from hephaestus.core.project_store.store import ProjectStore
@@ -62,6 +62,9 @@ from .sessions import SessionBackend, WorkspaceSessions
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from hephaestus.agent_bridge.app import BridgeRuntime
+
+    # Dependency annotation only, through the same CadOps boundary as geometry.
+    from hephaestus.agent_bridge.cad_ops._base import OciRenderer
 
 __all__ = [
     "CAPABILITY_TTL_SECONDS",
@@ -129,6 +132,11 @@ class WorkspaceRuntime:
     #: it is a comment. Defaulted to loopback so an in-process harness — which
     #: binds no socket at all — is not accidentally off-loopback.
     bind_host: str = "127.0.0.1"
+    renderer: OciRenderer | None = None
+    render_size: tuple[int, int] | None = None
+    build_rlimits: Rlimits | None = None
+    build_wall_clock_s: float | None = None
+    allow_agent_attach: bool = True
     #: The attached agent runtime, or ``None``. Held so a manifest reload can
     #: re-point it at the same objects the routes now use.
     session_backend: SessionBackend | None = None
@@ -178,6 +186,11 @@ class WorkspaceRuntime:
         serve_mode: bool = True,
         backend: ExecBackend | None = None,
         bind_host: str = "127.0.0.1",
+        renderer: OciRenderer | None = None,
+        render_size: tuple[int, int] | None = None,
+        build_rlimits: Rlimits | None = None,
+        build_wall_clock_s: float | None = None,
+        allow_agent_attach: bool = True,
     ) -> WorkspaceRuntime:
         """Open ``root`` for serving under ``token``.
 
@@ -193,7 +206,15 @@ class WorkspaceRuntime:
         store = open_project_store(layout)
         store.db.conn.execute(_CREATE_DFM_TABLE)
         exec_backend = backend if backend is not None else _backend_for(layout, serve_mode)
-        cad = CadOps(layout, store, backend=exec_backend)
+        cad = CadOps(
+            layout,
+            store,
+            backend=exec_backend,
+            renderer=renderer,
+            render_size=render_size,
+            build_rlimits=build_rlimits,
+            build_wall_clock_s=build_wall_clock_s,
+        )
         # ONE ``ProjectStore``, shared by the read routes and the dispatcher: each
         # instance builds its own ``LockManager`` with its own owner id, and two
         # owners inside one process would be two writers on one project's locks —
@@ -226,6 +247,11 @@ class WorkspaceRuntime:
             token=token,
             serve_mode=serve_mode,
             bind_host=bind_host,
+            renderer=renderer,
+            render_size=render_size,
+            build_rlimits=build_rlimits,
+            build_wall_clock_s=build_wall_clock_s,
+            allow_agent_attach=allow_agent_attach,
         )
 
     # -- the agent runtime -------------------------------------------------
@@ -278,6 +304,12 @@ class WorkspaceRuntime:
         sidecar has started and answered ``runtime.configure``.
         """
         with self._attach_lock:
+            if not self.allow_agent_attach:
+                raise AttachRefused(
+                    DETACHED_CAUSE,
+                    provider_config_path(self.root),
+                    "agent attachment is disabled by this explicit local runtime",
+                )
             if self.sessions is not None:
                 raise AgentAlreadyAttached(
                     "this server already has an agent runtime attached; "
@@ -511,11 +543,15 @@ class WorkspaceRuntime:
         self._capabilities = None
 
     def _secure_executor_available(self) -> bool:
+        # Project capability must describe the executor actually wired to CadOps,
+        # not a second production-discovery result (notably on experimental Mac).
+        if getattr(self.backend, "unsafe", False):
+            return False
         try:
-            secure_backend(self.layout.store_root)
+            report = self.backend.probe()
+            return report.available is True and report.backend == self.backend.name
         except Exception:
             return False
-        return True
 
     def _git_available(self) -> bool:
         try:
@@ -569,7 +605,15 @@ class WorkspaceRuntime:
         action and a setting precisely so the setting behaves like one.
         """
         self.layout = load_project(self.root)
-        self.cad = CadOps(self.layout, self.store, backend=self.backend)
+        self.cad = CadOps(
+            self.layout,
+            self.store,
+            backend=self.backend,
+            renderer=self.renderer,
+            render_size=self.render_size,
+            build_rlimits=self.build_rlimits,
+            build_wall_clock_s=self.build_wall_clock_s,
+        )
         self.project_store = ProjectStore(self.layout, self.store)
         # The same construction as :meth:`open`, so toggling a manifest flag
         # cannot silently drop the registry set (B-2). ``BridgeRuntime.

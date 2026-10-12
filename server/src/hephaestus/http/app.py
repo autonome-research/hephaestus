@@ -64,6 +64,7 @@ from hephaestus.contract import toolgen
 from hephaestus.contract.tools_decl import READ_ARTIFACT_PAGE_MAX, TOOLS_BY_NAME
 from hephaestus.core.checks.report import project_check_report
 from hephaestus.core.errors import HephaestusError
+from hephaestus.core.executor.cancellation import run_cancellable
 from hephaestus.core.types import BuildFreshness, BuildResult
 from hephaestus.mcp.validate import SchemaError, normalize_arguments
 from starlette.applications import Starlette
@@ -608,8 +609,8 @@ class _Api:
 
         if decl.sequential:
             async with self._sequential:
-                return await asyncio.to_thread(run)
-        return await asyncio.to_thread(run)
+                return await run_cancellable(run)
+        return await run_cancellable(run)
 
     async def read_tool(self, tool: str, arguments: dict[str, Any]) -> Any:
         """A keyless tool call (a read, an inspection, a measurement).

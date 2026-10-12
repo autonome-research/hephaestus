@@ -35,20 +35,21 @@ import io
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 from xml.sax.saxutils import escape, quoteattr
 
-import numpy as np
 from hephaestus.core.dfm import TopologyDescriptor
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
 from hephaestus.core.project_store.store import blob_hash_of_ref
-from hephaestus.core.render.cameras import DEFAULT_MARGIN, ViewSpec, camera_framing, parse_view
 from hephaestus.core.types import BuildResult
 from hephaestus.geom.topology import cylindrical_faces, opposing_planar_pairs
 from opstore.types import JSONValue
 
 from ._base import CadOpError
 from ._exports import ExportOps, ExportOutput, FrozenMetadataOps, solid_labels
+
+if TYPE_CHECKING:
+    from hephaestus.core.render.cameras import ViewSpec
 
 __all__ = [
     "DRAWING_KINDS",
@@ -453,6 +454,9 @@ def _extent_fractions(
     that fit here is what lets a dimension line be drawn *on the geometry's
     edges* instead of on the image border.
     """
+    import numpy as np
+    from hephaestus.core.render.cameras import camera_framing
+
     framing = camera_framing(lo, hi, view, width=VIEW_WIDTH, height=VIEW_HEIGHT)
     centre = np.array([(lo[i] + hi[i]) / 2.0 for i in range(3)], dtype=np.float64)
     corners = np.array(
@@ -762,6 +766,8 @@ class DrawingOps(ExportOps, FrozenMetadataOps):
         are still true, and refusing the whole document would destroy evidence
         that does not depend on a GPU.
         """
+        from hephaestus.core.render.cameras import parse_view
+
         wanted: tuple[tuple[str, str], ...] = (
             (("+Z", "TOP (X-Y)"), ("+Y", "FRONT (X-Z)"))
             if kind == "dimensioned"
@@ -783,6 +789,7 @@ class DrawingOps(ExportOps, FrozenMetadataOps):
 
     def _render_pngs(self, shape: Any, kind: str, views: Sequence[str]) -> dict[str, bytes]:
         """Deterministic PNGs for ``views``; empty when the renderer is unavailable."""
+        from hephaestus.core.render.cameras import DEFAULT_MARGIN
         from hephaestus.core.render.channels import (
             RenderOptions,
             render_channel,
