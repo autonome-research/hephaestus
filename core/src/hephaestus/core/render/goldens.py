@@ -183,7 +183,7 @@ def _prepare_project(
     shutil.copytree(source_dir, project_dir)
     layout: ProjectLayout = load_project(project_dir)
     store = open_store(layout)
-    publisher = Publisher(layout, store, backend=backend)
+    publisher = Publisher(layout, store)
     globals_source = (
         layout.globals_path.read_text(encoding="utf-8") if layout.globals_path.is_file() else None
     )

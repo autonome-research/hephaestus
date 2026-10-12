@@ -65,7 +65,7 @@ if TYPE_CHECKING:
     import numpy as np
     from hephaestus.core.executor.sandbox.base import ExecBackend
     from hephaestus.core.render.channels import RenderScene
-    from hephaestus.core.render.oci_backend import OciRenderer
+    from hephaestus.core.render.oci_backend import RenderService
     from hephaestus.core.render.tessellate import Tessellation
     from numpy.typing import NDArray
 
@@ -119,7 +119,7 @@ class RenderProject:
 
     layout: ProjectLayout
     store: OpStore
-    renderer: OciRenderer | None = None
+    renderer: RenderService | None = None
     backend: ExecBackend | None = None
 
     def publisher(self) -> Publisher:
@@ -507,7 +507,7 @@ def _focus_solids(
 # legend publication
 
 
-def _publish_legend(
+def publish_legend(
     store: OpStore, legend: Mapping[str, JSONValue], *, force_ref: bool
 ) -> tuple[Mapping[str, JSONValue] | None, str | None, bool]:
     """Return ``(inline_legend | None, legend_ref | None, truncated)``."""
@@ -551,6 +551,13 @@ def inspect_part(
     geometry is loaded. Rendering delegates to the shared render service; see the
     module docstring for the division of responsibilities.
     """
+    if focus is not None and channel == "section":
+        # Refuse before touching the project: the focused path cannot clip a
+        # section and must never publish a shaded preview as one.
+        raise ValidationError(
+            "focus with channel='section' is not supported; omit focus for a section render",
+            kind="contract",
+        )
     width = width if width is not None else (256 if project.renderer else DEFAULT_WIDTH)
     height = height if height is not None else (192 if project.renderer else DEFAULT_HEIGHT)
     resolved_views, channel_lit, mask_mode_lit = _validate(
@@ -563,13 +570,6 @@ def inspect_part(
         artifact_ref,
         remote=project.renderer is not None,
     )
-    if focus is not None and channel_lit == "section":
-        # The focused camera path has no section-plane clipping. Do not publish
-        # a plain shaded preview under a section identity.
-        raise ValidationError(
-            "focus with channel='section' is not supported; omit focus for a section render",
-            kind="contract",
-        )
     resolved = resolve_render_source(project, name, last_good=last_good, artifact_ref=artifact_ref)
     if project.renderer is not None:
         from hephaestus.core.render.remote_service import inspect_remote
@@ -669,7 +669,7 @@ def _render_channel(
     mask_legend_ref: str | None = None
     truncated = False
     if channel == "mask" and legend is not None:
-        mask_legend, mask_legend_ref, truncated = _publish_legend(
+        mask_legend, mask_legend_ref, truncated = publish_legend(
             project.store, legend, force_ref=False
         )
 
@@ -829,7 +829,7 @@ def _render_selection(
             )
 
     legend = build_legend(catalog.entries)
-    mask_legend, mask_legend_ref, truncated = _publish_legend(
+    mask_legend, mask_legend_ref, truncated = publish_legend(
         project.store, cast("Mapping[str, JSONValue]", legend), force_ref=True
     )
     return InspectResult(

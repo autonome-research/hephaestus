@@ -12,6 +12,7 @@ import json
 import re
 import struct
 import zlib
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from hephaestus.core.errors import ValidationError
@@ -19,28 +20,45 @@ from hephaestus.core.executor.identity import (
     backend_execution_identity,
     recorded_execution_identity,
 )
+from hephaestus.core.executor.sandbox.oci_transfer import Json, encode, unique_json
 from hephaestus.core.project_store.store import blob_hash_of_ref
-from hephaestus.core.render.bundle import RenderStore
-from hephaestus.core.render.oci_protocol import RENDER_VERSION, validate_response
+from hephaestus.core.render.bundle import RenderStore, SelectionBundle
+from hephaestus.core.render.oci_protocol import (
+    RENDER_VERSION,
+    Image,
+    Links,
+    Operation,
+    Placement,
+    RenderRequest,
+    Response,
+    Section,
+    validate_response,
+)
 from hephaestus.core.render.palette import SelectionEntry, build_legend
 
-from opstore import canonical_json
+from opstore import OpStore, canonical_json
 
 if TYPE_CHECKING:
-    from hephaestus.core.render.inspect import RenderProject, RenderSource
+    from hephaestus.core.render.inspect import (
+        Channel,
+        InspectResult,
+        MaskMode,
+        RenderProject,
+        RenderSource,
+    )
 
 
 def frozen_request(
     project: RenderProject,
     source: RenderSource,
-    operation: str,
+    operation: Operation,
     view: str,
     width: int,
     height: int,
     *,
-    section=None,
-    links=None,
-) -> dict:
+    section: Section | None = None,
+    links: Links | None = None,
+) -> RenderRequest:
     from hephaestus.core.render.inspect import build_solid_labels, tag_placements_from_source_map
 
     result = source.result
@@ -66,21 +84,25 @@ def frozen_request(
     count = sum(max(g.solids, 0) for g in result.geometries)
     labels = build_solid_labels(result, count)
     placements = tag_placements_from_source_map(source.source_map)
-    return {
-        "version": RENDER_VERSION,
-        "operation": operation,
-        "source_ref": source.source_artifact_ref,
-        "brep_sha256": hashlib.sha256(source.brep).hexdigest(),
-        "solids": [{"label": labels.get(i), "color": None} for i in range(count)],
-        "placements": [
+    checked_placements: list[Placement] = []
+    for tag, p in sorted(placements.items()):
+        if p.solid_index is None or p.topo_index is None or p.kind not in ("solid", "face", "edge"):
+            raise ValidationError("OCI render placement missing topology index", kind="contract")
+        checked_placements.append(
             {
                 "tag": tag,
                 "kind": p.kind,
                 "solid_index": p.solid_index,
                 "topology_index": p.topo_index,
             }
-            for tag, p in sorted(placements.items())
-        ],
+        )
+    return {
+        "version": RENDER_VERSION,
+        "operation": operation,
+        "source_ref": source.source_artifact_ref,
+        "brep_sha256": hashlib.sha256(source.brep).hexdigest(),
+        "solids": [{"label": labels.get(i), "color": None} for i in range(count)],
+        "placements": checked_placements,
         "view": view,
         "width": width,
         "height": height,
@@ -89,36 +111,50 @@ def frozen_request(
     }
 
 
-def execute(project, source, request):
-    result = project.renderer.render(request, source.brep)
+def execute(
+    project: RenderProject, source: RenderSource, request: RenderRequest
+) -> tuple[Response, dict[str, Json]]:
+    renderer, build = project.renderer, source.result
+    if renderer is None or build is None or build.source_map_ref is None:
+        raise ValidationError("OCI publication requires renderer/build provenance", kind="contract")
+    identity = recorded_execution_identity(dict(build.metadata), build.input_hashes.toolchain)
+    if identity is None:
+        raise ValidationError("OCI publication requires executor identity", kind="contract")
+    renderer_identity = backend_execution_identity(renderer)
+    if renderer_identity is None:
+        raise ValidationError("OCI renderer identity unavailable", kind="contract")
+    result = renderer.render(request, source.brep)
+    if (
+        result.identity != renderer_identity
+        or backend_execution_identity(renderer) != renderer_identity
+    ):
+        raise ValidationError("OCI renderer identity changed during rendering", kind="contract")
     # Validate again at publication admission, even for alternate service implementations.
     response = validate_response(result.data, request)
-    provenance = {
+    provenance: dict[str, Json] = {
         "kind": "render_provenance",
         "version": 1,
         "source_artifact_ref": source.source_artifact_ref,
-        "source_map_ref": source.result.source_map_ref,
-        "build_input_hashes": source.result.input_hashes.to_json(),
-        "executor_identity": recorded_execution_identity(
-            dict(source.result.metadata), source.result.input_hashes.toolchain
-        ).to_json(),
+        "source_map_ref": build.source_map_ref,
+        "build_input_hashes": build.input_hashes.to_json(),
+        "executor_identity": identity.to_json(),
         "renderer_identity": result.identity.to_json(),
-        "request": request,
+        "request": unique_json(encode(request)),
         "response_sha256": hashlib.sha256(result.data).hexdigest(),
         "gl_renderer": response["gl_renderer"],
-        "section": response["section"],
+        "section": unique_json(encode(response["section"])),
     }
     return response, provenance
 
 
-def png(image: dict, width: int, height: int) -> bytes:
+def png(image: Image, width: int, height: int) -> bytes:
     """Lossless encoding only, of already validated real worker pixels."""
     raw = base64.b64decode(image["pixels"], validate=True)
     channels = image["channels"]
     if channels not in (3, 4) or len(raw) != width * height * channels:
         raise ValueError("PNG input dimensions")
 
-    def chunk(kind, data):
+    def chunk(kind: bytes, data: bytes) -> bytes:
         return (
             struct.pack("!I", len(data)) + kind + data + struct.pack("!I", zlib.crc32(kind + data))
         )
@@ -135,23 +171,28 @@ def png(image: dict, width: int, height: int) -> bytes:
     )
 
 
-def link_provenance(store, refs, provenance):
+def link_provenance(store: OpStore, refs: Sequence[str], provenance: dict[str, Json]) -> str:
     blob = store.blobs.put(canonical_json(provenance).encode())
     for ref in refs:
         store.gc.link(blob_hash_of_ref(ref), blob)
     for key in ("source_artifact_ref", "source_map_ref"):
-        store.gc.link(blob, blob_hash_of_ref(provenance[key]))
+        ref = provenance[key]
+        if not isinstance(ref, str):
+            raise ValidationError("OCI provenance reference missing", kind="contract")
+        store.gc.link(blob, blob_hash_of_ref(ref))
     return blob
 
 
-def selection_bundle(project, source, view, width, height):
+def selection_bundle(
+    project: RenderProject, source: RenderSource, view: str, width: int, height: int
+) -> tuple[SelectionBundle, Response, dict[str, Json]]:
     request = frozen_request(project, source, "selection", view, width, height)
     response, provenance = execute(project, source, request)
     images = response["images"]
     bundle = RenderStore(project.store).publish_selection_bundle(
         view=view,
         source_artifact_ref=source.source_artifact_ref,
-        entries={int(k): SelectionEntry.from_json(v) for k, v in response["entries"].items()},
+        entries={int(k): SelectionEntry(**v) for k, v in response["entries"].items()},
         solid_png=png(images["solid"], width, height),
         face_png=png(images["face"], width, height),
         edge_png=png(images["edge"], width, height),
@@ -162,17 +203,29 @@ def selection_bundle(project, source, view, width, height):
     return bundle, response, provenance
 
 
-def inspect_remote(project, source, views, channel, mode, section_plane, width, height):
+def inspect_remote(
+    project: RenderProject,
+    source: RenderSource,
+    views: Sequence[str],
+    channel: Channel,
+    mode: MaskMode,
+    section_plane: str | None,
+    width: int,
+    height: int,
+) -> InspectResult:
     from hephaestus.core.render.inspect import (
         InspectImage,
         InspectResult,
         SelectionBundleView,
-        _publish_legend,
+        publish_legend,
     )
 
-    images, refs, bundles = [], [], []
-    table_ref, entries = None, None
-    section = None
+    images: list[InspectImage] = []
+    refs: list[str] = []
+    bundles: list[SelectionBundleView] = []
+    table_ref: str | None = None
+    entries: dict[int, SelectionEntry] = {}
+    section: Section | None = None
     if channel == "section":
         match = re.fullmatch(r"([+-])([XYZ])@([+-]?(?:\d+(?:\.\d*)?|\.\d+))", section_plane or "")
         if match is None:
@@ -189,6 +242,8 @@ def inspect_remote(project, source, views, channel, mode, section_plane, width, 
             bundle, response, _ = selection_bundle(project, source, view, width, height)
             data = png(response["images"]["preview"], width, height)
             ref = bundle.preview_ref
+            if ref is None:
+                raise ValidationError("OCI selection preview missing", kind="contract")
             table_ref = bundle.selection_table_ref
             bundles.append(SelectionBundleView(view, bundle.bundle_ref, bundle.pass_refs))
             refs.extend([ref, *bundle.pass_refs.as_tuple()])
@@ -200,10 +255,10 @@ def inspect_remote(project, source, views, channel, mode, section_plane, width, 
             link_provenance(project.store, [ref], provenance)
             refs.append(ref)
         images.append(InspectImage(view, channel, ref, data, channel == "mask" and mode == "solid"))
-        entries = {int(k): SelectionEntry.from_json(v) for k, v in response["entries"].items()}
+        entries = {int(k): SelectionEntry(**v) for k, v in response["entries"].items()}
     legend, legend_ref, truncated = None, None, False
     if channel == "mask":
-        legend, legend_ref, truncated = _publish_legend(
+        legend, legend_ref, truncated = publish_legend(
             project.store, build_legend(entries), force_ref=mode == "selection"
         )
     return InspectResult(
@@ -221,7 +276,14 @@ def inspect_remote(project, source, views, channel, mode, section_plane, width, 
     )
 
 
-def export_remote(project, source, bundle, view, width, height):
+def export_remote(
+    project: RenderProject,
+    source: RenderSource,
+    bundle: SelectionBundle,
+    view: str,
+    width: int,
+    height: int,
+) -> tuple[bytes, dict[str, Json]]:
     request = frozen_request(
         project,
         source,
@@ -235,6 +297,22 @@ def export_remote(project, source, bundle, view, width, height):
     # A new worker's catalog must equal the already published table, not merely
     # an internally consistent but unrelated table returned beside its GLB.
     table = json.loads(project.store.blobs.get(blob_hash_of_ref(bundle.selection_table_ref)))
-    if response["entries"] != table["entries"]:
+    if encode(response["entries"]) != encode(table["entries"]):
         raise ValidationError("GLB catalog differs from minted selection bundle", kind="contract")
-    return base64.b64decode(response["glb"]["data"], validate=True), provenance
+    bundle_record = json.loads(project.store.blobs.get(blob_hash_of_ref(bundle.bundle_ref)))
+    bundle_provenance = bundle_record.get("provenance")
+    if not isinstance(bundle_provenance, dict) or any(
+        bundle_provenance.get(key) != provenance[key]
+        for key in (
+            "renderer_identity",
+            "executor_identity",
+            "source_artifact_ref",
+            "source_map_ref",
+            "build_input_hashes",
+        )
+    ):
+        raise ValidationError("GLB bundle provenance differs from renderer result", kind="contract")
+    glb = response["glb"]
+    if glb is None:
+        raise ValidationError("OCI GLB response missing", kind="contract")
+    return base64.b64decode(glb["data"], validate=True), provenance

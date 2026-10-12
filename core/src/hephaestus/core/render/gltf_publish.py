@@ -220,7 +220,7 @@ def publish_gltf_for_build(
         if executor_identity is None:
             raise ValidationError("remote GLB requires executor identity", kind="contract")
         required_provenance = {
-            "renderer_identity": project.renderer.supervisor.execution_identity().to_json(),
+            "renderer_identity": project.renderer.execution_identity().to_json(),
             "executor_identity": executor_identity.to_json(),
             "source_map_ref": resolved.result.source_map_ref,
             "build_input_hashes": resolved.result.input_hashes.to_json(),

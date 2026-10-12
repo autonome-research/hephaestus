@@ -10,9 +10,9 @@ from hephaestus.core.executor.sandbox.oci_identity import collect_runtime_identi
 from hephaestus.core.executor.sandbox.oci_launcher import (
     FIXED_WORKER_ENV,
     LaunchRequest,
-    _write,
     apply_rlimits,
     parse_argv,
+    write_payload,
 )
 from hephaestus.core.executor.sandbox.oci_protocol import PROBE_WORKER, diagnostic_bytes
 from hephaestus.core.executor.sandbox.oci_storage import require_storage
@@ -55,11 +55,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "pillow": "12.3.0",
                 "pygltflib": "1.16.5",
             }.items():
-                if packages[name]["version"] != version:
+                if not isinstance(packages, dict) or packages[name]["version"] != version:
                     raise ValueError("renderer package pin mismatch")
-            _write(sys.stdout, manifest_bytes(inventory))
+            write_payload(sys.stdout, manifest_bytes(inventory))
             return 0
-        assert isinstance(request, LaunchRequest)
+        assert isinstance(request, LaunchRequest) and module is not None
         apply_rlimits(request)
         require_storage(STORAGE_POLICIES[request.storage_policy])
         env = dict(FIXED_WORKER_ENV)
@@ -79,7 +79,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             env,
         )
     except Exception:
-        _write(sys.stderr, diagnostic_bytes("renderer_launch_refused"))
+        write_payload(sys.stderr, diagnostic_bytes("renderer_launch_refused"))
         return 126
     raise AssertionError("execve returned")
 

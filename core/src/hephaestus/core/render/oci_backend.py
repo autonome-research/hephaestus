@@ -10,9 +10,10 @@ from __future__ import annotations
 import hashlib
 import tempfile
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Protocol
 
 from hephaestus.core.errors import SandboxDeniedError
 from hephaestus.core.executor.identity import ExecutionIdentity
@@ -23,6 +24,7 @@ from hephaestus.core.render.oci_protocol import (
     MAX_BREP,
     RENDER_VERSION,
     RENDER_WORKER,
+    RenderRequest,
     read_request,
     request_bytes,
     validate_response,
@@ -35,6 +37,19 @@ class RenderResult:
 
     data: bytes
     identity: ExecutionIdentity
+
+
+class RenderService(Protocol):
+    """Trusted host injection: validated rendering and a live renderer-image identity.
+
+    This protocol is not worker-data attestation. Implementations must bind the
+    returned identity to actual execution/cleanup; publication also checks that
+    it agrees with the live identity before and after rendering.
+    """
+
+    def render(self, request: RenderRequest, brep: bytes) -> RenderResult: ...
+
+    def execution_identity(self) -> ExecutionIdentity: ...
 
 
 class OciRenderer:
@@ -68,7 +83,10 @@ class OciRenderer:
         finally:
             self._busy.release()
 
-    def render(self, request: dict[str, Any], brep: bytes) -> RenderResult:
+    def execution_identity(self) -> ExecutionIdentity:
+        return self.supervisor.execution_identity()
+
+    def render(self, request: Mapping[str, object], brep: bytes) -> RenderResult:
         if not self._ready:
             raise SandboxDeniedError("renderer requires fresh software EGL probe")
         if request.get("operation") == "probe":
@@ -80,7 +98,7 @@ class OciRenderer:
         finally:
             self._busy.release()
 
-    def _run(self, request: dict[str, Any], brep: bytes | None) -> RenderResult:
+    def _run(self, request: object, brep: bytes | None) -> RenderResult:
         if self._poisoned:
             raise SandboxDeniedError("renderer ownership unresolved; session poisoned")
         payload = request_bytes(request)

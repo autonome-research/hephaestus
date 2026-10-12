@@ -24,13 +24,18 @@ import uuid
 from collections.abc import Generator, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, TypedDict, cast
 
 from hephaestus.core.checks.engine import CheckSet
 from hephaestus.core.checks.facade import GeometrySource
 from hephaestus.core.executor.artifact_geometry import ArtifactGeometry, published_source_for
 from hephaestus.core.executor.imports import ImportPayload
-from hephaestus.core.executor.runner import BuildRequest, UnpublishedBuild, run_build
+from hephaestus.core.executor.runner import (
+    DEFAULT_RLIMITS,
+    BuildRequest,
+    UnpublishedBuild,
+    run_build,
+)
 from hephaestus.core.executor.sandbox.base import ExecBackend, Rlimits
 from hephaestus.core.project_store.layout import ProjectLayout
 from hephaestus.core.project_store.projections import PROJECT_SNAPSHOT_REF_PREFIX
@@ -52,7 +57,7 @@ from opstore.types import JSONValue
 
 if TYPE_CHECKING:
     from hephaestus.core.render.inspect import RenderProject
-    from hephaestus.core.render.oci_backend import OciRenderer
+    from hephaestus.core.render.oci_backend import RenderService
 
 from opstore import (
     Fresh,
@@ -64,6 +69,12 @@ from opstore import (
 )
 
 from ._request import request_text_for_active_run
+
+
+class RenderDimensions(TypedDict, total=False):
+    width: int
+    height: int
+
 
 #: The artifact kind an immutable snapshot of ``checks/<name>.py`` is minted
 #: under. It used to be ``part-snapshot`` because that kind was already
@@ -597,7 +608,7 @@ class CadOpsState:
         store: OpStore,
         *,
         backend: ExecBackend,
-        renderer: OciRenderer | None = None,
+        renderer: RenderService | None = None,
         render_size: tuple[int, int] | None = None,
         build_rlimits: Rlimits | None = None,
         build_wall_clock_s: float | None = None,
@@ -683,7 +694,7 @@ class CadOpsState:
     def _publisher(self) -> Publisher:
         return Publisher(self._layout, self._store, backend=self._backend)
 
-    def _render_dimensions(self) -> dict[str, int]:
+    def _render_dimensions(self) -> RenderDimensions:
         if self._render_size is None:
             return {}
         return {"width": self._render_size[0], "height": self._render_size[1]}
@@ -767,7 +778,7 @@ class CadOpsState:
             backend=self._backend,
             out_dir=out_dir,
             baseline=cast("Any", baseline),
-            **({"rlimits": self._build_rlimits} if self._build_rlimits is not None else {}),
+            rlimits=self._build_rlimits if self._build_rlimits is not None else DEFAULT_RLIMITS,
         )
 
     # -- geometry resolution (measure and project checks share this) --------

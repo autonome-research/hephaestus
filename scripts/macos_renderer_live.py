@@ -16,6 +16,7 @@ from hephaestus.core.render.bundle import StaleSelectionError, resolve_selection
 from hephaestus.core.render.glb_gate import validate_linked_glb
 from hephaestus.core.render.gltf_publish import publish_gltf_for_build
 from hephaestus.core.render.inspect import RenderProject, inspect_part
+from hephaestus.testing.render_fixture import require_fixture_faces
 from macos_executor_live import document, require
 
 
@@ -41,19 +42,6 @@ def pixels(png, width=128, height=96):
         "lossless PNG rows",
     )
     return b"".join(raw[i + 1 : i + stride] for i in range(0, len(raw), stride)), channels
-
-
-def require_fixture_faces(validation, entries):
-    """The authored two-cuboid fixture must retain every one of its 12 faces."""
-    faces = {key: entry for key, entry in entries.items() if entry.kind == "face"}
-    require(
-        len(faces) == 12
-        and {(e.solid_index, e.topology_index) for e in faces.values()}
-        == {(solid, face) for solid in range(2) for face in range(6)}
-        and validation["primitive_count"] == 12
-        and set(validation["face_ids"]) == set(faces),
-        "complete two-cuboid GLB face set (12 primitives)",
-    )
 
 
 def integrated(smoke, root, backend, renderer):

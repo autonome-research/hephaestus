@@ -64,7 +64,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from hephaestus.agent_bridge.app import BridgeRuntime
 
     # Dependency annotation only, through the same CadOps boundary as geometry.
-    from hephaestus.agent_bridge.cad_ops._base import OciRenderer
+    from hephaestus.core.render.oci_backend import OciRenderer
 
 __all__ = [
     "CAPABILITY_TTL_SECONDS",

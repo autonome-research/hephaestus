@@ -8,7 +8,7 @@ import os
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from hephaestus.core.executor.sandbox.oci_transfer import encode, open_directory, open_regular
 from hephaestus.core.executor.sandbox.oci_worker_io import worker_io
@@ -20,13 +20,36 @@ from hephaestus.core.render.oci_protocol import (
     MAX_TOPOLOGY,
     RENDER_VERSION,
     RENDER_WORKER,
+    Entry,
+    Image,
+    Request,
+    Response,
+    Topology,
     read_request,
     request_hash,
     validate_response,
 )
 
+if TYPE_CHECKING:
+    import numpy as np
+    from hephaestus.core.render.palette import SelectionEntry
+    from numpy.typing import NDArray
 
-def _image(array: Any) -> dict[str, Any]:
+
+def _entry(value: SelectionEntry) -> Entry:
+    result: Entry = {
+        "kind": value.kind,
+        "solid_index": value.solid_index,
+        "topology_index": value.topology_index,
+    }
+    if value.label is not None:
+        result["label"] = value.label
+    if value.tag is not None:
+        result["tag"] = value.tag
+    return result
+
+
+def _image(array: NDArray[np.uint8]) -> Image:
     raw = array.tobytes(order="C")
     return {
         "channels": array.shape[2],
@@ -35,14 +58,14 @@ def _image(array: Any) -> dict[str, Any]:
     }
 
 
-def render(request: dict[str, Any], brep: bytes | None) -> dict[str, Any]:
+def render(request: Request, brep: bytes | None) -> Response:
     from hephaestus.core.render.offscreen import OffscreenSession
 
-    result = {
+    result: Response = {
         "version": RENDER_VERSION,
         "operation": request["operation"],
         "request_sha256": request_hash(request),
-        "source_ref": request.get("source_ref"),
+        "source_ref": request["source_ref"] if request["operation"] != "probe" else None,
         "gl_renderer": "",
         "topology": [],
         "entries": {},
@@ -60,6 +83,7 @@ def render(request: dict[str, Any], brep: bytes | None) -> dict[str, Any]:
         or hashlib.sha256(brep).hexdigest() != request["brep_sha256"]
     ):
         raise ValueError("frozen BREP identity mismatch")
+    from build123d import Shape
     from hephaestus.core.executor.artifact_geometry import load_brep_shape
     from hephaestus.core.executor.tags import TagPlacement
     from hephaestus.core.render.cameras import camera_framing, parse_view
@@ -74,10 +98,12 @@ def render(request: dict[str, Any], brep: bytes | None) -> dict[str, Any]:
     from hephaestus.core.render.tessellate import Tessellation
 
     shape = load_brep_shape(brep)
+    if not isinstance(shape, Shape):
+        raise ValueError("BREP did not decode to a shape")
     solids = list(shape.solids())
     if len(solids) != len(request["solids"]):
         raise ValueError("BREP solid count mismatch")
-    topology = [{"faces": len(s.faces()), "edges": len(s.edges())} for s in solids]
+    topology: list[Topology] = [{"faces": len(s.faces()), "edges": len(s.edges())} for s in solids]
     if sum(1 + t["faces"] + t["edges"] for t in topology) > MAX_TOPOLOGY:
         raise ValueError("BREP topology admission bound")
     # Bounds before tessellation; kernel parsing/meshing still runs entirely
@@ -93,7 +119,9 @@ def render(request: dict[str, Any], brep: bytes | None) -> dict[str, Any]:
             replace(
                 s,
                 label=meta["label"],
-                color=tuple(meta["color"]) if meta["color"] is not None else s.color,
+                color=(meta["color"][0], meta["color"][1], meta["color"][2], meta["color"][3])
+                if meta["color"] is not None
+                else s.color,
                 color_explicit=meta["color"] is not None,
             )
             for s, meta in zip(scene.solids, request["solids"], strict=True)
@@ -107,12 +135,17 @@ def render(request: dict[str, Any], brep: bytes | None) -> dict[str, Any]:
             p["tag"]: TagPlacement(p["kind"], p["solid_index"], p["topology_index"], 0, 0)
             for p in request["placements"]
         }
-        labels = {s: m["label"] for s, m in enumerate(request["solids"]) if m["label"] is not None}
+        labels = {
+            s: label for s, m in enumerate(request["solids"]) if (label := m["label"]) is not None
+        }
         catalog = build_selection_catalog(tess, placements=placements, labels=labels)
-        result["entries"] = {str(k): v.to_json() for k, v in catalog.entries.items()}
+        result["entries"] = {str(k): _entry(v) for k, v in catalog.entries.items()}
         if request["operation"] == "gltf":
             from hephaestus.core.render.gltf import export_gltf
 
+            links = request["links"]
+            if links is None:
+                raise ValueError("renderer GLB links missing")
             data = export_gltf(
                 shape,
                 catalog,
@@ -120,7 +153,7 @@ def render(request: dict[str, Any], brep: bytes | None) -> dict[str, Any]:
                 tess=tess,
                 labels=labels,
                 scene=scene,
-                **request["links"],
+                **links,
             )
             if len(data) > MAX_GLB:
                 raise ValueError("GLB output bound")
@@ -138,7 +171,7 @@ def render(request: dict[str, Any], brep: bytes | None) -> dict[str, Any]:
         with OffscreenSession(width, height) as session:
             arrays = render_selection_view(session, tess, catalog, framing, include_preview=True)
             result["gl_renderer"] = session.gl_renderer
-        result["entries"] = {str(k): v.to_json() for k, v in catalog.entries.items()}
+        result["entries"] = {str(k): _entry(v) for k, v in catalog.entries.items()}
         result["images"] = {
             k: _image(getattr(arrays, k)) for k in ("solid", "face", "edge", "preview")
         }
@@ -148,6 +181,8 @@ def render(request: dict[str, Any], brep: bytes | None) -> dict[str, Any]:
             from hephaestus.geom.measure import section
 
             p = request["section"]
+            if p is None:
+                raise ValueError("renderer section missing")
             section_spec = ("+" if p["sign"] == 1 else "-") + p["axis"] + "@" + str(p["offset"])
             plane = parse_section_plane(section_spec, scene.bbox_min, scene.bbox_max)
             faces = section(shape, plane.bd_plane())
@@ -162,7 +197,7 @@ def render(request: dict[str, Any], brep: bytes | None) -> dict[str, Any]:
         result["images"] = {request["operation"]: _image(view.rgba)}
         if view.legend is not None:
             result["entries"] = {
-                str(k): v.to_json() for k, v in legend_to_entries(view.legend).items()
+                str(k): _entry(v) for k, v in legend_to_entries(view.legend).items()
             }
     return result
 

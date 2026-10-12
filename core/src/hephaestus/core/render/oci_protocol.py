@@ -12,7 +12,8 @@ import base64
 import hashlib
 import math
 import re
-from typing import Any
+from collections.abc import Mapping
+from typing import Literal, NotRequired, TypedDict, cast
 
 from hephaestus.core.executor.sandbox.oci_protocol import (
     PROBE_WORKER,
@@ -46,12 +47,106 @@ RENDER_ENV = {
 }
 
 
+Operation = Literal["rgb", "mask", "selection", "section", "gltf"]
+Kind = Literal["solid", "face", "edge"]
+
+
+class ProbeRequest(TypedDict):
+    version: int
+    operation: Literal["probe"]
+
+
+class Solid(TypedDict):
+    label: str | None
+    color: list[int] | None
+
+
+class Placement(TypedDict):
+    tag: str
+    kind: Kind
+    solid_index: int
+    topology_index: int
+
+
+class Section(TypedDict):
+    axis: str
+    sign: int
+    offset: float
+
+
+class Links(TypedDict):
+    bundle_ref: str
+    selection_table_ref: str
+
+
+class RenderRequest(TypedDict):
+    version: int
+    operation: Operation
+    source_ref: str
+    brep_sha256: str
+    solids: list[Solid]
+    placements: list[Placement]
+    view: str
+    width: int
+    height: int
+    section: Section | None
+    links: Links | None
+
+
+Request = ProbeRequest | RenderRequest
+
+
+class Topology(TypedDict):
+    faces: int
+    edges: int
+
+
+class Entry(TypedDict):
+    kind: Kind
+    solid_index: int
+    topology_index: int
+    label: NotRequired[str]
+    tag: NotRequired[str]
+
+
+class Image(TypedDict):
+    channels: int
+    pixels: str
+    sha256: str
+
+
+class Measurements(TypedDict):
+    faces: int
+    area_mm2: float
+
+
+class Glb(TypedDict):
+    data: str
+    sha256: str
+
+
+class Response(TypedDict):
+    version: int
+    operation: Literal["probe"] | Operation
+    request_sha256: str
+    source_ref: str | None
+    gl_renderer: str
+    topology: list[Topology]
+    entries: dict[str, Entry]
+    images: dict[str, Image]
+    section: Measurements | None
+    glb: Glb | None
+
+
 def manifest_bytes(inventory: object = None) -> bytes:
     import json
 
     record = manifest_record()
+    limits = record["limits"]
+    if not isinstance(limits, dict):
+        raise ValueError("renderer manifest limits object")
     record["limits"] = {
-        **record["limits"],
+        **limits,
         "address_space_bytes_max": 2 * 1024**3,
         "nproc_max": 256,
     }
@@ -78,19 +173,20 @@ def manifest_bytes(inventory: object = None) -> bytes:
     ).encode("ascii")
 
 
-def _object(value: Any, keys: set[str]) -> dict[str, Any]:
+def _object(value: object, keys: set[str]) -> Mapping[str, object]:
     if not isinstance(value, dict) or set(value) != keys:
         raise ValueError("renderer closed object schema")
-    return value
+    # Only the checked string keys are exposed; values remain untrusted objects.
+    return cast(Mapping[str, object], value)
 
 
-def _integer(value: Any, lo: int, hi: int) -> int:
+def _integer(value: object, lo: int, hi: int) -> int:
     if type(value) is not int or not lo <= value <= hi:
         raise ValueError("renderer integer bound")
     return value
 
 
-def _text(value: Any) -> str | None:
+def _text(value: object) -> str | None:
     if value is not None and (
         not isinstance(value, str)
         or not 1 <= len(value.encode()) <= 256
@@ -100,13 +196,17 @@ def _text(value: Any) -> str | None:
     return value
 
 
-def _number(value: Any, lo: float, hi: float) -> float:
-    if type(value) not in (int, float) or not math.isfinite(value) or not lo <= value <= hi:
+def _number(value: object, lo: float, hi: float) -> float:
+    if (
+        (type(value) is not int and type(value) is not float)
+        or not math.isfinite(value)
+        or not lo <= value <= hi
+    ):
         raise ValueError("renderer finite numeric bound")
-    return float(value)
+    return value
 
 
-def validate_request(value: Any) -> dict[str, Any]:
+def validate_request(value: object) -> Request:
     if not isinstance(value, dict):
         raise ValueError("renderer request object")
     if type(value.get("version")) is not int or value["version"] != RENDER_VERSION:
@@ -115,8 +215,11 @@ def validate_request(value: Any) -> dict[str, Any]:
     if operation not in OPERATIONS:
         raise ValueError("renderer operation not allowed")
     if operation == "probe":
-        return _object(value, {"version", "operation"})
-    _object(
+        _object(value, {"version", "operation"})
+        return {"version": RENDER_VERSION, "operation": "probe"}
+    if operation not in ("rgb", "mask", "selection", "section", "gltf"):
+        raise ValueError("renderer operation not allowed")
+    value = _object(
         value,
         {
             "version",
@@ -132,19 +235,27 @@ def validate_request(value: Any) -> dict[str, Any]:
             "links",
         },
     )
-    links = value["links"]
+    raw_links = value["links"]
+    links: Links | None = None
     if operation == "gltf":
-        _object(links, {"bundle_ref", "selection_table_ref"})
+        link_record = _object(raw_links, {"bundle_ref", "selection_table_ref"})
+        checked_links: dict[str, str] = {}
         for key, kind in (
             ("bundle_ref", "selection-bundle"),
             ("selection_table_ref", "selection-table"),
         ):
+            link = link_record[key]
             if (
-                not isinstance(links[key], str)
-                or re.fullmatch("artifact:" + kind + r":sha256:[0-9a-f]{64}", links[key]) is None
+                not isinstance(link, str)
+                or re.fullmatch("artifact:" + kind + r":sha256:[0-9a-f]{64}", link) is None
             ):
                 raise ValueError("renderer GLB link")
-    elif links is not None:
+            checked_links[key] = link
+        links = {
+            "bundle_ref": checked_links["bundle_ref"],
+            "selection_table_ref": checked_links["selection_table_ref"],
+        }
+    elif raw_links is not None:
         raise ValueError("renderer unexpected links")
     digest = value["brep_sha256"]
     if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
@@ -152,79 +263,103 @@ def validate_request(value: Any) -> dict[str, Any]:
     # Build artifact refs address BREP bytes, not arbitrary labels supplied by a job.
     if value["source_ref"] != "artifact:build:sha256:" + digest:
         raise ValueError("renderer source ref does not identify BREP")
-    if value["view"] not in VIEWS:
+    view = value["view"]
+    if not isinstance(view, str) or view not in VIEWS:
         raise ValueError("renderer view not allowed")
-    for key in ("width", "height"):
-        _integer(value[key], 16, 512)
-    solids = value["solids"]
-    if not isinstance(solids, list) or not 1 <= len(solids) <= MAX_SOLIDS:
+    width = _integer(value["width"], 16, 512)
+    height = _integer(value["height"], 16, 512)
+    raw_solids = value["solids"]
+    if not isinstance(raw_solids, list) or not 1 <= len(raw_solids) <= MAX_SOLIDS:
         raise ValueError("renderer solid metadata bound")
-    for solid in solids:
-        _object(solid, {"label", "color"})
-        _text(solid["label"])
+    solids: list[Solid] = []
+    for raw_solid in raw_solids:
+        solid = _object(raw_solid, {"label", "color"})
+        label = _text(solid["label"])
         color = solid["color"]
+        checked_color: list[int] | None = None
         if color is not None:
             if not isinstance(color, list) or len(color) != 4:
                 raise ValueError("renderer color schema")
-            for c in color:
-                _integer(c, 0, 255)
-    placements = value["placements"]
-    if not isinstance(placements, list) or len(placements) > MAX_TOPOLOGY:
+            checked_color = [_integer(c, 0, 255) for c in color]
+        solids.append({"label": label, "color": checked_color})
+    raw_placements = value["placements"]
+    if not isinstance(raw_placements, list) or len(raw_placements) > MAX_TOPOLOGY:
         raise ValueError("renderer placements bound")
-    names, occurrences = set(), set()
-    for placement in placements:
-        _object(placement, {"tag", "kind", "solid_index", "topology_index"})
+    names: set[str] = set()
+    occurrences: set[tuple[Kind, int, int]] = set()
+    placements: list[Placement] = []
+    for raw_placement in raw_placements:
+        placement = _object(raw_placement, {"tag", "kind", "solid_index", "topology_index"})
         tag = _text(placement["tag"])
         if tag is None or tag in names or placement["kind"] not in ("solid", "face", "edge"):
             raise ValueError("renderer placement identity")
+        kind = placement["kind"]
         names.add(tag)
         s = _integer(placement["solid_index"], 0, len(solids) - 1)
         t = _integer(placement["topology_index"], 0, MAX_TOPOLOGY - 1)
-        occurrence = (placement["kind"], s, t)
+        occurrence = (kind, s, t)
         if occurrence in occurrences or (placement["kind"] == "solid" and t != s):
             raise ValueError("renderer duplicate/invalid placement")
         occurrences.add(occurrence)
-    section = value["section"]
+        placements.append({"tag": tag, "kind": kind, "solid_index": s, "topology_index": t})
+    raw_section = value["section"]
+    section: Section | None = None
     if operation == "section":
-        _object(section, {"axis", "sign", "offset"})
-        if section["axis"] not in ("X", "Y", "Z"):
+        section_record = _object(raw_section, {"axis", "sign", "offset"})
+        axis = section_record["axis"]
+        if not isinstance(axis, str) or axis not in ("X", "Y", "Z"):
             raise ValueError("renderer section axis")
-        _integer(section["sign"], -1, 1)
-        if section["sign"] == 0:
+        sign = _integer(section_record["sign"], -1, 1)
+        if sign == 0:
             raise ValueError("renderer section sign")
-        _number(section["offset"], -1e6, 1e6)
-    elif section is not None:
+        offset = _number(section_record["offset"], -1e6, 1e6)
+        section = {"axis": axis, "sign": sign, "offset": offset}
+    elif raw_section is not None:
         raise ValueError("renderer unexpected section")
-    return value
+    return {
+        "version": RENDER_VERSION,
+        "operation": operation,
+        "source_ref": "artifact:build:sha256:" + digest,
+        "brep_sha256": digest,
+        "solids": solids,
+        "placements": placements,
+        "view": view,
+        "width": width,
+        "height": height,
+        "section": section,
+        "links": links,
+    }
 
 
-def request_bytes(value: Any) -> bytes:
+def request_bytes(value: object) -> bytes:
     validate_request(value)
     return encode(value, MAX_REQUEST)
 
 
-def read_request(data: bytes) -> dict[str, Any]:
+def read_request(data: bytes) -> Request:
     if len(data) > MAX_REQUEST:
         raise ValueError("renderer request byte limit")
     return validate_request(unique_json(data))
 
 
-def request_hash(value: Any) -> str:
+def request_hash(value: object) -> str:
     return hashlib.sha256(request_bytes(value)).hexdigest()
 
 
-def validate_response(data: bytes, request: dict[str, Any]) -> dict[str, Any]:
+def validate_response(data: bytes, request: object) -> Response:
     """Validate exact dimensions, canonical namespace, metadata and every ID pixel.
 
     A valid response is not publication/provenance authorization. The backend
     additionally requires its fresh trusted image identity and terminal cleanup.
     """
-    validate_request(request)
+    # Hash the original wire representation (e.g. integer vs float offsets),
+    # not the typed record reconstructed at admission.
+    digest = request_hash(request)
+    request = validate_request(request)
     if len(data) > MAX_RESULT:
         raise ValueError("renderer result byte limit")
-    value = unique_json(data)
-    _object(
-        value,
+    value = _object(
+        unique_json(data),
         {
             "version",
             "operation",
@@ -242,7 +377,7 @@ def validate_response(data: bytes, request: dict[str, Any]) -> dict[str, Any]:
         type(value["version"]) is not int
         or value["version"] != RENDER_VERSION
         or value["operation"] != request["operation"]
-        or value["request_sha256"] != request_hash(request)
+        or value["request_sha256"] != digest
         or value["source_ref"] != request.get("source_ref")
     ):
         raise ValueError("renderer response identity mismatch")
@@ -256,7 +391,19 @@ def validate_response(data: bytes, request: dict[str, Any]) -> dict[str, Any]:
     ):
         raise ValueError("renderer is not llvmpipe")
     operation = request["operation"]
-    if operation == "probe":
+    response: Response = {
+        "version": RENDER_VERSION,
+        "operation": operation,
+        "request_sha256": digest,
+        "source_ref": request["source_ref"] if request["operation"] != "probe" else None,
+        "gl_renderer": renderer,
+        "topology": [],
+        "entries": {},
+        "images": {},
+        "section": None,
+        "glb": None,
+    }
+    if request["operation"] == "probe":
         if (
             any(value[k] != {} for k in ("entries", "images"))
             or value["topology"] != []
@@ -264,38 +411,41 @@ def validate_response(data: bytes, request: dict[str, Any]) -> dict[str, Any]:
             or value["glb"] is not None
         ):
             raise ValueError("renderer probe payload")
-        return value
-    topology = value["topology"]
-    if not isinstance(topology, list) or len(topology) != len(request["solids"]):
+        return response
+    raw_topology = value["topology"]
+    if not isinstance(raw_topology, list) or len(raw_topology) != len(request["solids"]):
         raise ValueError("renderer topology/solid count")
     total = 0
-    for record in topology:
-        _object(record, {"faces", "edges"})
-        total += (
-            1
-            + _integer(record["faces"], 1, MAX_TOPOLOGY)
-            + _integer(record["edges"], 1, MAX_TOPOLOGY)
-        )
+    topology: list[Topology] = []
+    for raw_record in raw_topology:
+        record = _object(raw_record, {"faces", "edges"})
+        faces = _integer(record["faces"], 1, MAX_TOPOLOGY)
+        edges = _integer(record["edges"], 1, MAX_TOPOLOGY)
+        total += 1 + faces + edges
+        topology.append({"faces": faces, "edges": edges})
+    response["topology"] = topology
     if total > MAX_TOPOLOGY:
         raise ValueError("renderer topology bound")
     tags = {
         (p["kind"], p["solid_index"], p["topology_index"]): p["tag"] for p in request["placements"]
     }
-    occurrences = set()
-    expected = {}
+    occurrences: set[tuple[Kind, int, int]] = set()
+    expected: dict[str, Entry] = {}
     next_id = 1
     for s, record in enumerate(topology):
-        for kind, indices in (
-            ("solid", [s]),
-            ("face", range(record["faces"])),
-            ("edge", range(record["edges"])),
-        ):
+        for kind in ("solid", "face", "edge"):
+            indices = (
+                [s]
+                if kind == "solid"
+                else range(record["faces"] if kind == "face" else record["edges"])
+            )
             for t in indices:
                 occurrence = (kind, s, t)
                 occurrences.add(occurrence)
-                entry = {"kind": kind, "solid_index": s, "topology_index": t}
-                if request["solids"][s]["label"] is not None:
-                    entry["label"] = request["solids"][s]["label"]
+                entry: Entry = {"kind": kind, "solid_index": s, "topology_index": t}
+                label = request["solids"][s]["label"]
+                if label is not None:
+                    entry["label"] = label
                 if occurrence in tags:
                     entry["tag"] = tags[occurrence]
                 expected[str(next_id)] = entry
@@ -303,20 +453,19 @@ def validate_response(data: bytes, request: dict[str, Any]) -> dict[str, Any]:
     if not tags.keys() <= occurrences:
         raise ValueError("renderer placement outside topology")
     if operation == "mask":
-        expected = {
-            str(s): {
-                "kind": "solid",
-                "solid_index": s,
-                "topology_index": s,
-                **({"label": meta["label"]} if meta["label"] is not None else {}),
-            }
-            for s, meta in enumerate(request["solids"])
-        }
+        expected = {}
+        for s, meta in enumerate(request["solids"]):
+            entry = {"kind": "solid", "solid_index": s, "topology_index": s}
+            label = meta["label"]
+            if label is not None:
+                entry["label"] = label
+            expected[str(s)] = entry
     elif operation not in ("selection", "gltf"):
         expected = {}
     # Canonical encoding prevents bool/int and float/int equality coercions.
     if encode(value["entries"]) != encode(expected):
         raise ValueError("renderer selection table mismatch")
+    response["entries"] = expected
     images = value["images"]
     kinds = (
         {"solid", "face", "edge", "preview"}
@@ -325,8 +474,8 @@ def validate_response(data: bytes, request: dict[str, Any]) -> dict[str, Any]:
     )
     if not isinstance(images, dict) or set(images) != kinds:
         raise ValueError("renderer image set")
-    for kind, image in images.items():
-        _object(image, {"channels", "pixels", "sha256"})
+    for kind, raw_image in images.items():
+        image = _object(raw_image, {"channels", "pixels", "sha256"})
         channels = 3 if operation == "selection" and kind != "preview" else 4
         if type(image["channels"]) is not int or image["channels"] != channels:
             raise ValueError("renderer pixel channels")
@@ -341,17 +490,22 @@ def validate_response(data: bytes, request: dict[str, Any]) -> dict[str, Any]:
             or hashlib.sha256(raw).hexdigest() != image["sha256"]
         ):
             raise ValueError("renderer pixel digest/encoding")
+        response["images"][kind] = {
+            "channels": channels,
+            "pixels": text,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }
         if operation in ("selection", "mask") and kind != "preview":
             from hephaestus.core.render.palette import rgb_to_id
 
             for i in range(0, len(raw), channels):
-                rgb = tuple(raw[i : i + 3])
+                rgb = (raw[i], raw[i + 1], raw[i + 2])
                 if channels == 4 and raw[i + 3] != 255:
                     raise ValueError("renderer mask alpha")
                 if rgb == (0, 0, 0):
                     continue
-                entry = expected.get(str(rgb_to_id(rgb)))
-                if entry is None or entry["kind"] != (
+                pixel_entry = expected.get(str(rgb_to_id(rgb)))
+                if pixel_entry is None or pixel_entry["kind"] != (
                     kind if operation == "selection" else "solid"
                 ):
                     raise ValueError("renderer pixel outside exact palette/kind")
@@ -361,13 +515,15 @@ def validate_response(data: bytes, request: dict[str, Any]) -> dict[str, Any]:
         area = _number(section["area_mm2"], 0, 1e18)
         if (count == 0) != (area == 0):
             raise ValueError("renderer section measurements inconsistent")
+        response["section"] = {"faces": count, "area_mm2": area}
     elif value["section"] is not None:
         raise ValueError("renderer unexpected section measurements")
     if operation == "gltf":
         glb = _object(value["glb"], {"data", "sha256"})
-        if not isinstance(glb["data"], str) or len(glb["data"]) > 4 * ((MAX_GLB + 2) // 3):
+        glb_data = glb["data"]
+        if not isinstance(glb_data, str) or len(glb_data) > 4 * ((MAX_GLB + 2) // 3):
             raise ValueError("renderer GLB size")
-        raw = base64.b64decode(glb["data"], validate=True)
+        raw = base64.b64decode(glb_data, validate=True)
         if (
             len(raw) > MAX_GLB
             or base64.b64encode(raw).decode() != glb["data"]
@@ -376,13 +532,18 @@ def validate_response(data: bytes, request: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("renderer GLB digest/encoding")
         from hephaestus.core.render.glb_gate import validate_linked_glb
 
+        links = request["links"]
+        if links is None:
+            raise ValueError("renderer GLB links missing")
         validate_linked_glb(
             raw,
             source_ref=request["source_ref"],
             entries=expected,
             experimental=True,
-            **request["links"],
+            bundle_ref=links["bundle_ref"],
+            selection_table_ref=links["selection_table_ref"],
         )
+        response["glb"] = {"data": glb_data, "sha256": hashlib.sha256(raw).hexdigest()}
     elif value["glb"] is not None:
         raise ValueError("renderer unexpected GLB")
-    return value
+    return response

@@ -7,15 +7,20 @@ import copy
 import hashlib
 import io
 import json
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 import pytest
+from _oci_backend import ManifestBackend
+from _oci_json import array, record, text
 from hephaestus.core.executor.sandbox.base import Rlimits, SandboxSpec
 from hephaestus.core.executor.sandbox.oci import (
     OciBackend,
     OciIdentity,
     OciRuntime,
+    TransportResult,
     build_create_argv,
 )
 from hephaestus.core.executor.sandbox.oci_protocol import (
@@ -28,15 +33,19 @@ from hephaestus.core.executor.sandbox.oci_transfer import Receiver, encode, expo
 from hephaestus.core.render.oci_launcher import parse_render_argv
 from hephaestus.core.render.oci_protocol import (
     RENDER_WORKER,
+    Operation,
+    RenderRequest,
+    Response,
     manifest_bytes,
     read_request,
     request_bytes,
     request_hash,
+    validate_request,
     validate_response,
 )
 
 
-def request(operation="selection"):
+def request(operation: Operation = "selection") -> RenderRequest:
     return {
         "version": 2,
         "links": None,
@@ -52,13 +61,14 @@ def request(operation="selection"):
     }
 
 
-def response(req):
-    result = {
+def response(req: object) -> Response:
+    req = validate_request(req)
+    result: Response = {
         "version": 2,
         "glb": None,
         "operation": req["operation"],
         "request_sha256": request_hash(req),
-        "source_ref": req.get("source_ref"),
+        "source_ref": req["source_ref"] if req["operation"] != "probe" else None,
         "gl_renderer": "llvmpipe (test schema fixture, not evidence)",
         "topology": [],
         "entries": {},
@@ -99,7 +109,7 @@ def response(req):
 
 
 @pytest.mark.parametrize("operation", ["rgb", "mask", "selection", "section", "probe"])
-def test_closed_roundtrip(operation):
+def test_closed_roundtrip(operation: Operation | Literal["probe"]) -> None:
     req = request(operation) if operation != "probe" else {"version": 2, "operation": "probe"}
     assert read_request(request_bytes(req)) == req
     result = response(req)
@@ -115,8 +125,8 @@ def test_closed_roundtrip(operation):
         if (key, mutation) not in (("section", "null"), ("links", "null"))
     ],
 )
-def test_request_missing_or_null(key, mutation):
-    req = request()
+def test_request_missing_or_null(key: str, mutation: str) -> None:
+    req = record(request())
     if mutation == "remove":
         del req[key]
     else:
@@ -149,8 +159,8 @@ def test_request_missing_or_null(key, mutation):
         ("section", {"axis": "Z", "sign": 1, "offset": 0}),
     ],
 )
-def test_request_refusals(key, value):
-    req = request()
+def test_request_refusals(key: str, value: object) -> None:
+    req = record(request())
     req[key] = value
     with pytest.raises(ValueError):
         request_bytes(req)
@@ -167,8 +177,8 @@ def test_request_refusals(key, value):
         {"axis": "Z", "sign": 1, "offset": 1e7},
     ],
 )
-def test_section_refusals(section):
-    req = request("section")
+def test_section_refusals(section: object) -> None:
+    req = record(request("section"))
     req["section"] = section
     with pytest.raises(ValueError):
         request_bytes(req)
@@ -183,7 +193,7 @@ def test_section_refusals(section):
         b" " * (128 * 1024 + 1),
     ],
 )
-def test_wire_refusals(raw):
+def test_wire_refusals(raw: bytes) -> None:
     with pytest.raises(ValueError):
         read_request(raw)
 
@@ -197,9 +207,9 @@ def test_wire_refusals(raw):
         if (key, mutation) not in (("section", "null"), ("glb", "null"))
     ],
 )
-def test_response_fields(key, mutation):
+def test_response_fields(key: str, mutation: str) -> None:
     req = request()
-    result = response(req)
+    result = record(response(req))
     if mutation == "remove":
         del result[key]
     elif mutation == "null":
@@ -226,9 +236,9 @@ def test_response_fields(key, mutation):
         ("images", {}),
     ],
 )
-def test_response_refusals(key, value):
+def test_response_refusals(key: str, value: object) -> None:
     req = request()
-    result = response(req)
+    result = record(response(req))
     result[key] = value
     with pytest.raises(ValueError):
         validate_response(encode(result), req)
@@ -252,11 +262,11 @@ def test_response_refusals(key, value):
         "image_traversal",
     ],
 )
-def test_exact_table_and_palette(mutation):
+def test_exact_table_and_palette(mutation: str) -> None:
     req = request()
     result = response(req)
-    entry = result["entries"]["1"]
-    image = result["images"]["solid"]
+    entry = record(result["entries"]["1"])
+    image = record(result["images"]["solid"])
     if mutation in ("kind", "index", "bool", "tag", "label"):
         key, value = {
             "kind": ("kind", "edge"),
@@ -269,7 +279,7 @@ def test_exact_table_and_palette(mutation):
     elif mutation == "id":
         result["entries"]["01"] = result["entries"].pop("1")
     elif mutation == "image_length":
-        image["pixels"] += "AAAA"
+        image["pixels"] = text(image["pixels"]) + "AAAA"
     elif mutation == "image_digest":
         image["sha256"] = "a" * 64
     elif mutation == "image_channels":
@@ -278,14 +288,14 @@ def test_exact_table_and_palette(mutation):
         raw = bytes([0, 0, 3 if mutation == "pixel_kind" else 200]) * 256
         image.update(pixels=base64.b64encode(raw).decode(), sha256=hashlib.sha256(raw).hexdigest())
     else:
-        result["images"]["extra" if mutation == "extra_image" else "../escape"] = copy.deepcopy(
-            image
+        record(result["images"])["extra" if mutation == "extra_image" else "../escape"] = (
+            copy.deepcopy(image)
         )
     with pytest.raises(ValueError):
         validate_response(encode(result), req)
 
 
-def test_shared_transfer_fragmented_and_truncated(tmp_path):
+def test_shared_transfer_fragmented_and_truncated(tmp_path: Path) -> None:
     req = request()
     result = response(req)
     wire = io.BytesIO()
@@ -305,7 +315,7 @@ def test_shared_transfer_fragmented_and_truncated(tmp_path):
 @pytest.mark.parametrize(
     "module", [BUILD_WORKER, "os", RENDER_WORKER + ".extra", "hephaestus.core.dfm.worker"]
 )
-def test_renderer_launcher_refuses_cad_and_arbitrary(module):
+def test_renderer_launcher_refuses_cad_and_arbitrary(module: str) -> None:
     with pytest.raises(ValueError):
         parse_render_argv(
             (
@@ -321,20 +331,20 @@ def test_renderer_launcher_refuses_cad_and_arbitrary(module):
         )
 
 
-def test_cad_worker_allowlist_unchanged():
+def test_cad_worker_allowlist_unchanged() -> None:
     with pytest.raises(ValueError):
         approved_module_for_worker_args(("-m", RENDER_WORKER))
 
 
 @pytest.mark.parametrize("version", ["1", "2", "4", "true"])
-def test_renderer_run_version_rejection(version):
+def test_renderer_run_version_rejection(version: str) -> None:
     with pytest.raises(ValueError):
         parse_render_argv(
             ("run", version, RENDER_WORKER, "120", str(2 * 1024**3), "256", "ordinary", "a" * 64)
         )
 
 
-def test_separate_manifest_and_create(tmp_path):
+def test_separate_manifest_and_create(tmp_path: Path) -> None:
     from hephaestus.core.executor.sandbox.oci_protocol import manifest_bytes as cad_manifest
 
     assert manifest_bytes() != cad_manifest()
@@ -361,7 +371,9 @@ def test_separate_manifest_and_create(tmp_path):
     assert "--entrypoint" not in argv
     with pytest.raises(ValueError):
         build_create_argv(
-            *args[:3],
+            runtime,
+            args[1],
+            "linux/arm64",
             replace(spec, worker_args=("-m", BUILD_WORKER)),
             args[4],
             identity=OciIdentity(501, 20),
@@ -374,20 +386,30 @@ def test_separate_manifest_and_create(tmp_path):
 class RenderTransport:
     """Synthetic lifecycle only; never supplied to live acceptance."""
 
-    def __init__(self, mode):
+    def __init__(self, mode: str) -> None:
         self.mode = mode
-        self.argv = None
+        self.argv: Sequence[str] | None = None
         self.exists = True
         self.running = False
         self.killed = False
         self.removed = False
         self.started = False
 
-    def run(self, argv, *, stdout_consumer=None, **kwargs):
+    def run(
+        self,
+        argv: Sequence[str],
+        *,
+        input: bytes,
+        timeout: float,
+        stdout_limit: int,
+        stderr_limit: int,
+        env: Mapping[str, str],
+        stdout_consumer: Callable[[bytes], None] | None = None,
+    ) -> TransportResult:
         from hephaestus.core.executor.sandbox.oci import TransportResult, TransportTimeout
         from test_sandbox_oci import CONTAINER_ID, synthetic_effective
 
-        def result(value):
+        def result(value: object) -> TransportResult:
             return TransportResult(0, (json.dumps(value) + "\n").encode(), b"")
 
         if "create" in argv:
@@ -397,8 +419,11 @@ class RenderTransport:
             if not self.exists:
                 return TransportResult(1, b"", b"No such object\n")
             if "{{json .}}" in argv:
+                assert self.argv is not None
                 effective = synthetic_effective(self.argv)
-                effective["Config"]["Entrypoint"][-1] = "hephaestus.core.render.oci_launcher"
+                array(record(effective["Config"])["Entrypoint"])[-1] = (
+                    "hephaestus.core.render.oci_launcher"
+                )
                 if self.mode == "image_mismatch":
                     effective["Image"] = "sha256:" + "f" * 64
                 return result(effective)
@@ -410,6 +435,7 @@ class RenderTransport:
                 }
             )
         if "start" in argv:
+            assert self.argv is not None and stdout_consumer is not None
             self.started = True
             if self.mode == "timeout":
                 self.running = True
@@ -457,7 +483,7 @@ class RenderTransport:
         "uncertain_cleanup",
     ],
 )
-def test_renderer_reuses_fail_closed_lifecycle(tmp_path, mode):
+def test_renderer_reuses_fail_closed_lifecycle(tmp_path: Path, mode: str) -> None:
     from hephaestus.core.errors import SandboxDeniedError
     from test_sandbox_oci import IMAGE, passing, runtime
 
@@ -495,17 +521,17 @@ def test_renderer_reuses_fail_closed_lifecycle(tmp_path, mode):
 @pytest.mark.parametrize(
     "mutation", ["cad", "no_extension", "old_api", "extra_operation", "extra_field"]
 )
-def test_manifest_rejects_old_and_other_images(mutation):
+def test_manifest_rejects_old_and_other_images(mutation: str) -> None:
     from _execution_identity import runtime_inventory
     from hephaestus.core.errors import SandboxDeniedError
     from hephaestus.core.executor.sandbox.oci_protocol import manifest_bytes as cad_manifest
     from test_sandbox_oci import IMAGE, runtime
 
     inventory = runtime_inventory()
-    backend = OciBackend(
+    backend = ManifestBackend(
         runtime(), IMAGE, "linux/arm64", identity=OciIdentity(501, 20), runtime_profile="renderer"
     )
-    backend._image_id = "sha256:" + "e" * 64
+    backend.set_observed_image("sha256:" + "e" * 64)
     data = json.loads(manifest_bytes(inventory))
     if mutation == "cad":
         raw = cad_manifest(inventory)
@@ -520,13 +546,13 @@ def test_manifest_rejects_old_and_other_images(mutation):
             data["unexpected"] = True
         raw = encode(data)
     with pytest.raises(SandboxDeniedError):
-        backend._accept_manifest(raw)
+        backend.accept_manifest(raw)
 
 
 @pytest.mark.parametrize(
     "field,value", [(3, "121"), (4, str(2 * 1024**3 + 1)), (5, "257"), (5, "true"), (6, "custom")]
 )
-def test_renderer_launcher_limits(field, value):
+def test_renderer_launcher_limits(field: int, value: str) -> None:
     argv = [
         "run",
         str(PROTOCOL_VERSION),
@@ -545,7 +571,7 @@ def test_renderer_launcher_limits(field, value):
 @pytest.mark.parametrize(
     "change", ["digest", "platform", "cad_entrypoint", "environment", "healthcheck", "volumes"]
 )
-def test_renderer_image_attestation_rejects_mismatch(change):
+def test_renderer_image_attestation_rejects_mismatch(change: str) -> None:
     from hephaestus.core.errors import SandboxDeniedError
     from hephaestus.core.executor.sandbox.oci import (
         AUDITED_ENTRYPOINT,
@@ -554,12 +580,12 @@ def test_renderer_image_attestation_rejects_mismatch(change):
     )
     from test_sandbox_oci import IMAGE, FakeTransport, runtime
 
-    config = {
+    config: dict[str, object] = {
         "Entrypoint": [*AUDITED_ENTRYPOINT[:-1], "hephaestus.core.render.oci_launcher"],
         "Cmd": [],
         "Env": list(AUDITED_IMAGE_ENV),
     }
-    image = {
+    image: dict[str, object] = {
         "Id": "sha256:" + "e" * 64,
         "Architecture": "arm64",
         "Os": "linux",
@@ -573,13 +599,13 @@ def test_renderer_image_attestation_rejects_mismatch(change):
     elif change == "cad_entrypoint":
         config["Entrypoint"] = list(AUDITED_ENTRYPOINT)
     elif change == "environment":
-        config["Env"].append("PYTHONPATH=/inputs")
+        array(config["Env"]).append("PYTHONPATH=/inputs")
     elif change == "healthcheck":
         config["Healthcheck"] = {"Test": ["CMD", "sh"]}
     else:
         config["Volumes"] = {"/output": {}}
     transport = FakeTransport([TransportResult(0, (json.dumps(image) + "\n").encode(), b"")])
-    backend = OciBackend(
+    backend = ManifestBackend(
         runtime(),
         IMAGE,
         "linux/arm64",
@@ -588,11 +614,11 @@ def test_renderer_image_attestation_rejects_mismatch(change):
         runtime_profile="renderer",
     )
     with pytest.raises(SandboxDeniedError):
-        backend._validate_image()
+        backend.validate_image()
     assert all("create" not in call[0] for call in transport.calls)
 
 
-def test_pinned_renderer_dependencies_not_upgrades():
+def test_pinned_renderer_dependencies_not_upgrades() -> None:
     import tomllib
 
     root = Path(__file__).resolve().parents[2]
@@ -612,7 +638,7 @@ def test_pinned_renderer_dependencies_not_upgrades():
     assert "core.render.oci_launcher" not in executor
 
 
-def test_host_boundary_has_no_native_imports():
+def test_host_boundary_has_no_native_imports() -> None:
     import subprocess
     import sys
 
@@ -628,3 +654,55 @@ def test_host_boundary_has_no_native_imports():
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("offset", [0, 0.0, -0.0, 0.125])
+def test_admission_preserves_numeric_wire_identity(offset: float) -> None:
+    req = request("section")
+    assert req["section"] is not None
+    req["section"]["offset"] = offset
+    wire = request_bytes(req)
+    admitted = read_request(wire)
+    assert request_bytes(admitted) == wire
+    assert request_hash(admitted) == request_hash(req)
+    assert validate_response(encode(response(req)), admitted)["operation"] == "section"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("solids", [{"label": 12, "color": None}]),
+        ("solids", [{"label": "cube", "color": [0, 0, True, 255]}]),
+        ("solids", [{"label": "cube", "color": [0, 0, 0.0, 255]}]),
+        (
+            "placements",
+            [{"tag": "face", "kind": "face", "solid_index": False, "topology_index": 0}],
+        ),
+        ("placements", [{"tag": "face", "kind": "face", "solid_index": 0, "topology_index": 0.0}]),
+        ("section", {"axis": "Z", "sign": 1, "offset": True}),
+        ("section", {"axis": "Z", "sign": 1, "offset": "0"}),
+    ],
+)
+def test_raw_nested_admission_keeps_exact_runtime_types(field: str, value: object) -> None:
+    req = record(request("section"))
+    req[field] = value
+    with pytest.raises(ValueError):
+        validate_request(req)
+
+
+def test_section_numeric_subclasses_are_not_wire_numbers() -> None:
+    class CustomInt(int):
+        pass
+
+    req = record(request("section"))
+    record(req["section"])["offset"] = CustomInt(0)
+    with pytest.raises(ValueError, match="numeric"):
+        validate_request(req)
+
+
+def test_admitted_request_does_not_alias_mutable_caller_metadata() -> None:
+    req = request()
+    admitted = validate_request(req)
+    assert admitted["operation"] != "probe"
+    req["solids"][0]["label"] = "changed after admission"
+    assert admitted["solids"][0]["label"] == "cube"

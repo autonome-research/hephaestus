@@ -2,15 +2,52 @@
 
 import hashlib
 from dataclasses import replace
-from types import SimpleNamespace
-from typing import cast
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from hephaestus.agent_bridge.cad_ops._base import CadOpError
 from hephaestus.agent_bridge.cad_ops._build import BuildOps
+from hephaestus.core.project_store.layout import ProjectLayout, ProjectManifest
 from hephaestus.core.render.bundle import PassRefs
-from hephaestus.core.render.inspect import InspectImage, InspectResult, SelectionBundleView
+from hephaestus.core.render.inspect import (
+    InspectImage,
+    InspectResult,
+    RenderProject,
+    SelectionBundleView,
+)
+
+from opstore import OpStore
+
+
+class ImageOps(BuildOps):
+    """Controlled render project; inherit the actual dimension forwarding method."""
+
+    def __init__(self, project: RenderProject, size: tuple[int, int] | None = None) -> None:
+        self.project = project
+        self._render_size = size
+
+    def _render_project(self) -> RenderProject:
+        return self.project
+
+
+@pytest.fixture
+def image_ops(tmp_path: Path, store: OpStore) -> ImageOps:
+    return ImageOps(RenderProject(ProjectLayout(tmp_path, ProjectManifest("identity")), store))
+
+
+@pytest.mark.parametrize("size", [None, (320, 240)])
+def test_bridge_forwards_configured_dimensions_or_leaves_native_defaults(
+    image_ops: ImageOps, size: tuple[int, int] | None
+) -> None:
+    ops = ImageOps(image_ops.project, size)
+    with patch(
+        "hephaestus.agent_bridge.cad_ops._build.inspect_part", return_value=result()
+    ) as render:
+        ops.inspect_part("p")
+    assert render.call_args.args == (image_ops.project, "p")
+    dimensions = {k: v for k, v in render.call_args.kwargs.items() if k in {"width", "height"}}
+    assert dimensions == ({} if size is None else {"width": 320, "height": 240})
 
 
 def result() -> InspectResult:
@@ -32,12 +69,10 @@ def result() -> InspectResult:
     )
 
 
-def test_bridge_stamps_grounded_ordered_identity() -> None:
+def test_bridge_stamps_grounded_ordered_identity(image_ops: ImageOps) -> None:
     rendered = result()
     with patch("hephaestus.agent_bridge.cad_ops._build.inspect_part", return_value=rendered):
-        payload = BuildOps.inspect_part(
-            cast(BuildOps, SimpleNamespace(_render_project=lambda: None)), "p"
-        )
+        payload = image_ops.inspect_part("p")
     for actual, image in zip(payload["images"], rendered.images, strict=True):
         assert actual["part"] == "p"
         assert actual["view"] == image.view
@@ -47,7 +82,7 @@ def test_bridge_stamps_grounded_ordered_identity() -> None:
 
 
 @pytest.mark.parametrize("fault", ["hash", "order", "count"])
-def test_bridge_refuses_uncorrelated_image(fault: str) -> None:
+def test_bridge_refuses_uncorrelated_image(image_ops: ImageOps, fault: str) -> None:
     rendered = result()
     if fault == "hash":
         rendered = replace(
@@ -64,7 +99,7 @@ def test_bridge_refuses_uncorrelated_image(fault: str) -> None:
         patch("hephaestus.agent_bridge.cad_ops._build.inspect_part", return_value=rendered),
         pytest.raises(CadOpError, match="render"),
     ):
-        BuildOps.inspect_part(cast(BuildOps, SimpleNamespace(_render_project=lambda: None)), "p")
+        image_ops.inspect_part("p")
 
 
 def selection_result() -> InspectResult:
@@ -106,11 +141,10 @@ def selection_result() -> InspectResult:
     )
 
 
-def test_bridge_accepts_only_grounded_selection_preview_bytes() -> None:
+def test_bridge_accepts_only_grounded_selection_preview_bytes(image_ops: ImageOps) -> None:
     rendered = selection_result()
     with patch("hephaestus.agent_bridge.cad_ops._build.inspect_part", return_value=rendered):
-        payload = BuildOps.inspect_part(
-            cast(BuildOps, SimpleNamespace(_render_project=lambda: None)),
+        payload = image_ops.inspect_part(
             "p",
             channel="mask",
             mask_mode="selection",
@@ -140,7 +174,7 @@ def test_bridge_accepts_only_grounded_selection_preview_bytes() -> None:
         "source",
     ],
 )
-def test_bridge_refuses_wrong_selection_identity(fault: str) -> None:
+def test_bridge_refuses_wrong_selection_identity(image_ops: ImageOps, fault: str) -> None:
     rendered = selection_result()
     if fault in ("render", "selection-pass", "posed-render", "unknown"):
         first = replace(
@@ -196,8 +230,7 @@ def test_bridge_refuses_wrong_selection_identity(fault: str) -> None:
         patch("hephaestus.agent_bridge.cad_ops._build.inspect_part", return_value=rendered),
         pytest.raises(CadOpError, match="render"),
     ):
-        BuildOps.inspect_part(
-            cast(BuildOps, SimpleNamespace(_render_project=lambda: None)),
+        image_ops.inspect_part(
             "p",
             channel="mask",
             mask_mode="solid" if fault == "mode" else "selection",
