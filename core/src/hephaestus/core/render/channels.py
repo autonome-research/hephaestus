@@ -514,6 +514,8 @@ class ChannelView:
     view: str
     rgba: NDArray[np.uint8]
     legend: dict[str, dict[str, JSONValue]] | None = field(default=None)
+    #: Actual context that produced these pixels, not an environment hint.
+    gl_renderer: str = ""
 
     def png(self) -> bytes:
         """Deterministic PNG bytes of :attr:`rgba` (no timestamp/metadata)."""
@@ -722,6 +724,7 @@ def render_channel(
                 view=name,
                 rgba=rgba,
                 legend=dict(legend) if legend is not None else None,
+                gl_renderer=session.gl_renderer,
             )
     return results
 
