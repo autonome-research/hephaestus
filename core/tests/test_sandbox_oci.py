@@ -14,7 +14,7 @@ import math
 import stat
 import sys
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -49,11 +49,11 @@ from hephaestus.core.executor.sandbox.oci_protocol import (
     REQUIRED_OCI_FEATURES,
 )
 from hephaestus.core.executor.sandbox.oci_storage import MASKED_DEVICE_PATHS, RUNTIME_PATHS
-from hephaestus.core.executor.sandbox.oci_storage_policy import DEFAULT_STORAGE
+from hephaestus.core.executor.sandbox.oci_storage_policy import DEFAULT_STORAGE, StoragePolicy
 from hephaestus.core.executor.sandbox.oci_transfer import export
 
 
-def synthetic_storage(policy=DEFAULT_STORAGE):
+def synthetic_storage(policy: StoragePolicy = DEFAULT_STORAGE):
     return {
         "mounts": {
             "/": {"fs_type": "overlay", "options": ["ro"]},
@@ -87,8 +87,8 @@ def synthetic_storage(policy=DEFAULT_STORAGE):
     }
 
 
-def synthetic_effective(argv):
-    def arg(name):
+def synthetic_effective(argv: Sequence[str]) -> dict[str, object]:
+    def arg(name: str) -> str:
         return argv[argv.index(name) + 1]
 
     mount = arg("--mount")
@@ -158,7 +158,7 @@ class FakeTransport:
         stdout_limit: int,
         stderr_limit: int,
         env: Mapping[str, str],
-        stdout_consumer=None,
+        stdout_consumer: Callable[[bytes], None] | None = None,
     ) -> TransportResult:
         del stdout_limit, stderr_limit
         if "create" in argv:
@@ -700,7 +700,9 @@ def test_unsettled_create_absence_is_never_cleanup_success(
         {"Running": 0, "ExitCode": 0, "OOMKilled": False},
     ],
 )
-def test_terminal_state_requires_typed_non_oom_evidence(tmp_path: Path, bad_state: dict) -> None:
+def test_terminal_state_requires_typed_non_oom_evidence(
+    tmp_path: Path, bad_state: dict[str, object]
+) -> None:
     state = TransportResult(0, (json.dumps(bad_state) + "\n").encode(), b"")
     transport = FakeTransport(
         [
@@ -747,7 +749,7 @@ def test_malformed_post_start_inspection_still_cleans_up(tmp_path: Path) -> None
     assert any("rm" in call[0] for call in transport.calls)
 
 
-def _valid_probe_response(nonce: str) -> dict[str, object]:
+def valid_probe_response(nonce: str) -> dict[str, object]:
     return {
         "capabilities": {
             "CapInh": "0000000000000000",
@@ -819,7 +821,7 @@ def test_probe_response_requires_every_raw_containment_observation(tmp_path: Pat
     out.mkdir()
     (out / f".heph-oci-probe-{nonce}").write_text(nonce, encoding="ascii")
     request_spec = spec(out)
-    response = _valid_probe_response(nonce)
+    response = valid_probe_response(nonce)
     features = oci_module._validate_probe_response(response, nonce, request_spec, out, IDENTITY)
     assert set(features) == set(REQUIRED_OCI_FEATURES)
     assert all(features.values())
@@ -865,7 +867,7 @@ def test_macos_observed_network_inventory_does_not_pass_on_connect_errno_alone(
     """
     nonce = "d" * 64
     (tmp_path / f".heph-oci-probe-{nonce}").write_text(nonce, encoding="ascii")
-    response = _valid_probe_response(nonce)
+    response = valid_probe_response(nonce)
     response["network"] = {
         "connect_errno": errno.ENETUNREACH,
         "routes": [],

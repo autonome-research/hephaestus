@@ -558,7 +558,7 @@ def test_grouped_transfer_failure_reaps_client_and_reconciles_running_container(
         return child
 
     monkeypatch.setattr(oci.subprocess, "Popen", popen)
-    real_write, real_unlink = oci_transfer._write, os.unlink
+    real_write, real_unlink = oci_transfer.write_all, os.unlink
     failures = []
 
     def write(stream, data):
@@ -574,7 +574,7 @@ def test_grouped_transfer_failure_reaps_client_and_reconciles_running_container(
             raise PermissionError("injected unlink failure")
         return real_unlink(path, *args, **kwargs)
 
-    monkeypatch.setattr(oci_transfer, "_write", write)
+    monkeypatch.setattr(oci_transfer, "write_all", write)
     monkeypatch.setattr(os, "unlink", unlink)
 
     class RunningTransport(WireTransport):

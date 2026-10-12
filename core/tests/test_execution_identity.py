@@ -10,18 +10,32 @@ import copy
 import importlib.metadata
 import json
 from dataclasses import FrozenInstanceError, replace
+from pathlib import Path
+from typing import Never
 
 import pytest
 from _execution_identity import identity, runtime_inventory
+from _oci_backend import ManifestBackend
+from _oci_json import record as json_record
 from hephaestus.core.errors import SandboxDeniedError, ValidationError
 from hephaestus.core.executor.identity import (
     IDENTITY_METADATA_KEY,
     ExecutionIdentity,
     backend_execution_identity,
 )
-from hephaestus.core.executor.runner import BuildRequest, assemble_build, run_build
-from hephaestus.core.executor.sandbox.base import CapabilityReport, ExecOutcome, Rlimits
-from hephaestus.core.executor.sandbox.oci import OciBackend
+from hephaestus.core.executor.runner import (
+    BuildRequest,
+    UnpublishedBuild,
+    assemble_build,
+    run_build,
+)
+from hephaestus.core.executor.sandbox.base import (
+    CapabilityReport,
+    ExecBackend,
+    ExecOutcome,
+    Rlimits,
+    SandboxSpec,
+)
 from hephaestus.core.executor.sandbox.oci_identity import (
     collect_runtime_identity,
     installed_source_hash,
@@ -29,9 +43,12 @@ from hephaestus.core.executor.sandbox.oci_identity import (
 )
 from hephaestus.core.executor.sandbox.oci_protocol import manifest_bytes
 from hephaestus.core.project_store.layout import open_store
-from hephaestus.core.project_store.publication import Publisher, current_pointer
+from hephaestus.core.project_store.publication import Publisher as BasePublisher
+from hephaestus.core.project_store.publication import current_pointer
 from hephaestus.core.project_store.store import blob_hash_of_ref
+from hephaestus.core.types import BuildFreshness
 from opstore.gc import PREVIEW_RETENTION_CLASS
+from opstore.types import JSONValue
 from test_project_store_helpers import DEFAULT_SCRIPT, make_project
 from test_sandbox_oci import IMAGE, FakeTransport, passing, runtime
 
@@ -40,15 +57,24 @@ from opstore import canonical_json, sha256_bytes, sha256_canonical_json
 NATIVE_HASH = sha256_bytes(b"synthetic native toolchain")
 
 
-def native_hash():
+class Publisher(BasePublisher):
+    """Every freshness assertion in this fixture follows an actual publication."""
+
+    def freshness(self, part: str) -> BuildFreshness:
+        result = super().freshness(part)
+        assert result is not None
+        return result
+
+
+def native_hash() -> str:
     return NATIVE_HASH
 
 
-def forbidden_host_hash():
+def forbidden_host_hash() -> Never:
     pytest.fail("OCI path consulted the host toolchain")
 
 
-def result_record(status="ok"):
+def result_record(status: str = "ok") -> dict[str, JSONValue]:
     return {
         "status": status,
         "artifacts": {"build": "final.brep", "source_map": "source_map.json"}
@@ -75,7 +101,7 @@ def result_record(status="ok"):
     }
 
 
-def write_artifacts(out, status="ok"):
+def write_artifacts(out: Path, status: str = "ok") -> None:
     out.mkdir(parents=True, exist_ok=True)
     if status == "ok":
         (out / "final.brep").write_bytes(b"synthetic geometry, not kernel evidence")
@@ -89,22 +115,22 @@ class ImageBackend:
 
     name = "oci-unit"
 
-    def __init__(self, value=None):
+    def __init__(self, value: ExecutionIdentity | None = None) -> None:
         self.value = value or identity()
-        self.outcome_identity = self.value
+        self.outcome_identity: ExecutionIdentity | None = self.value
         self.unavailable = False
         self.executed = False
-        self.next_identity = None
+        self.next_identity: ExecutionIdentity | None = None
 
-    def probe(self):
+    def probe(self) -> CapabilityReport:
         return CapabilityReport(self.name, True)
 
-    def execution_identity(self):
+    def execution_identity(self) -> ExecutionIdentity:
         if self.unavailable:
             raise SandboxDeniedError("unit backend identity unavailable")
         return self.value
 
-    def execute(self, spec, stdin_payload):
+    def execute(self, spec: SandboxSpec, stdin_payload: bytes) -> ExecOutcome:
         self.executed = True
         assert spec.rlimits.address_space_bytes <= 2 * 1024**3
         assert IDENTITY_METADATA_KEY not in json.loads(stdin_payload)
@@ -119,15 +145,17 @@ class ImageBackend:
 class NativeBackend:
     name = "bwrap-unit"
 
-    def probe(self):
+    def probe(self) -> CapabilityReport:
         return CapabilityReport(self.name, True)
 
-    def execute(self, spec, stdin_payload):
+    def execute(self, spec: SandboxSpec, stdin_payload: bytes) -> ExecOutcome:
         write_artifacts(spec.rw_out_dir)
         return ExecOutcome(0, json.dumps(result_record()).encode(), b"")
 
 
-def build(out, *, backend=None, status="ok"):
+def build(
+    out: Path, *, backend: ImageBackend | None = None, status: str = "ok"
+) -> UnpublishedBuild:
     write_artifacts(out, status)
     return assemble_build(
         BuildRequest("widget", DEFAULT_SCRIPT),
@@ -138,7 +166,7 @@ def build(out, *, backend=None, status="ok"):
     )
 
 
-def run(backend, out):
+def run(backend: ExecBackend, out: Path) -> UnpublishedBuild:
     return run_build(
         BuildRequest("widget", DEFAULT_SCRIPT, wall_clock_s=60),
         backend=backend,
@@ -148,7 +176,7 @@ def run(backend, out):
     )
 
 
-def test_runner_uses_control_identity_not_script_fingerprint(tmp_path):
+def test_runner_uses_control_identity_not_script_fingerprint(tmp_path: Path) -> None:
     backend = ImageBackend()
     built = run(backend, tmp_path / "out")
     assert backend.executed
@@ -156,11 +184,11 @@ def test_runner_uses_control_identity_not_script_fingerprint(tmp_path):
     assert built.result.input_hashes.toolchain == backend.value.toolchain_hash
     assert built.result.metadata[IDENTITY_METADATA_KEY] == backend.value.canonical
     assert built.result.metadata["description"] == "test"
-    assert "script-forgery" not in built.result.to_json()["metadata"].values()
+    assert "script-forgery" not in json_record(built.result.to_json()["metadata"]).values()
 
 
 @pytest.mark.parametrize("bad", ["missing", "wrong", "changed"])
-def test_runner_refuses_outcome_identity_drift(tmp_path, bad):
+def test_runner_refuses_outcome_identity_drift(tmp_path: Path, bad: str) -> None:
     backend = ImageBackend()
     other = identity(image_id="sha256:" + "f" * 64)
     if bad == "missing":
@@ -174,7 +202,7 @@ def test_runner_refuses_outcome_identity_drift(tmp_path, bad):
     assert backend.executed
 
 
-def test_missing_provider_or_unavailable_identity_refuses_before_worker(tmp_path):
+def test_missing_provider_or_unavailable_identity_refuses_before_worker(tmp_path: Path) -> None:
     class Missing(NativeBackend):
         name = "oci-invalid"
 
@@ -188,7 +216,7 @@ def test_missing_provider_or_unavailable_identity_refuses_before_worker(tmp_path
     assert not (tmp_path / "unavailable").exists()
 
 
-def test_native_runner_preserves_hash_and_cannot_smuggle_oci_metadata(tmp_path):
+def test_native_runner_preserves_hash_and_cannot_smuggle_oci_metadata(tmp_path: Path) -> None:
     built = run_build(
         BuildRequest("widget", DEFAULT_SCRIPT),
         backend=NativeBackend(),
@@ -205,9 +233,11 @@ def test_native_runner_preserves_hash_and_cannot_smuggle_oci_metadata(tmp_path):
     "field",
     ["image_ref", "image_id", "platform", "python", "source", "opstore", "package", "metadata"],
 )
-def test_every_executor_input_changes_immutable_build_identity(tmp_path, field):
+def test_every_executor_input_changes_immutable_build_identity(tmp_path: Path, field: str) -> None:
     first = identity()
     record = first.to_json()
+    inventory = json_record(record["runtime"])
+    packages = json_record(inventory["packages"])
     if field == "image_ref":
         record[field] = IMAGE.replace("a" * 64, "f" * 64)
     elif field == "image_id":
@@ -215,14 +245,14 @@ def test_every_executor_input_changes_immutable_build_identity(tmp_path, field):
     elif field == "platform":
         record[field] = "linux/arm64"
     elif field == "python":
-        record["runtime"]["python"] = "3.13.8"
+        inventory["python"] = "3.13.8"
     elif field in {"source", "opstore"}:
         key = "opstore" if field == "opstore" else "hephaestus-executor-runtime"
-        record["runtime"]["source_trees"][key] = "sha256:" + "f" * 64
+        json_record(inventory["source_trees"])[key] = "sha256:" + "f" * 64
     elif field == "package":
-        record["runtime"]["packages"]["build123d"]["version"] = "0.11.2"
+        json_record(packages["build123d"])["version"] = "0.11.2"
     else:
-        record["runtime"]["packages"]["build123d"]["metadata_sha256"] = "sha256:" + "f" * 64
+        json_record(packages["build123d"])["metadata_sha256"] = "sha256:" + "f" * 64
     second = ExecutionIdentity(canonical_json(record))
     assert first.toolchain_hash != second.toolchain_hash
     layout = make_project(tmp_path / "project")
@@ -243,11 +273,14 @@ def test_every_executor_input_changes_immutable_build_identity(tmp_path, field):
         assert store.blobs.has(result_a.record_blob)
         assert pub_b.freshness("widget").fresh
         assert pub_a.freshness("widget").changed_inputs == ("toolchain",)
-        assert pub_a.current_result("widget").current  # not read-time freshness
+        current = pub_a.current_result("widget")
+        assert current is not None and current.current  # not read-time freshness
 
 
 @pytest.mark.parametrize("direction", ["native-to-oci", "oci-to-native"])
-def test_cross_backend_publication_races_and_freshness_is_stale(tmp_path, direction):
+def test_cross_backend_publication_races_and_freshness_is_stale(
+    tmp_path: Path, direction: str
+) -> None:
     layout = make_project(tmp_path / "project")
     image = ImageBackend()
     with open_store(layout) as store:
@@ -270,7 +303,7 @@ def test_cross_backend_publication_races_and_freshness_is_stale(tmp_path, direct
         assert original.freshness("widget").fresh
 
 
-def test_identical_image_alias_is_location_not_changed_executor_input(tmp_path):
+def test_identical_image_alias_is_location_not_changed_executor_input(tmp_path: Path) -> None:
     layout = make_project(tmp_path / "project")
     a = ImageBackend()
     alias = identity(image_ref=IMAGE.replace("registry.example", "localhost"))
@@ -285,7 +318,7 @@ def test_identical_image_alias_is_location_not_changed_executor_input(tmp_path):
         assert second.freshness("widget").fresh
 
 
-def test_revalidation_rechecks_live_identity_and_preserves_stale(tmp_path):
+def test_revalidation_rechecks_live_identity_and_preserves_stale(tmp_path: Path) -> None:
     layout = make_project(tmp_path / "project")
     backend = ImageBackend()
     with open_store(layout) as store:
@@ -307,7 +340,9 @@ def test_revalidation_rechecks_live_identity_and_preserves_stale(tmp_path):
 @pytest.mark.parametrize(
     "mode", ["missing-metadata", "missing-control", "wrong-metadata", "wrong-hash"]
 )
-def test_publication_refuses_inconsistent_identity_before_install(tmp_path, mode):
+def test_publication_refuses_inconsistent_identity_before_install(
+    tmp_path: Path, mode: str
+) -> None:
     layout = make_project(tmp_path / "project")
     backend = ImageBackend()
     built = build(tmp_path / "out", backend=backend)
@@ -337,11 +372,14 @@ def test_publication_refuses_inconsistent_identity_before_install(tmp_path, mode
         with pytest.raises(ValidationError, match="identity"):
             publisher.publish_build(built, op_id="bad")
         assert store.blobs.read_pointer(current_pointer("widget")) is None
+        assert built.result.artifact_ref is not None
         assert not store.blobs.has(blob_hash_of_ref(built.result.artifact_ref))
 
 
 @pytest.mark.parametrize("mode", ["missing", "malformed", "wrong-hash"])
-def test_freshness_never_accepts_missing_or_corrupt_stored_identity(tmp_path, mode):
+def test_freshness_never_accepts_missing_or_corrupt_stored_identity(
+    tmp_path: Path, mode: str
+) -> None:
     layout = make_project(tmp_path / "project")
     backend = ImageBackend()
     with open_store(layout) as store:
@@ -349,8 +387,10 @@ def test_freshness_never_accepts_missing_or_corrupt_stored_identity(tmp_path, mo
             layout, store, backend=backend, native_toolchain_hash=forbidden_host_hash
         )
         publisher.publish_build(build(tmp_path / "out", backend=backend), op_id="first")
-        bundle = dict(publisher.current_bundle("widget"))
-        metadata = bundle["result"]["metadata"]
+        current_bundle = publisher.current_bundle("widget")
+        assert current_bundle is not None
+        bundle = dict(current_bundle)
+        metadata = json_record(json_record(bundle["result"])["metadata"])
         if mode == "missing":
             metadata.pop(IDENTITY_METADATA_KEY)
         elif mode == "malformed":
@@ -365,10 +405,11 @@ def test_freshness_never_accepts_missing_or_corrupt_stored_identity(tmp_path, mo
         else:
             with pytest.raises(ValidationError, match="identity"):
                 publisher.freshness("widget")
-        assert publisher.current_result("widget").current
+        current = publisher.current_result("widget")
+        assert current is not None and current.current
 
 
-def test_identity_durable_on_failed_preview_and_replay_without_new_gc_roots(tmp_path):
+def test_identity_durable_on_failed_preview_and_replay_without_new_gc_roots(tmp_path: Path) -> None:
     layout = make_project(tmp_path / "project")
     backend = ImageBackend()
     with open_store(layout) as store:
@@ -396,18 +437,20 @@ def test_identity_durable_on_failed_preview_and_replay_without_new_gc_roots(tmp_
             build(tmp_path / "failure", backend=backend, status="failed"), op_id="failure"
         )
         assert failed.kind == "failed"
+        failure = publisher.last_failure_result("widget")
+        assert failure is not None
+        assert failure.metadata[IDENTITY_METADATA_KEY] == backend.value.canonical
+        current = publisher.current_result("widget")
+        assert current is not None and current.current
+        bundle = publisher.current_bundle("widget")
+        assert bundle is not None
         assert (
-            publisher.last_failure_result("widget").metadata[IDENTITY_METADATA_KEY]
+            json_record(json_record(bundle["result"])["metadata"])[IDENTITY_METADATA_KEY]
             == backend.value.canonical
         )
-        assert publisher.current_result("widget").current
-        assert (
-            publisher.current_bundle("widget")["result"]["metadata"][IDENTITY_METADATA_KEY]
-            == backend.value.canonical
-        )
-        assert publisher.bundle_ref_for_artifact("widget", built.result.artifact_ref).endswith(
-            first.record_blob
-        )
+        assert built.result.artifact_ref is not None
+        bundle_ref = publisher.bundle_ref_for_artifact("widget", built.result.artifact_ref)
+        assert bundle_ref is not None and bundle_ref.endswith(first.record_blob)
         assert store.gc.pins() == frozenset()
         reachable = store.gc.reachable()
         assert first.record_blob in reachable
@@ -416,44 +459,50 @@ def test_identity_durable_on_failed_preview_and_replay_without_new_gc_roots(tmp_
         assert all(blob_hash_of_ref(ref) in reachable for ref in failed.evidence_refs)
 
 
-def test_cadops_publisher_factory_uses_injected_backend(tmp_path):
+def test_cadops_publisher_factory_uses_injected_backend(tmp_path: Path) -> None:
     from hephaestus.agent_bridge.cad_ops._base import CadOpsState
+
+    class PublisherOps(CadOpsState):
+        def publisher(self) -> BasePublisher:
+            return self._publisher()
 
     layout = make_project(tmp_path / "project")
     backend = ImageBackend()
     with open_store(layout) as store:
-        cad = CadOpsState(layout, store, backend=backend)
-        publisher = cad._publisher()
+        cad = PublisherOps(layout, store, backend=backend)
+        publisher = cad.publisher()
         assert (
             publisher.publish_build(build(tmp_path / "out", backend=backend), op_id="cad").kind
             == "current"
         )
-        assert cad._publisher().freshness("widget").fresh
+        fresh = cad.publisher().freshness("widget")
+        assert fresh is not None and fresh.fresh
         backend.value = identity(platform="linux/arm64")
-        assert cad._publisher().freshness("widget").changed_inputs == ("toolchain",)
+        stale = cad.publisher().freshness("widget")
+        assert stale is not None and stale.changed_inputs == ("toolchain",)
 
 
-def test_identity_is_deeply_immutable_and_order_independent():
+def test_identity_is_deeply_immutable_and_order_independent() -> None:
     inventory = runtime_inventory()
     original = identity(runtime=inventory)
-    inventory["packages"]["build123d"]["version"] = "changed"
+    json_record(json_record(inventory["packages"])["build123d"])["version"] = "changed"
     returned = original.to_json()
-    returned["runtime"]["packages"].clear()
+    json_record(json_record(returned["runtime"])["packages"]).clear()
     assert original == identity()
     assert (
         original.toolchain_hash
         == identity(runtime=dict(reversed(list(runtime_inventory().items())))).toolchain_hash
     )
     with pytest.raises(FrozenInstanceError):
-        original.canonical = "{}"
+        original.__setattr__("canonical", "{}")
 
 
 @pytest.mark.parametrize(
     "mutation", ["missing", "old", "bool", "extra", "source", "package", "python", "duplicate"]
 )
-def test_manifest_inventory_is_mandatory_closed_and_versioned(mutation):
-    backend = OciBackend(runtime(), IMAGE, "linux/amd64", transport=FakeTransport())
-    backend._image_id = "sha256:" + "e" * 64
+def test_manifest_inventory_is_mandatory_closed_and_versioned(mutation: str) -> None:
+    backend = ManifestBackend(runtime(), IMAGE, "linux/amd64", transport=FakeTransport())
+    backend.set_observed_image("sha256:" + "e" * 64)
     inventory = runtime_inventory()
     payload = manifest_bytes(inventory)
     value = json.loads(payload)
@@ -478,41 +527,41 @@ def test_manifest_inventory_is_mandatory_closed_and_versioned(mutation):
     if mutation != "duplicate":
         payload = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
     with pytest.raises((ValidationError, ValueError, SandboxDeniedError)):
-        backend._accept_manifest(payload)
+        backend.accept_manifest(payload)
     with pytest.raises(SandboxDeniedError, match="identity"):
         backend.execution_identity()
 
 
-def test_containment_features_without_identity_cannot_pass_probe():
+def test_containment_features_without_identity_cannot_pass_probe() -> None:
     from hephaestus.core.executor.sandbox.oci_protocol import REQUIRED_OCI_FEATURES
 
-    class MissingInventoryBackend(OciBackend):
-        def _validate_runtime(self):
+    class MissingInventoryBackend(ManifestBackend):
+        def _validate_runtime(self) -> None:
             pass
 
-        def _validate_image(self):
+        def _validate_image(self) -> None:
             self._image_id = "sha256:" + "e" * 64
 
-        def _live_probe(self):
+        def _live_probe(self) -> dict[str, bool]:
             return {name: True for name in REQUIRED_OCI_FEATURES}
 
     backend = MissingInventoryBackend(runtime(), IMAGE, "linux/amd64", transport=FakeTransport())
     report = backend.probe()
     assert not report.available
-    assert "identity" in report.reason
-    assert backend._passing_report is None
+    assert report.reason is not None and "identity" in report.reason
+    assert backend.passing_report is None
 
 
-def test_manifest_inventory_is_bound_to_daemon_image_and_unusable_before_probe():
-    backend = OciBackend(runtime(), IMAGE, "linux/arm64", transport=FakeTransport())
+def test_manifest_inventory_is_bound_to_daemon_image_and_unusable_before_probe() -> None:
+    backend = ManifestBackend(runtime(), IMAGE, "linux/arm64", transport=FakeTransport())
     with pytest.raises(SandboxDeniedError):
-        backend._accept_manifest(manifest_bytes(runtime_inventory()))
-    backend._image_id = "sha256:" + "e" * 64
-    backend._accept_manifest(manifest_bytes(runtime_inventory()))
+        backend.accept_manifest(manifest_bytes(runtime_inventory()))
+    backend.set_observed_image("sha256:" + "e" * 64)
+    backend.accept_manifest(manifest_bytes(runtime_inventory()))
     with pytest.raises(SandboxDeniedError):
         backend.execution_identity()
     passing(backend)
-    backend._accept_manifest(manifest_bytes(runtime_inventory()))
+    backend.accept_manifest(manifest_bytes(runtime_inventory()))
     assert backend.execution_identity() == identity(platform="linux/arm64")
     backend.image_ref = IMAGE.replace("a" * 64, "f" * 64)
     with pytest.raises(SandboxDeniedError, match="changed"):
@@ -520,23 +569,23 @@ def test_manifest_inventory_is_bound_to_daemon_image_and_unusable_before_probe()
 
 
 @pytest.mark.parametrize("change", ["platform", "image_id", "unsettled", "cleanup"])
-def test_cached_identity_cannot_authorize_changed_or_poisoned_backend(change):
-    backend = OciBackend(runtime(), IMAGE, "linux/amd64", transport=FakeTransport())
+def test_cached_identity_cannot_authorize_changed_or_poisoned_backend(change: str) -> None:
+    backend = ManifestBackend(runtime(), IMAGE, "linux/amd64", transport=FakeTransport())
     passing(backend)
     if change == "platform":
         backend.platform = "linux/arm64"
     elif change == "image_id":
-        backend._image_id = "sha256:" + "f" * 64
-    elif change == "unsettled":
-        backend._unsettled_creates.add("owned")
+        backend.set_observed_image("sha256:" + "f" * 64)
     else:
-        backend._unreconciled_containers.add("owned")
+        backend.poison(unsettled=change == "unsettled")
     with pytest.raises(SandboxDeniedError):
         backend.execution_identity()
     assert not backend.probe().available
 
 
-def distribution(root, name, source_prefix=None):
+def distribution(
+    root: Path, name: str, source_prefix: str | None = None
+) -> importlib.metadata.PathDistribution:
     """A fixture directory, not a package installed into the host environment."""
     directory = root / (name.replace("-", "_") + "-0.1.0.dist-info")
     directory.mkdir(parents=True)
@@ -549,7 +598,7 @@ def distribution(root, name, source_prefix=None):
     return importlib.metadata.PathDistribution(directory)
 
 
-def test_collector_measures_actual_installed_source_and_package_metadata(tmp_path):
+def test_collector_measures_actual_installed_source_and_package_metadata(tmp_path: Path) -> None:
     distributions = [
         distribution(tmp_path, "hephaestus-executor-runtime", "hephaestus/core"),
         distribution(tmp_path, "opstore", "opstore"),
@@ -572,7 +621,7 @@ def test_collector_measures_actual_installed_source_and_package_metadata(tmp_pat
     assert identity(runtime=first).toolchain_hash != identity(runtime=second).toolchain_hash
 
 
-def test_collector_refuses_missing_and_symlinked_sources(tmp_path):
+def test_collector_refuses_missing_and_symlinked_sources(tmp_path: Path) -> None:
     dist = distribution(tmp_path, "opstore", "opstore")
     source = tmp_path / "opstore/module.py"
     source.unlink()
@@ -585,14 +634,14 @@ def test_collector_refuses_missing_and_symlinked_sources(tmp_path):
         collect_runtime_identity(distributions=[], python_version="3.13.7")
 
 
-def test_collector_refuses_duplicate_distributions(tmp_path):
+def test_collector_refuses_duplicate_distributions(tmp_path: Path) -> None:
     dist = distribution(tmp_path, "build123d")
     with pytest.raises(ValueError, match="duplicate"):
         collect_runtime_identity(distributions=[dist, dist], python_version="3.13.7")
 
 
 @pytest.mark.parametrize("missing", ["python", "packages", "source_trees", "version"])
-def test_runtime_inventory_requires_every_field(missing):
+def test_runtime_inventory_requires_every_field(missing: str) -> None:
     value = copy.deepcopy(runtime_inventory())
     value.pop(missing)
     with pytest.raises(ValueError):

@@ -23,7 +23,7 @@ class WorkerIO:
             raise ValueError("job must be an object")
         return job
 
-    def send(self, result: Json, module: str) -> None:
+    def send(self, result: object, module: str) -> None:
         export(sys.stdout.buffer, result, self.nonce, module, Path("/work"), self.policy)
 
 

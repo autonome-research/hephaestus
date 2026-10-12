@@ -3,7 +3,7 @@
 from hephaestus.core.executor.identity import ExecutionIdentity
 
 
-def runtime_inventory():
+def runtime_inventory() -> dict[str, object]:
     return {
         "version": 1,
         "python": "3.13.7",
@@ -23,7 +23,13 @@ def runtime_inventory():
     }
 
 
-def identity(*, image_ref=None, platform="linux/amd64", runtime=None, image_id=None):
+def identity(
+    *,
+    image_ref: str | None = None,
+    platform: str = "linux/amd64",
+    runtime: object = None,
+    image_id: str | None = None,
+) -> ExecutionIdentity:
     return ExecutionIdentity.for_oci(
         image_ref=image_ref or "registry.example/hephaestus/executor@sha256:" + "a" * 64,
         image_id=image_id or "sha256:" + "e" * 64,

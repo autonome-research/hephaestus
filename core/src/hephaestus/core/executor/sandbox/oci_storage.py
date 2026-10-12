@@ -11,6 +11,7 @@ import stat
 from pathlib import Path
 
 from .oci_storage_policy import StoragePolicy
+from .oci_transfer import Json
 
 MASKED_DEVICE_PATHS = (
     "/proc/interrupts",
@@ -51,19 +52,20 @@ def capacity(path: str) -> dict[str, int]:
     }
 
 
-def mount_records(text: str) -> dict[str, dict[str, object]]:
-    from ._oci_probe_worker import _unescape_mount
+def mount_records(text: str) -> dict[str, Json]:
+    from ._oci_probe_worker import unescape_mount
 
-    records: dict[str, dict[str, object]] = {}
+    records: dict[str, Json] = {}
     for line in text.splitlines():
         before, sep, after = line.partition(" - ")
         head, tail = before.split(), after.split()
         if not sep or len(head) < 6 or len(tail) != 3 or len(records) >= 256:
             raise ValueError("invalid mount inventory")
-        path = _unescape_mount(head[4])
+        path = unescape_mount(head[4])
         if path in records or not path.startswith("/"):
             raise ValueError("ambiguous mount inventory")
-        records[path] = {"fs_type": tail[0], "options": sorted(head[5].split(","))}
+        options: list[Json] = [option for option in sorted(head[5].split(","))]
+        records[path] = {"fs_type": tail[0], "options": options}
     return records
 
 
@@ -101,12 +103,12 @@ def masked_device(path: str) -> dict[str, int]:
     }
 
 
-def observe_storage() -> dict[str, object]:
+def observe_storage() -> dict[str, Json]:
     return {
         "mounts": mount_records(bounded_text("/proc/self/mountinfo")),
-        "capacities": {p: capacity(p) for p in ("/work", "/tmp")},
+        "capacities": {p: {**capacity(p)} for p in ("/work", "/tmp")},
         "runtime_write_errno": {p: write_errno(p) for p in RUNTIME_PATHS},
-        "masked_devices": {p: masked_device(p) for p in MASKED_DEVICE_PATHS},
+        "masked_devices": {p: {**masked_device(p)} for p in MASKED_DEVICE_PATHS},
     }
 
 
@@ -237,4 +239,4 @@ class StorageRefusal(ValueError):
 def require_storage(policy: StoragePolicy) -> None:
     observations = observe_storage()
     if not storage_valid(observations, policy):
-        raise StorageRefusal(observations)
+        raise StorageRefusal(dict(observations))

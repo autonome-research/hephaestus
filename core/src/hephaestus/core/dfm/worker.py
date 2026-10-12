@@ -256,11 +256,12 @@ def main(*, oci_args: Sequence[str] = ()) -> int:
     if not isinstance(job_raw, dict):
         print("dfm worker: job must be a JSON object", file=sys.stderr)
         return 2
+    job = cast("Mapping[str, JSONValue]", job_raw)
     try:
-        if transport and (job_raw.get("out_dir") != "." or job_raw.get("brep") != "source.brep"):
+        if transport and (job.get("out_dir") != "." or job.get("brep") != "source.brep"):
             raise ValueError("OCI DFM paths must be fixed")
         result = evaluate_job(
-            cast("Mapping[str, JSONValue]", job_raw),
+            job,
             input_dir=Path("/inputs") if transport else None,
         )
     except Exception as exc:  # pragma: no cover - defensive

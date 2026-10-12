@@ -1171,7 +1171,10 @@ class OciBackend:
                     raise ValueError("undeclared build input")
                 expected_inputs: set[str] = set()
                 for leaf in imports.values():
-                    if re.fullmatch(r"[0-9a-f]{32}\.(?:brep|hmesh|hpts)", leaf) is None:
+                    if (
+                        not isinstance(leaf, str)
+                        or re.fullmatch(r"[0-9a-f]{32}\.(?:brep|hmesh|hpts)", leaf) is None
+                    ):
                         raise ValueError("invalid build input name")
                     expected_inputs.add(leaf)
                     if leaf.endswith((".hmesh", ".hpts")):

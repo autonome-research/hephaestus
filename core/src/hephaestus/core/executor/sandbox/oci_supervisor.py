@@ -41,6 +41,7 @@ from .oci import (
     OciBackend,
     OciIdentity,
     OciRuntime,
+    OciTransport,
     SubprocessTransport,
     TransportResult,
     build_inspect_argv,
@@ -86,7 +87,8 @@ class SupervisorConfig:
         }
 
 
-def _save(path: Path, value: object) -> None:
+def save_evidence(path: Path, value: object) -> None:
+    """Create and fsync one bounded, exclusively owned supervisor evidence record."""
     data = json.dumps(value, sort_keys=True, indent=2).encode() + b"\n"
     if len(data) > EVIDENCE_BYTES:
         raise SandboxDeniedError("supervisor evidence limit")
@@ -96,10 +98,19 @@ def _save(path: Path, value: object) -> None:
         os.fsync(stream.fileno())
 
 
+def _exception_output(error: BaseException, name: str) -> object:
+    try:
+        return getattr(error, name, None)
+    except BaseException:
+        # Diagnostics must not replace the transport failure, even when a
+        # malformed exception exposes a raising property instead of bytes.
+        return None
+
+
 class EvidenceTransport:
     """Collect actual bounded control bytes and streamed hashes, never fabricated labels."""
 
-    def __init__(self, real: SubprocessTransport, directory: Path) -> None:
+    def __init__(self, real: OciTransport, directory: Path) -> None:
         self.real = real
         self.directory = directory
         self.sequence = 0
@@ -139,6 +150,8 @@ class EvidenceTransport:
             assert stdout_consumer is not None
             stdout_consumer(chunk)
 
+        stdout: object = None
+        stderr: object = None
         try:
             result = self.real.run(
                 argv,
@@ -154,10 +167,17 @@ class EvidenceTransport:
             return result
         except BaseException as exc:
             record["error"] = type(exc).__name__
-            stdout, stderr = getattr(exc, "stdout", b""), getattr(exc, "stderr", b"")
+            stdout = _exception_output(exc, "stdout")
+            stderr = _exception_output(exc, "stderr")
             raise
         finally:
-            for key, data in (("stdout", stdout), ("stderr", stderr)):
+            for key, data, limit in (
+                ("stdout", stdout, stdout_limit),
+                ("stderr", stderr, stderr_limit),
+            ):
+                if not isinstance(data, bytes) or len(data) > limit:
+                    record[key] = {"available": False}
+                    continue
                 record[key] = {
                     "bytes": len(data),
                     "sha256": hashlib.sha256(data).hexdigest(),
@@ -174,7 +194,7 @@ class EvidenceTransport:
             self.total += len(data)
             if self.total > EVIDENCE_BYTES:
                 raise SandboxDeniedError("supervisor evidence byte limit")
-            _save(self.directory / f"command-{self.sequence:03d}.json", record)
+            save_evidence(self.directory / f"command-{self.sequence:03d}.json", record)
 
 
 def _require_owners_complete(config: SupervisorConfig) -> None:
@@ -220,7 +240,7 @@ def _owner(
             # claim that a container kill succeeded. Raw kill/state evidence is
             # collected separately by the canonical cleanup path.
             try:
-                _save(
+                save_evidence(
                     directory / "stop-received.json",
                     {
                         "reason": reason,
@@ -242,8 +262,11 @@ def _owner(
                 if cancellation.reason is None:
                     stop("parent_closed")
 
-        signal.signal(signal.SIGTERM, lambda *_: cancellation.cancel("owner_signal"))
-        signal.signal(signal.SIGINT, lambda *_: cancellation.cancel("owner_signal"))
+        def interrupted(_signum: int, _frame: FrameType | None) -> None:
+            cancellation.cancel("owner_signal")
+
+        signal.signal(signal.SIGTERM, interrupted)
+        signal.signal(signal.SIGINT, interrupted)
 
         listener = threading.Thread(target=listen, daemon=True, name="oci-owner-control")
         listener.start()
@@ -278,7 +301,7 @@ def _owner(
                 result = None
                 if spec is not None:
                     # This file is a passive positive phase edge for observers.
-                    _save(directory / "executing.json", {"identity": identity.to_json()})
+                    save_evidence(directory / "executing.json", {"identity": identity.to_json()})
                     result = backend.execute(spec, payload)
                 cancellation.check()
                 journal.require_clean()
@@ -296,7 +319,7 @@ def _owner(
                     evidence["exit_code"] = result.exit_code
                     evidence["stdout_sha256"] = hashlib.sha256(result.stdout).hexdigest()
                     evidence["stderr_sha256"] = hashlib.sha256(result.stderr).hexdigest()
-                _save(directory / "result.json", evidence)
+                save_evidence(directory / "result.json", evidence)
                 connection.send(("ok", report, identity, result))
         except BaseException as exc:
             evidence["outcome"] = (
@@ -310,7 +333,7 @@ def _owner(
                 evidence["effective"] = backend.last_effective_config
             try:
                 if not (directory / "result.json").exists():
-                    _save(directory / "result.json", evidence)
+                    save_evidence(directory / "result.json", evidence)
                 connection.send(
                     ("cancel" if isinstance(exc, ExecutionCancelled) else "error", str(exc))
                 )
@@ -326,7 +349,9 @@ def _owner(
                 # No further daemon commands are possible, but do not claim the
                 # owner's control thread was reaped. Retain unfinished state.
                 os._exit(125)
-            _save(directory / "owner-final.json", {"pid": os.getpid(), "commands_finished": True})
+            save_evidence(
+                directory / "owner-final.json", {"pid": os.getpid(), "commands_finished": True}
+            )
 
 
 class SupervisedOciBackend:
@@ -423,7 +448,7 @@ class SupervisedOciBackend:
             assert self.last_directory is not None
             record_error: OSError | None = None
             try:
-                _save(
+                save_evidence(
                     self.last_directory / "stop-request.json",
                     {
                         "reason": reason,
@@ -469,7 +494,7 @@ class SupervisedOciBackend:
             else:
                 raise SandboxDeniedError("supervision session operation limit reached")
             self.last_directory = directory
-            _save(
+            save_evidence(
                 directory / "request.json",
                 {
                     "binding": self.config.binding(),
@@ -510,7 +535,7 @@ class SupervisedOciBackend:
             )
             child.close()
             self.last_owner_pid = process.pid
-            _save(directory / "owner.json", {"pid": process.pid})
+            save_evidence(directory / "owner.json", {"pid": process.pid})
             with self._control_lock:
                 self._connection = parent
             with selectors.DefaultSelector() as selector:
@@ -543,7 +568,9 @@ class SupervisedOciBackend:
                 raise SandboxDeniedError("OCI owner could not be reaped cleanly") from exc
             if process.returncode != 0:
                 raise SandboxDeniedError("OCI owner did not exit cleanly")
-            _save(directory / "reaped.json", {"pid": process.pid, "exitcode": process.returncode})
+            save_evidence(
+                directory / "reaped.json", {"pid": process.pid, "exitcode": process.returncode}
+            )
             if message[0] != "ok":
                 self._report = None
                 if message[0] == "cancel":
@@ -614,13 +641,13 @@ class SupervisedOciBackend:
             or not 0 <= state["ExitCode"] <= 255
         ):
             raise SandboxDeniedError("worker not observed running")
-        observation = {
+        observation: dict[str, object] = {
             "container_id": ids[0],
             "state": state,
             "raw_base64": base64.b64encode(result.stdout).decode(),
             "monotonic_ns": time.monotonic_ns(),
         }
-        _save(directory / "running.json", observation)
+        save_evidence(directory / "running.json", observation)
         return observation
 
     def require_settled(self) -> None:

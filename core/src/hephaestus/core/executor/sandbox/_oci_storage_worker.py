@@ -69,9 +69,9 @@ def exhaust(path: str, *, inodes: bool) -> dict[str, Json]:
     return {
         "path": path,
         "kind": "inodes" if inodes else "bytes",
-        "before": before,
-        "exhausted": exhausted,
-        "restored": restored,
+        "before": {**before},
+        "exhausted": {**exhausted},
+        "restored": {**restored},
         "allocated": allocated,
         "errno": code,
         "recovery": True,

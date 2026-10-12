@@ -92,12 +92,12 @@ def installed_source_hash(dist: importlib.metadata.Distribution, prefix: str) ->
     """
     records: dict[str, str] = {}
     total = 0
-    root = Path(dist.locate_file("")).resolve(strict=True)
+    root = Path(str(dist.locate_file(""))).resolve(strict=True)
     for file in dist.files or ():
         name = str(file)
         if not name.startswith(prefix) or "__pycache__" in file.parts or file.suffix == ".pyc":
             continue
-        path = Path(dist.locate_file(file))
+        path = Path(str(dist.locate_file(file)))
         if (
             ".." in file.parts
             or path.is_symlink()

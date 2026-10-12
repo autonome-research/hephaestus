@@ -92,16 +92,15 @@ class OwnershipJournal:
                 from .oci_transfer import unique_json
 
                 try:
-                    self.state = cast(OwnershipState, unique_json(data))
-                    self._validate(binding)
+                    self.state = self._validate(unique_json(data), binding)
                 except (TypeError, ValueError, KeyError) as exc:
                     raise SandboxDeniedError("invalid ownership record schema") from exc
         except BaseException:
             self.close()
             raise
 
-    def _validate(self, binding: dict[str, object]) -> None:
-        value = self.state
+    @staticmethod
+    def _validate(value: object, binding: dict[str, object]) -> OwnershipState:
         if (
             not isinstance(value, dict)
             or set(value) != {"version", "binding", "containers", "clients", "launch_pending"}
@@ -117,19 +116,29 @@ class OwnershipJournal:
             raise SandboxDeniedError("invalid ownership binding/schema")
         for name, record in value["containers"].items():
             if (
-                re.fullmatch(r"heph-exec-[0-9a-f]{64}", name) is None
+                not isinstance(name, str)
+                or re.fullmatch(r"heph-exec-[0-9a-f]{64}", name) is None
                 or not isinstance(record, dict)
                 or set(record) != {"id", "pending", "absent", "terminal"}
                 or type(record["pending"]) is not bool
                 or type(record["absent"]) is not bool
                 or (
-                    record["id"] is not None and re.fullmatch(r"[0-9a-f]{64}", record["id"]) is None
+                    record["id"] is not None
+                    and (
+                        not isinstance(record["id"], str)
+                        or re.fullmatch(r"[0-9a-f]{64}", record["id"]) is None
+                    )
                 )
                 or (record["id"] is None and not record["pending"])
             ):
                 raise SandboxDeniedError("invalid owned container")
         for pid, record in value["clients"].items():
-            if not pid.isdecimal() or not isinstance(record, dict) or set(record) != {"reaped"}:
+            if (
+                not isinstance(pid, str)
+                or not pid.isdecimal()
+                or not isinstance(record, dict)
+                or set(record) != {"reaped"}
+            ):
                 raise SandboxDeniedError("invalid owned client")
             if type(record["reaped"]) is not bool:
                 raise SandboxDeniedError("invalid client reap evidence")
@@ -144,6 +153,8 @@ class OwnershipJournal:
                 or not 0 <= terminal["ExitCode"] <= 255
             ):
                 raise SandboxDeniedError("invalid durable terminal state")
+        # The complete journal schema is admitted above, never before validation.
+        return cast(OwnershipState, value)
 
     def _save(self) -> None:
         raw = json.dumps(self.state, sort_keys=True, separators=(",", ":")).encode()

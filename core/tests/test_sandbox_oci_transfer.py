@@ -12,8 +12,13 @@ import tempfile
 import tracemalloc
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING, BinaryIO
+
+if TYPE_CHECKING:
+    from _typeshed import ReadableBuffer
 
 import pytest
+from _oci_json import array, integer, record
 from hephaestus.core.executor.sandbox import oci_transfer as transfer
 from hephaestus.core.executor.sandbox.oci_protocol import (
     APPROVED_MODULES,
@@ -41,7 +46,14 @@ BODIES = {"build": b"synthetic-not-brep", "source_map": b'{"test":true}'}
 INPUT = "0" * 32 + ".brep"
 
 
-def wire(result=None, *, header=None, result_bytes=None, bodies=None, operation=BUILD_WORKER):
+def wire(
+    result: object = None,
+    *,
+    header: object = None,
+    result_bytes: bytes | None = None,
+    bodies: dict[str, bytes] | None = None,
+    operation: object = BUILD_WORKER,
+) -> bytes:
     if result is None:
         result = RESULT
     data = transfer.encode(result) if result_bytes is None else result_bytes
@@ -60,7 +72,7 @@ def wire(result=None, *, header=None, result_bytes=None, bodies=None, operation=
     return payload + transfer.FOOTER + hashlib.sha256(payload).digest()
 
 
-def header_for_wire():
+def header_for_wire() -> dict[str, object]:
     return {
         "nonce": NONCE,
         "operation": BUILD_WORKER,
@@ -69,7 +81,7 @@ def header_for_wire():
     }
 
 
-def source_dir(tmp_path):
+def source_dir(tmp_path: Path) -> Path:
     source = tmp_path / "source"
     source.mkdir()
     for ident, body in BODIES.items():
@@ -77,7 +89,7 @@ def source_dir(tmp_path):
     return source
 
 
-def reject(tmp_path, data, *, policy=CONTROL_STORAGE):
+def reject(tmp_path: Path, data: bytes, *, policy: StoragePolicy = CONTROL_STORAGE) -> None:
     target = tmp_path / "receive"
     target.mkdir()
     with transfer.Receiver(target, NONCE, BUILD_WORKER, policy) as receiver:
@@ -91,7 +103,7 @@ def reject(tmp_path, data, *, policy=CONTROL_STORAGE):
 
 
 @pytest.mark.parametrize("chunk_size", [1, 2, 3, 7, 13, 64, 65536])
-def test_roundtrip_and_exclusive_install(tmp_path, chunk_size):
+def test_roundtrip_and_exclusive_install(tmp_path: Path, chunk_size: int) -> None:
     source = source_dir(tmp_path)
     stream = io.BytesIO()
     transfer.export(stream, RESULT, NONCE, BUILD_WORKER, source, CONTROL_STORAGE)
@@ -126,7 +138,7 @@ def test_roundtrip_and_exclusive_install(tmp_path, chunk_size):
         assert path.stat().st_mode & 0o777 == 0o600
 
 
-def test_every_split_and_truncation(tmp_path):
+def test_every_split_and_truncation(tmp_path: Path) -> None:
     data = wire()
     # Every possible two-chunk boundary, including header/result/body/footer.
     for index in range(len(data) + 1):
@@ -157,7 +169,9 @@ def test_every_split_and_truncation(tmp_path):
         (RESULT, BODIES, STORAGE_WORKER),
     ],
 )
-def test_other_allowed_results(tmp_path, result, bodies, operation):
+def test_other_allowed_results(
+    tmp_path: Path, result: object, bodies: dict[str, bytes], operation: str
+) -> None:
     source, target = tmp_path / "source", tmp_path / "target"
     source.mkdir()
     target.mkdir()
@@ -191,7 +205,7 @@ def test_other_allowed_results(tmp_path, result, bodies, operation):
         ("artifacts", None),
     ],
 )
-def test_header_types_identity_and_bounds(tmp_path, field, value):
+def test_header_types_identity_and_bounds(tmp_path: Path, field: str, value: object) -> None:
     header = header_for_wire()
     header[field] = value
     reject(tmp_path, wire(header=header))
@@ -212,28 +226,35 @@ def test_header_types_identity_and_bounds(tmp_path, field, value):
         "artifact-missing",
     ],
 )
-def test_closed_header_and_record_schema(tmp_path, change):
+def test_closed_header_and_record_schema(tmp_path: Path, change: str) -> None:
     header = header_for_wire()
+    artifacts = array(header["artifacts"])
     if change == "missing":
         del header["nonce"]
     elif change == "extra":
         header["version"] = 1
     elif change == "duplicate-key":
-        header = transfer.encode(header).replace(b'"nonce":', b'"nonce":"ignored","nonce":')
+        reject(
+            tmp_path,
+            wire(
+                header=transfer.encode(header).replace(b'"nonce":', b'"nonce":"ignored","nonce":')
+            ),
+        )
+        return
     elif change == "duplicate-artifact":
-        header["artifacts"][1] = header["artifacts"][0]
+        artifacts[1] = artifacts[0]
     elif change == "count":
-        header["artifacts"] *= 2
+        artifacts *= 2
     elif change == "order":
-        header["artifacts"].reverse()
+        artifacts.reverse()
     elif change == "descriptor-extra":
-        header["artifacts"][0]["path"] = "final.brep"
+        record(artifacts[0])["path"] = "final.brep"
     elif change == "descriptor-missing":
-        del header["artifacts"][0]["length"]
+        del record(artifacts[0])["length"]
     elif change == "descriptor-type":
-        header["artifacts"][0] = []
+        artifacts[0] = []
     elif change == "artifact-missing":
-        header["artifacts"].pop()
+        artifacts.pop()
     reject(tmp_path, wire(header=header))
 
 
@@ -241,16 +262,16 @@ def test_closed_header_and_record_schema(tmp_path, change):
     "ident",
     ["../escape", "/tmp/escape", "build/x", "build\\x", "build\0", "bu\u0456ld", "", None, [], 1],
 )
-def test_closed_artifact_ids(tmp_path, ident):
+def test_closed_artifact_ids(tmp_path: Path, ident: object) -> None:
     header = header_for_wire()
-    header["artifacts"][0]["id"] = ident
+    record(array(header["artifacts"])[0])["id"] = ident
     reject(tmp_path, wire(header=header))
 
 
 @pytest.mark.parametrize("length", [False, 1.5, "12", None, -1, 0, 64 * 1024**2 + 1])
-def test_artifact_lengths(tmp_path, length):
+def test_artifact_lengths(tmp_path: Path, length: object) -> None:
     header = header_for_wire()
-    header["artifacts"][0]["length"] = length
+    record(array(header["artifacts"])[0])["length"] = length
     reject(tmp_path, wire(header=header))
 
 
@@ -270,7 +291,7 @@ def test_artifact_lengths(tmp_path, length):
         "short-result",
     ],
 )
-def test_framing_corruption(tmp_path, mutation):
+def test_framing_corruption(tmp_path: Path, mutation: str) -> None:
     data = wire()
     if mutation == "version":
         data = data[:8] + b"\x02" + data[9:]
@@ -290,7 +311,9 @@ def test_framing_corruption(tmp_path, mutation):
         data = data.replace(BODIES["build"], BODIES["build"][:-1])
     else:
         header = header_for_wire()
-        header["result_length"] += 1 if mutation == "long-result" else -1
+        header["result_length"] = integer(header["result_length"]) + (
+            1 if mutation == "long-result" else -1
+        )
         data = wire(header=header)
     reject(tmp_path, data)
 
@@ -315,11 +338,11 @@ def test_framing_corruption(tmp_path, mutation):
         b'{"status":"failed","artifacts":{}} {}',
     ],
 )
-def test_result_schema_json_and_artifact_agreement(tmp_path, data):
+def test_result_schema_json_and_artifact_agreement(tmp_path: Path, data: bytes) -> None:
     reject(tmp_path, wire(result_bytes=data))
 
 
-def test_nonbuild_cannot_export_artifacts(tmp_path):
+def test_nonbuild_cannot_export_artifacts(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="unexpected artifacts"):
         transfer.export(io.BytesIO(), RESULT, NONCE, DFM_WORKER, tmp_path, CONTROL_STORAGE)
 
@@ -334,14 +357,16 @@ def test_nonbuild_cannot_export_artifacts(tmp_path):
         (NONCE, []),
     ],
 )
-def test_constructor_and_writer_reject_identity(tmp_path, nonce, operation):
+def test_constructor_and_writer_reject_identity(
+    tmp_path: Path, nonce: object, operation: object
+) -> None:
     with pytest.raises(ValueError):
         transfer.Receiver(tmp_path, nonce, operation, CONTROL_STORAGE)
     with pytest.raises(ValueError):
         transfer.export(io.BytesIO(), RESULT, nonce, operation, tmp_path, CONTROL_STORAGE)
 
 
-def special(path, kind, outside):
+def special(path: Path, kind: str, outside: Path) -> None:
     if kind == "symlink":
         path.symlink_to(outside)
     elif kind == "hardlink":
@@ -369,7 +394,7 @@ def special(path, kind, outside):
 @pytest.mark.parametrize(
     "kind", ["symlink", "hardlink", "fifo", "directory", "empty", "oversized", "socket", "missing"]
 )
-def test_input_and_writer_special_files_refuse_before_output(tmp_path, kind):
+def test_input_and_writer_special_files_refuse_before_output(tmp_path: Path, kind: str) -> None:
     outside = tmp_path / "sentinel"
     outside.write_bytes(b"untouched")
     source, target = tmp_path / "source", tmp_path / "target"
@@ -402,12 +427,12 @@ def test_input_and_writer_special_files_refuse_before_output(tmp_path, kind):
         1,
     ],
 )
-def test_input_names_refuse(tmp_path, name):
+def test_input_names_refuse(tmp_path: Path, name: object) -> None:
     with pytest.raises(ValueError):
         transfer.snapshot_inputs(tmp_path, (name,), tmp_path, CONTROL_STORAGE)
 
 
-def test_snapshot_admission_inventory_aggregate_and_count(tmp_path):
+def test_snapshot_admission_inventory_aggregate_and_count(tmp_path: Path) -> None:
     source, target = tmp_path / "source", tmp_path / "target"
     area = source / "inputs"
     area.mkdir(parents=True)
@@ -432,7 +457,7 @@ def test_snapshot_admission_inventory_aggregate_and_count(tmp_path):
     assert (target / "source.brep").read_bytes() == b"5678"
 
 
-def test_empty_input_area_and_sidecars(tmp_path):
+def test_empty_input_area_and_sidecars(tmp_path: Path) -> None:
     source, target = tmp_path / "source", tmp_path / "target"
     source.mkdir()
     target.mkdir()
@@ -448,7 +473,7 @@ def test_empty_input_area_and_sidecars(tmp_path):
 
 
 @pytest.mark.parametrize("location", ["root", "ancestor", "area", "destination"])
-def test_no_follow_directories(tmp_path, location):
+def test_no_follow_directories(tmp_path: Path, location: str) -> None:
     source, target = tmp_path / "source", tmp_path / "target"
     (source / "inputs").mkdir(parents=True)
     target.mkdir()
@@ -479,7 +504,7 @@ def test_no_follow_directories(tmp_path, location):
             )
 
 
-def test_parent_path_and_regular_helper_escape(tmp_path):
+def test_parent_path_and_regular_helper_escape(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         transfer.open_directory(tmp_path / "..")
     fd = transfer.open_directory(tmp_path)
@@ -492,7 +517,7 @@ def test_parent_path_and_regular_helper_escape(tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo", "directory", "empty"])
-def test_exclusive_receiver_preserves_existing_targets(tmp_path, kind):
+def test_exclusive_receiver_preserves_existing_targets(tmp_path: Path, kind: str) -> None:
     target = tmp_path / "target"
     target.mkdir()
     sentinel = tmp_path / "sentinel"
@@ -508,7 +533,7 @@ def test_exclusive_receiver_preserves_existing_targets(tmp_path, kind):
     assert sentinel.read_bytes() == b"sentinel"
 
 
-def test_install_collision_rolls_back_and_preserves_sentinel(tmp_path):
+def test_install_collision_rolls_back_and_preserves_sentinel(tmp_path: Path) -> None:
     target, dest = tmp_path / "target", tmp_path / "dest"
     target.mkdir()
     dest.mkdir()
@@ -523,7 +548,7 @@ def test_install_collision_rolls_back_and_preserves_sentinel(tmp_path):
     assert (dest / "source_map.json").read_bytes() == b"sentinel"
 
 
-def test_install_refuses_tampered_collection(tmp_path):
+def test_install_refuses_tampered_collection(tmp_path: Path) -> None:
     target, dest = tmp_path / "target", tmp_path / "dest"
     target.mkdir()
     dest.mkdir()
@@ -536,7 +561,9 @@ def test_install_refuses_tampered_collection(tmp_path):
     assert list(target.iterdir()) == list(dest.iterdir()) == []
 
 
-def test_input_collision_and_midcopy_failure_rollback(tmp_path, monkeypatch):
+def test_input_collision_and_midcopy_failure_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source, target = tmp_path / "source", tmp_path / "target"
     (source / "inputs").mkdir(parents=True)
     target.mkdir()
@@ -548,10 +575,10 @@ def test_input_collision_and_midcopy_failure_rollback(tmp_path, monkeypatch):
     assert not (target / INPUT).exists()
     assert (target / "source.brep").read_bytes() == b"sentinel"
     (target / "source.brep").unlink()
-    original = transfer._write
+    original = transfer.write_all
     calls = 0
 
-    def fail(stream, data):
+    def fail(stream: transfer.WriteStream, data: bytes | memoryview) -> None:
         nonlocal calls
         calls += 1
         original(stream, data[:1])
@@ -559,17 +586,19 @@ def test_input_collision_and_midcopy_failure_rollback(tmp_path, monkeypatch):
             raise OSError("injected disk failure")
         original(stream, data[1:])
 
-    monkeypatch.setattr(transfer, "_write", fail)
+    monkeypatch.setattr(transfer, "write_all", fail)
     with pytest.raises(OSError, match="injected"):
         transfer.snapshot_inputs(source, (INPUT, "source.brep"), target, CONTROL_STORAGE)
     assert list(target.iterdir()) == []
 
 
-def test_receiver_write_failure_cleans_prior_and_partial_files(tmp_path, monkeypatch):
-    original = transfer._write
+def test_receiver_write_failure_cleans_prior_and_partial_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = transfer.write_all
     calls = 0
 
-    def fail(stream, data):
+    def fail(stream: transfer.WriteStream, data: bytes | memoryview) -> None:
         nonlocal calls
         calls += 1
         original(stream, data[:1])
@@ -577,7 +606,7 @@ def test_receiver_write_failure_cleans_prior_and_partial_files(tmp_path, monkeyp
             raise OSError("injected disk failure")
         original(stream, data[1:])
 
-    monkeypatch.setattr(transfer, "_write", fail)
+    monkeypatch.setattr(transfer, "write_all", fail)
     with (
         transfer.Receiver(tmp_path, NONCE, BUILD_WORKER, CONTROL_STORAGE) as receiver,
         pytest.raises(OSError, match="injected"),
@@ -587,11 +616,11 @@ def test_receiver_write_failure_cleans_prior_and_partial_files(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("mutation", ["truncate", "grow", "same-size"])
-def test_writer_collection_changes_never_emit_footer(tmp_path, mutation):
+def test_writer_collection_changes_never_emit_footer(tmp_path: Path, mutation: str) -> None:
     source = source_dir(tmp_path)
 
     class ChangingStream(io.BytesIO):
-        def write(self, data):
+        def write(self, data: ReadableBuffer) -> int:
             if bytes(data) == BODIES["build"]:
                 path = source / "final.brep"
                 path.write_bytes(
@@ -616,31 +645,46 @@ def test_writer_collection_changes_never_emit_footer(tmp_path, mutation):
     assert list(target.iterdir()) == []
 
 
-def test_snapshot_detects_source_mutation_and_cleans(tmp_path, monkeypatch):
+def test_snapshot_detects_source_mutation_and_cleans(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     area = tmp_path / "inputs"
     target = tmp_path / "target"
     area.mkdir()
     target.mkdir()
     (area / INPUT).write_bytes(b"input")
-    original = transfer._write
+    original = transfer.write_all
 
-    def mutate(stream, data):
+    def mutate(stream: transfer.WriteStream, data: bytes | memoryview) -> None:
         original(stream, data)
         (area / INPUT).write_bytes(b"changed")
 
-    monkeypatch.setattr(transfer, "_write", mutate)
+    monkeypatch.setattr(transfer, "write_all", mutate)
     with pytest.raises(ValueError, match="changed"):
         transfer.snapshot_inputs(tmp_path, (INPUT,), target, CONTROL_STORAGE)
     assert list(target.iterdir()) == []
 
 
 @pytest.mark.parametrize("count", [0, None, -1, True, 1000000])
-def test_invalid_stream_writes_fail(count, tmp_path):
+def test_invalid_stream_writes_fail(count: object, tmp_path: Path) -> None:
     source = source_dir(tmp_path)
 
-    class BadWriter(io.BytesIO):
-        def write(self, data):
+    class BadWriter:
+        def __init__(self) -> None:
+            self.stream = io.BytesIO()
+
+        @property
+        def closed(self) -> bool:
+            return self.stream.closed
+
+        def close(self) -> None:
+            self.stream.close()
+
+        def write(self, data: memoryview) -> object:
             return count
+
+        def flush(self) -> None:
+            self.stream.flush()
 
     stream = BadWriter()
     with pytest.raises(OSError):
@@ -648,13 +692,13 @@ def test_invalid_stream_writes_fail(count, tmp_path):
     assert not stream.closed
 
 
-def test_short_writes_and_short_request_reads(tmp_path):
+def test_short_writes_and_short_request_reads(tmp_path: Path) -> None:
     class ShortStream(io.BytesIO):
-        def write(self, data):
-            return super().write(data[:1])
+        def write(self, data: ReadableBuffer) -> int:
+            return super().write(memoryview(data)[:1])
 
-        def read(self, size=-1):
-            return super().read(min(size, 1))
+        def read(self, size: int | None = -1) -> bytes:
+            return super().read(1 if size is None or size < 0 else min(size, 1))
 
     stream = ShortStream()
     transfer.export(stream, RESULT, NONCE, BUILD_WORKER, source_dir(tmp_path), CONTROL_STORAGE)
@@ -664,14 +708,14 @@ def test_short_writes_and_short_request_reads(tmp_path):
     assert not request.closed
 
 
-def test_request_bound_and_invalid_json(monkeypatch):
+def test_request_bound_and_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(transfer, "REQUEST_MAX_BYTES", 16)
     for data in (b" " * 17, b'{"x":1,"x":2}', b""):
         with pytest.raises(ValueError):
             transfer.read_job(io.BytesIO(data))
 
 
-def test_aggregate_export_and_wire_limits(tmp_path):
+def test_aggregate_export_and_wire_limits(tmp_path: Path) -> None:
     source = source_dir(tmp_path)
     total = sum(map(len, BODIES.values()))
     policy = replace(CONTROL_STORAGE, export_bytes=total - 1)
@@ -688,7 +732,7 @@ def test_aggregate_export_and_wire_limits(tmp_path):
     assert list(target.iterdir()) == []
 
 
-def test_memory_bound_for_giant_feed_and_streaming_writer(tmp_path):
+def test_memory_bound_for_giant_feed_and_streaming_writer(tmp_path: Path) -> None:
     # Body size is well above the asserted peak. Prepare fixture BEFORE tracing.
     body = b"x" * (4 * 1024**2)
     bodies = {"build": body, "source_map": b"{}"}
@@ -711,12 +755,12 @@ def test_memory_bound_for_giant_feed_and_streaming_writer(tmp_path):
         largest = 0
         total = 0
 
-        def write(self, chunk):
+        def write(self, chunk: memoryview) -> int:
             self.largest = max(self.largest, len(chunk))
             self.total += len(chunk)
             return len(chunk)
 
-        def flush(self):
+        def flush(self) -> None:
             pass
 
     sink = Sink()
@@ -731,7 +775,7 @@ def test_memory_bound_for_giant_feed_and_streaming_writer(tmp_path):
     assert sink.total > len(body)
 
 
-def test_post_eof_feed_and_explicit_close_remove_outputs(tmp_path):
+def test_post_eof_feed_and_explicit_close_remove_outputs(tmp_path: Path) -> None:
     receiver = transfer.Receiver(tmp_path, NONCE, BUILD_WORKER, CONTROL_STORAGE)
     receiver.feed(wire())
     receiver.finish()
@@ -744,13 +788,14 @@ def test_post_eof_feed_and_explicit_close_remove_outputs(tmp_path):
 
 
 @pytest.mark.parametrize("value", [0, -1, True, 1.0, 129])
-def test_policy_rejects_invalid_or_widened_bounds(value):
+def test_policy_rejects_invalid_or_widened_bounds(value: object) -> None:
     with pytest.raises(ValueError):
-        StoragePolicy(input_files=value)
+        # replace deliberately injects malformed field values through the real constructor.
+        replace(StoragePolicy(), input_files=value)
 
 
-def test_json_writer_bounds_and_constants():
-    cycle = []
+def test_json_writer_bounds_and_constants() -> None:
+    cycle: list[object] = []
     cycle.append(cycle)
     for value in (cycle, {"x": float("nan")}, {"x": "x" * 100}, {1: "x"}, {"x": (1, 2)}):
         with pytest.raises(ValueError):
@@ -759,7 +804,7 @@ def test_json_writer_bounds_and_constants():
         transfer.unique_json(b"[" + b"0," * transfer.JSON_NODES_MAX + b"0]")
 
 
-def test_snapshot_memory_bound_and_empty_destination_requirement(tmp_path):
+def test_snapshot_memory_bound_and_empty_destination_requirement(tmp_path: Path) -> None:
     area, target = tmp_path / "inputs", tmp_path / "target"
     area.mkdir()
     target.mkdir()
@@ -776,20 +821,22 @@ def test_snapshot_memory_bound_and_empty_destination_requirement(tmp_path):
         transfer.snapshot_inputs(tmp_path, (), target, CONTROL_STORAGE)
 
 
-def test_cleanup_attempts_every_leaf_and_reports_uncertainty(tmp_path, monkeypatch):
+def test_cleanup_attempts_every_leaf_and_reports_uncertainty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     receiver = transfer.Receiver(tmp_path, NONCE, BUILD_WORKER, CONTROL_STORAGE)
     receiver.feed(wire())
     original = os.unlink
-    attempted = []
+    attempted: list[str] = []
 
-    def fail_one(name, *, dir_fd=None):
+    def fail_one(name: str, *, dir_fd: int | None = None) -> None:
         attempted.append(name)
         if name == "final.brep":
             raise PermissionError("injected unlink refusal")
         original(name, dir_fd=dir_fd)
 
     with monkeypatch.context() as patch:
-        patch.setattr(transfer.os, "unlink", fail_one)
+        patch.setattr(os, "unlink", fail_one)
         with pytest.raises(ExceptionGroup, match="cleanup incomplete"):
             receiver.close()
     assert attempted == ["final.brep", "source_map.json"]
@@ -801,12 +848,14 @@ def test_cleanup_attempts_every_leaf_and_reports_uncertainty(tmp_path, monkeypat
     (tmp_path / "final.brep").unlink()
 
 
-def test_cancellation_during_feed_also_cleans(tmp_path, monkeypatch):
-    def interrupted(stream, data):
+def test_cancellation_during_feed_also_cleans(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def interrupted(stream: transfer.WriteStream, data: memoryview) -> None:
         stream.write(data[:1])
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(transfer, "_write", interrupted)
+    monkeypatch.setattr(transfer, "write_all", interrupted)
     receiver = transfer.Receiver(tmp_path, NONCE, BUILD_WORKER, CONTROL_STORAGE)
     with pytest.raises(KeyboardInterrupt):
         receiver.feed(wire())
@@ -814,7 +863,7 @@ def test_cancellation_during_feed_also_cleans(tmp_path, monkeypatch):
     assert receiver.closed
 
 
-def test_open_regular_rejects_character_device():
+def test_open_regular_rejects_character_device() -> None:
     fd = transfer.open_directory(Path("/dev"))
     try:
         with pytest.raises(ValueError, match="regular file"):
@@ -824,14 +873,14 @@ def test_open_regular_rejects_character_device():
 
 
 @pytest.mark.parametrize("version", [0, 2, 255])
-def test_incompatible_transfer_versions_reject(tmp_path, version):
+def test_incompatible_transfer_versions_reject(tmp_path: Path, version: int) -> None:
     data = wire()
     reject(tmp_path, data[:8] + bytes([version]) + data[9:])
 
 
-def test_source_map_specific_limit_and_result_writer_limit(tmp_path):
+def test_source_map_specific_limit_and_result_writer_limit(tmp_path: Path) -> None:
     header = header_for_wire()
-    header["artifacts"][1]["length"] = transfer.LIMITS["source_map"] + 1
+    record(array(header["artifacts"])[1])["length"] = transfer.LIMITS["source_map"] + 1
     reject(tmp_path, wire(header=header), policy=DEFAULT_STORAGE)
     source = source_dir(tmp_path)
     stream = io.BytesIO()
@@ -842,21 +891,25 @@ def test_source_map_specific_limit_and_result_writer_limit(tmp_path):
     assert stream.getvalue() == b""
 
 
-def test_invalid_request_stream_does_not_imply_eof():
-    class Blocked(io.BytesIO):
-        def read(self, size=-1):
+def test_invalid_request_stream_does_not_imply_eof() -> None:
+    class Blocked:
+        def read(self, size: int = -1) -> None:
             return None
 
     with pytest.raises(ValueError, match="blocked"):
         transfer.read_job(Blocked())
 
 
-def test_truncated_file_after_admission_and_fd_cleanup(tmp_path, monkeypatch):
+def test_truncated_file_after_admission_and_fd_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source = source_dir(tmp_path)
     original = transfer.open_regular
-    opened = []
+    opened: list[BinaryIO] = []
 
-    def truncate_after_admission(fd, name, maximum):
+    def truncate_after_admission(
+        fd: int, name: object, maximum: int
+    ) -> tuple[BinaryIO, os.stat_result]:
         stream, info = original(fd, name, maximum)
         opened.append(stream)
         if name == "source_map.json":
@@ -871,12 +924,12 @@ def test_truncated_file_after_admission_and_fd_cleanup(tmp_path, monkeypatch):
     assert transfer.FOOTER not in stream.getvalue()
 
 
-def test_active_profile_versions_the_integrated_storage_contract():
+def test_active_profile_versions_the_integrated_storage_contract() -> None:
     assert (PROTOCOL_VERSION, MANIFEST_VERSION, OCI_PROFILE_VERSION) == (3, 4, 5)
     assert OCI_TMPFS_BYTES == 16 * 1024**2
     assert {BUILD_WORKER, DFM_WORKER, PROBE_WORKER, STORAGE_WORKER} == APPROVED_MODULES
     assert "storage_quotas" in REQUIRED_OCI_FEATURES
     assert manifest_record()["artifact_transfer_version"] == 1
     assert manifest_record()["log_driver"] == "none"
-    assert set(manifest_record()["storage"]) == {"ordinary", "control"}
+    assert set(record(manifest_record()["storage"])) == {"ordinary", "control"}
     assert approved_module_for_worker_args(("-m", STORAGE_WORKER)) == STORAGE_WORKER

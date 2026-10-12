@@ -1124,12 +1124,6 @@ def _selector_names() -> frozenset[str]:
     return (BUILD123D_EXPORTS | {"math", "Param"}) - _DUNDERS - _HANDLES
 
 
-def _selector_tag_registry() -> TagRegistry:
-    from hephaestus.core.executor.tags import TagRegistry as _TagRegistry
-
-    return _TagRegistry()
-
-
 def __getattr__(name: str) -> frozenset[str]:
     """PEP 562 lazy export of :data:`SELECTOR_NAMES` (see :func:`_selector_names`)."""
     if name == "SELECTOR_NAMES":

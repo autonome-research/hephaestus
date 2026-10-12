@@ -169,7 +169,7 @@ def exec_worker(request: LaunchRequest) -> NoReturn:
     raise AssertionError("os.execve returned")  # pragma: no cover
 
 
-def _write(stream: TextIO, payload: bytes) -> None:
+def write_payload(stream: TextIO, payload: bytes) -> None:
     buffer = getattr(stream, "buffer", None)
     if buffer is not None:
         buffer.write(payload)
@@ -184,22 +184,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         parsed = parse_argv(args)
     except _LaunchError as exc:
-        _write(sys.stderr, diagnostic_bytes(exc.code))
+        write_payload(sys.stderr, diagnostic_bytes(exc.code))
         return exc.exit_code
 
     if parsed == "manifest":
         try:
             inventory = collect_runtime_identity()
         except Exception:
-            _write(sys.stderr, diagnostic_bytes("execution_identity_failed"))
+            write_payload(sys.stderr, diagnostic_bytes("execution_identity_failed"))
             return EXIT_PROTOCOL
-        _write(sys.stdout, manifest_bytes(inventory))
+        write_payload(sys.stdout, manifest_bytes(inventory))
         return 0
 
     try:
         apply_rlimits(parsed)
     except Exception:
-        _write(sys.stderr, diagnostic_bytes("resource_limit_failed"))
+        write_payload(sys.stderr, diagnostic_bytes("resource_limit_failed"))
         return EXIT_RLIMIT
 
     try:
@@ -208,16 +208,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         diagnostic = diagnostic_bytes("storage_profile_failed", observations=exc.observations)
         if len(diagnostic) > 16384:
             diagnostic = diagnostic_bytes("storage_observation_oversized")
-        _write(sys.stderr, diagnostic)
+        write_payload(sys.stderr, diagnostic)
         return EXIT_RLIMIT
     except Exception:
-        _write(sys.stderr, diagnostic_bytes("storage_observation_failed"))
+        write_payload(sys.stderr, diagnostic_bytes("storage_observation_failed"))
         return EXIT_RLIMIT
 
     try:
         exec_worker(parsed)
     except Exception:
-        _write(sys.stderr, diagnostic_bytes("execve_failed"))
+        write_payload(sys.stderr, diagnostic_bytes("execve_failed"))
         return EXIT_EXEC
 
 

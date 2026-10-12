@@ -8,6 +8,7 @@ from pathlib import Path
 
 # The launcher inserts source/test paths and the one private fixture directory.
 from _execution_identity import runtime_inventory
+from _oci_json import array, record, text
 from hephaestus.core.executor.sandbox.oci_protocol import PROBE_WORKER, manifest_bytes
 from hephaestus.core.executor.sandbox.oci_storage_policy import DEFAULT_STORAGE
 from hephaestus.core.executor.sandbox.oci_transfer import export
@@ -15,25 +16,25 @@ from test_sandbox_oci import (
     AUDITED_ENTRYPOINT,
     AUDITED_IMAGE_ENV,
     IMAGE,
-    _valid_probe_response,
     synthetic_effective,
+    valid_probe_response,
 )
 
 root = Path(sys.argv[1])
 args = sys.argv[2:]
 
 
-def emit(value):
+def emit(value: object) -> None:
     print(json.dumps(value), flush=True)
 
 
-def save(path, value):
+def save(path: Path, value: object) -> None:
     temp = path.with_suffix(".next")
     temp.write_text(json.dumps(value))
     temp.replace(path)
 
 
-def lookup(identity):
+def lookup(identity: str) -> tuple[Path, dict[str, object]]:
     path = root / (identity + ".json")
     if not path.exists():
         for candidate in root.glob("*.json"):
@@ -44,10 +45,10 @@ def lookup(identity):
     if not path.exists():
         print("no such container", file=sys.stderr)
         sys.exit(1)
-    return path, json.loads(path.read_text())
+    return path, record(json.loads(path.read_text()))
 
 
-def state(value):
+def state(value: dict[str, object]) -> dict[str, object]:
     return {"Running": value["running"], "ExitCode": value["exit"], "OOMKilled": False}
 
 
@@ -86,7 +87,7 @@ elif "create" in args:
 elif "inspect" in args:
     path, value = lookup(args[-1])
     if "{{json .}}" in args:
-        emit(synthetic_effective(value["args"]))
+        emit(synthetic_effective([text(arg) for arg in array(value["args"])]))
     else:
         emit(state(value))
 elif "kill" in args:
@@ -103,7 +104,7 @@ elif "rm" in args:
     print(value["id"])
 elif "start" in args:
     path, value = lookup(args[-1])
-    create = value["args"]
+    create = [text(arg) for arg in array(value["args"])]
     value["running"] = True
     save(path, value)
     if create[-1] == "manifest":
@@ -111,17 +112,18 @@ elif "start" in args:
     else:
         module, nonce = create[-6], create[-1]
         payload = json.load(sys.stdin)
+        response: dict[str, object]
         if module == PROBE_WORKER:
-            response = _valid_probe_response(payload["nonce"])
+            response = valid_probe_response(payload["nonce"])
             cpu, memory, nproc = map(int, create[-5:-2])
-            response["cgroup"].update(memory_max=memory, pids_max=nproc)
+            record(response["cgroup"]).update(memory_max=memory, pids_max=nproc)
             for key, limit in (
                 ("RLIMIT_AS", memory),
                 ("RLIMIT_DATA", memory),
                 ("RLIMIT_CPU", cpu),
                 ("RLIMIT_NPROC", nproc),
             ):
-                response["rlimits"][key] = [limit, limit]
+                record(response["rlimits"])[key] = [limit, limit]
         else:
             if (root / "hold-worker").exists():
                 (root / "worker-entered").touch()

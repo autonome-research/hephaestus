@@ -20,6 +20,19 @@ from opstore.types import JSONValue
 IDENTITY_METADATA_KEY = "hephaestus.execution_identity"
 
 
+def _canonical_text(value: object) -> str:
+    if not isinstance(value, str) or len(value.encode()) > 64 * 1024:
+        raise ValueError("oversized execution identity")
+    return value
+
+
+def _require_identity(value: object) -> ExecutionIdentity:
+    # Protocol conformance checks method presence, not the plugin's return value.
+    if not isinstance(value, ExecutionIdentity):
+        raise ValidationError("backend execution identity is missing", kind="contract")
+    return value
+
+
 @dataclass(frozen=True)
 class ExecutionIdentity:
     """Deeply immutable canonical record; construction validates, not attests.
@@ -32,9 +45,7 @@ class ExecutionIdentity:
 
     def __post_init__(self) -> None:
         try:
-            if not isinstance(self.canonical, str) or len(self.canonical.encode()) > 64 * 1024:
-                raise ValueError("oversized execution identity")
-            value = json.loads(self.canonical)
+            value = json.loads(_canonical_text(self.canonical))
             if not isinstance(value, dict) or set(value) != {
                 "kind",
                 "version",
@@ -109,10 +120,7 @@ def backend_execution_identity(backend: object) -> ExecutionIdentity | None:
     reason to hash whatever CAD packages happen to be installed on the host.
     """
     if isinstance(backend, ExecutionIdentityProvider):
-        identity = backend.execution_identity()
-        if not isinstance(identity, ExecutionIdentity):
-            raise ValidationError("backend execution identity is missing", kind="contract")
-        return identity
+        return _require_identity(backend.execution_identity())
     if str(getattr(backend, "name", "")).startswith("oci-"):
         raise ValidationError("OCI backend has no execution identity provider", kind="contract")
     return None

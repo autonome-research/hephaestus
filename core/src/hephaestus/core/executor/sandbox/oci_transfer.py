@@ -22,11 +22,11 @@ import os
 import re
 import stat
 import struct
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import BinaryIO, TypeAlias, cast
+from typing import BinaryIO, Protocol, TypeAlias, cast
 
 from .oci_protocol import BUILD_WORKER, DFM_WORKER, PROBE_WORKER
 from .oci_storage_policy import (
@@ -112,13 +112,13 @@ def unique_json(data: bytes) -> Json:
     )
 
 
-def encode(value: Json, maximum: int = REQUEST_MAX_BYTES) -> bytes:
+def encode(value: object, maximum: int = REQUEST_MAX_BYTES) -> bytes:
     # Reject huge/cyclic caller objects before JSON serialization. Bounds apply
     # to both sides, even though the writer ordinarily runs in a trusted worker.
     budget = maximum
     nodes = 0
 
-    def check(item: Json, depth: int) -> None:
+    def check(item: object, depth: int) -> None:
         nonlocal budget, nodes
         nodes += 1
         budget -= 1
@@ -155,14 +155,15 @@ def encode(value: Json, maximum: int = REQUEST_MAX_BYTES) -> bytes:
     return bytes(data)
 
 
-def _identity(nonce: str, operation: str) -> None:
+def _identity(nonce: object, operation: object) -> tuple[str, str]:
     if not isinstance(nonce, str) or re.fullmatch(r"[0-9a-f]{64}", nonce) is None:
         raise ValueError("invalid nonce")
     if not isinstance(operation, str) or operation not in OPERATIONS:
         raise ValueError("unknown transfer operation")
+    return nonce, operation
 
 
-def input_name(name: str) -> str:
+def input_name(name: object) -> str:
     if not isinstance(name, str) or INPUT_RE.fullmatch(name) is None:
         raise ValueError("invalid staged input leaf")
     return name
@@ -186,7 +187,7 @@ def open_directory(path: Path) -> int:
         raise
 
 
-def open_regular(directory_fd: int, name: str, maximum: int) -> tuple[BinaryIO, os.stat_result]:
+def open_regular(directory_fd: int, name: object, maximum: int) -> tuple[BinaryIO, os.stat_result]:
     if (
         not isinstance(name, str)
         or not name
@@ -228,7 +229,18 @@ def _collect(source: BinaryIO, info: os.stat_result) -> Iterator[bytes]:
         raise ValueError("file changed during collection")
 
 
-def _write(stream: BinaryIO, data: bytes | memoryview) -> None:
+class WriteStream(Protocol):
+    """Transport streams may block or return malformed counts; validate each write."""
+
+    def write(self, data: memoryview, /) -> object: ...
+    def flush(self) -> None: ...
+
+
+class ReadStream(Protocol):
+    def read(self, size: int, /) -> object: ...
+
+
+def write_all(stream: WriteStream, data: bytes | memoryview) -> None:
     view = memoryview(data)
     while view:
         count = stream.write(view)
@@ -269,7 +281,7 @@ class FileRecord:
 
 
 def snapshot_inputs(
-    out_dir: Path, names: tuple[str, ...], destination: Path, policy: StoragePolicy
+    out_dir: Path, names: tuple[object, ...], destination: Path, policy: StoragePolicy
 ) -> dict[str, FileRecord]:
     """Admit ALL sources before writing; rollback only exclusively owned leaves.
 
@@ -279,8 +291,7 @@ def snapshot_inputs(
     """
     if type(names) is not tuple or len(names) > policy.input_files:
         raise ValueError("input count/type")
-    for name in names:
-        input_name(name)
+    names = tuple(input_name(name) for name in names)
     if len(set(names)) != len(names):
         raise ValueError("duplicate input declaration")
     with contextlib.ExitStack() as stack:
@@ -326,7 +337,7 @@ def snapshot_inputs(
                 digest = hashlib.sha256()
                 with target:
                     for chunk in _collect(source, info):
-                        _write(target, chunk)
+                        write_all(target, chunk)
                         digest.update(chunk)
                 copied, copied_info = open_regular(destfd, name, policy.input_bytes)
                 check = hashlib.sha256()
@@ -353,12 +364,14 @@ class InputAdmission:
         self.policy = policy
         self.names: dict[str, FileRecord] = {}
 
-    def write(self, directory: Path, files: dict[str, bytes]) -> None:
-        records = {}
+    def write(self, directory: Path, files: Mapping[str, object]) -> None:
+        records: dict[str, FileRecord] = {}
+        admitted: dict[str, bytes] = {}
         for name, data in files.items():
             input_name(name)
             if not isinstance(data, bytes) or not 0 < len(data) <= self.policy.input_bytes:
                 raise ValueError("input byte limit")
+            admitted[name] = data
             records[name] = FileRecord(len(data), hashlib.sha256(data).hexdigest())
             if name in self.names and self.names[name] != records[name]:
                 raise ValueError("staged input identity collision")
@@ -372,13 +385,13 @@ class InputAdmission:
         fd = open_directory(directory)
         created: list[str] = []
         try:
-            for name, data in files.items():
+            for name, data in admitted.items():
                 if name in self.names:
                     continue
                 target = _exclusive(fd, name, 0o444)
                 created.append(name)
                 with target:
-                    _write(target, data)
+                    write_all(target, data)
             self.names = merged
         except BaseException:
             _unlink_all(fd, created)
@@ -387,7 +400,7 @@ class InputAdmission:
             os.close(fd)
 
 
-def artifact_ids(result: Json, operation: str) -> list[str]:
+def artifact_ids(result: object, operation: str) -> list[str]:
     if not isinstance(result, dict):
         raise ValueError("result must be an object")
     if operation not in OPERATIONS:
@@ -409,15 +422,15 @@ def artifact_ids(result: Json, operation: str) -> list[str]:
 
 
 def export(
-    stream: BinaryIO,
-    result: Json,
-    nonce: str,
-    operation: str,
+    stream: WriteStream,
+    result: object,
+    nonce: object,
+    operation: object,
     directory: Path,
     policy: StoragePolicy,
 ) -> None:
     """Admit before sending; a collection/write error deliberately has no footer."""
-    _identity(nonce, operation)
+    nonce, operation = _identity(nonce, operation)
     data = encode(result, policy.result_bytes)
     ids = artifact_ids(result, operation)
     with contextlib.ExitStack() as stack:
@@ -444,7 +457,7 @@ def export(
         digest = hashlib.sha256()
 
         def send(chunk: bytes) -> None:
-            _write(stream, chunk)
+            write_all(stream, chunk)
             digest.update(chunk)
 
         send(MAGIC + struct.pack("!I", len(header)))
@@ -453,7 +466,7 @@ def export(
         for _, source, info in files:
             for chunk in _collect(source, info):
                 send(chunk)
-        _write(stream, FOOTER + digest.digest())
+        write_all(stream, FOOTER + digest.digest())
         stream.flush()
 
 
@@ -471,8 +484,10 @@ class Receiver:
     finish declares EOF; close is idempotent and must always be called.
     """
 
-    def __init__(self, directory: Path, nonce: str, operation: str, policy: StoragePolicy) -> None:
-        _identity(nonce, operation)
+    def __init__(
+        self, directory: Path, nonce: object, operation: object, policy: StoragePolicy
+    ) -> None:
+        nonce, operation = _identity(nonce, operation)
         self.nonce, self.operation, self.policy = nonce, operation, policy
         self.dirfd = open_directory(directory)
         self.buffer = bytearray()
@@ -507,7 +522,7 @@ class Receiver:
         self.state = "failed"
         self.close()
 
-    def feed(self, chunk: bytes) -> None:
+    def feed(self, chunk: object) -> None:
         if self.closed:
             raise ValueError("receiver closed")
         try:
@@ -539,7 +554,7 @@ class Receiver:
                 elif self.state == "body":
                     if self.target is None:
                         raise ValueError("missing artifact target")
-                    _write(self.target, part)
+                    write_all(self.target, part)
                     self.body_bytes += len(part)
                     self.file_hash.update(part)
                 else:
@@ -694,7 +709,7 @@ class Receiver:
             self.result.clear()
 
 
-def read_job(stream: BinaryIO) -> Json:
+def read_job(stream: ReadStream) -> Json:
     """Bounded read to EOF, including streams which return short reads."""
     data = bytearray()
     while True:

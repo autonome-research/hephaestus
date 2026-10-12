@@ -113,7 +113,7 @@ def parse_status(text: str) -> dict[str, object]:
     return {"capabilities": caps, "no_new_privs": int(values["NoNewPrivs"])}
 
 
-def _unescape_mount(value: str) -> str:
+def unescape_mount(value: str) -> str:
     return re.sub(
         r"\\(040|011|012|134)",
         lambda match: {"040": " ", "011": "\t", "012": "\n", "134": "\\"}[match.group(1)],
@@ -132,7 +132,7 @@ def parse_mountinfo(
         tail = after.split()
         if not separator or len(fields) < 6 or len(tail) < 3:
             raise RuntimeError("malformed mountinfo")
-        mountpoint = _unescape_mount(fields[4])
+        mountpoint = unescape_mount(fields[4])
         options = set(fields[5].split(",")) | set(tail[2].split(","))
         mounts.append((mountpoint, tail[0], options))
 
@@ -196,8 +196,8 @@ def parse_cgroup_observation(
         if tail[0] in {"cgroup", "cgroup2"}:
             cgroup_mounts.append(
                 (
-                    _unescape_mount(fields[4]),
-                    _unescape_mount(fields[3]),
+                    unescape_mount(fields[4]),
+                    unescape_mount(fields[3]),
                     tail[0],
                     set(tail[2].split(",")),
                 )
