@@ -166,13 +166,16 @@ and 2 MiB/64 inodes at `/tmp`. Ordinary defaults are 128 MiB/2048 and 16 MiB/256
 those are ceilings, not demonstrated CAD capacity. Real stdlib storage controls
 passed under profile 4; the stricter profile-5 review follow-up and its fresh
 source-specific results are tracked in `docs/macos-staging.md`. Fresh manifest-4 image/storage and real supervised CAD/provenance/cancellation,
-timeout/failure acceptance now pass in the experimental executor CLI. See
+timeout/failure acceptance passed historically in the experimental executor CLI. See
 `docs/macos-executor-stage.md` and `docs/macos-progress.md` for source-specific
-reports and reruns. The final independent local experimental run is recorded at
+reports and reruns. The historical independent local experimental run is recorded at
 `dist/macos-final-reviewed-20261012T152211Z/report.json` (`accepted:true`),
 including all 13 required stages: rendering, authenticated native Chrome, actual
-HTTP build and cleanup among them. Its source manifests still matched current
-files at PR packaging; exact hashes and limitations are in progress. Generated
+HTTP build and cleanup among them. Its source manifests matched files at the
+initial PR packaging checkpoint only. **That live acceptance is superseded for
+changed runtime sources** after regression/type repairs; fresh images and a new
+all-stage run are required. Current CI blockers and evidence-gated next milestones
+are in `docs/macos-progress.md` and `docs/macos-roadmap.md`. Generated
 reports remain local, not shipped in Git. Repeat runs must use fresh reports and
 sessions rather than reuse a recorded pass. Production discovery is unchanged. The interrupted `...review-final` stays failed and its
 unresolved parent-reap record permanently refuses reuse; see progress for exact
@@ -188,8 +191,8 @@ the CAD worker allowlist or image entrypoint. The executor remains renderer-free
 and rejects render workloads; the renderer rejects build/DFM/arbitrary modules.
 Shared profile 5/protocol 3/manifest 4/transfer 1 are unchanged; disjoint renderer
 manifest extension 1 / API 2 are exact-validated (API 1 now refuses). See `docs/macos-renderer.md`
-for live results, limits and explicit injection. Fresh core inspection, exact
-selection, measured kernel sections and linked GLB publication now pass through
+for historical live results, limits and explicit injection. The earlier core
+inspection, exact selection, measured kernel sections and linked GLB run passed through
 `_mint_bundle`. Scoped renderer-stage success alone is not workspace/browser
 acceptance; the later complete report above exercises both. Tested explicit local
 launch/use/stop instructions are in `docs/macos-workspace.md`. Browser picking

@@ -5,7 +5,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Experimental macOS OCI ownership and cancellation
 
-**Live scoped executor acceptance; full `accepted:false`.** The
+**Historical scoped executor acceptance; not current-source certification.**
+The old scoped report had full `accepted:false`; a later complete workspace run
+passed, but changed runtime sources supersede that live acceptance. F1's shared
+lifecycle design remains unresolved. See the [roadmap](macos-roadmap.md) for
+fresh CI/recovery gates. Ownership rules below remain binding.
+
+The
 [executor CLI](macos-executor-stage.md) now uses this supported injection for fresh
 image/storage/CAD/publication and observed user cancellation, separate timeout and
 ordinary failure, with exact owned cleanup. See [progress](macos-progress.md) for
@@ -32,7 +38,7 @@ requires the previous image-bound identity to match, and only then executes the
 approved worker. No monkeypatch, host CAD fallback, or unsafe backend is involved.
 The serving runtime now projects **its injected backend's** probe; unsafe
 injection still refuses and unsafe capability projection is false. This is not a
-claim that full workspace/render/browser integration has run.
+current-source workspace/render/browser acceptance claim.
 
 The wrapper supports at most one operation at a time, 16 operations per retained
 session, 64 recorded containers and 256 recorded client PIDs. These are ceilings,
@@ -142,8 +148,9 @@ original fixed request IPC file is separately bounded at 24 MiB (normally <=16 M
 plus configuration). No daemon logs or unbounded output files are created. Native
 CAD result parsing/assembly and publication still run through `run_build` and
 `Publisher`; transport hashes are not kernel or publication proof. The per-operation evidence always retains `accepted:false`. The executor CLI now
-collects and validates scoped live acceptance around it; full milestone acceptance
-remains false. No usable browser workspace is claimed here.
+collects and validates scoped live acceptance around it. Historical complete
+workspace acceptance is recorded separately in progress; it does not certify
+these changed runtime sources.
 
 ## Host tests and next gate
 

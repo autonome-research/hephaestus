@@ -5,15 +5,15 @@ SPDX-License-Identifier: Apache-2.0
 
 # Experimental macOS executor stage
 
-**Scoped executor acceptance is implemented and live-tested; full `accepted:false`.**
+**Historical scoped executor evidence; superseded for changed runtime sources.**
+This stage's report had full `accepted:false`. A later complete workspace,
+[renderer](macos-renderer.md) and authenticated browser run passed, but subsequent
+regression/type repairs supersede that live acceptance too. Fresh current-source
+images and all-stage acceptance remain pending after CI stabilization; see
+[progress](macos-progress.md) and the [roadmap](macos-roadmap.md).
 Production discovery and `PRODUCTION_OCI_IMAGE` remain fail-closed. This is a local
-explicit-injection acceptance command, not a released workspace launcher. Rendering,
-selection masks, kernel sections, provenance-linked GLB and authenticated browser
-acceptance are still required end-to-end. The separate [renderer worker](macos-renderer.md)
-now passes fresh ARM64 executor→inspection→RGB/mask/kernel-section→linked-GLB
-integration, including `_mint_bundle` and real selection publication. Full workspace
-imports/launcher, authenticated browser, independent reviews and final smoke remain
-pending; no selection bundle or `_mint_bundle` bypass exists.
+explicit-injection acceptance command, not a released workspace launcher.
+No selection bundle or `_mint_bundle` bypass exists.
 
 ## Reproduce independently
 

@@ -23,11 +23,13 @@ no MCP. The operator UI (`heph serve --web`) is optional. MCP is optional.
 
 These guides describe explicit local ARM64 OCI injection, **not production
 backend activation or full-product macOS support**. Start with the workspace
-instructions; the progress log retains both failed and accepted local evidence.
+instructions and acceptance roadmap; the progress log retains both failed and
+historically accepted evidence. Runtime repairs supersede the old live acceptance.
 
 | Page | What it covers |
 |---|---|
-| [macos-workspace.md](macos-workspace.md) | Prepare, start, use and stop the native Mac workspace |
+| [macos-roadmap.md](macos-roadmap.md) | Evidence-gated CI, installation, reliability and release milestones |
+| [macos-workspace.md](macos-workspace.md) | Prepare, start, use and stop the experimental native Mac workspace |
 | [macos-feasibility.md](macos-feasibility.md) | Architecture, independent local acceptance and limitations |
 | [macos-progress.md](macos-progress.md) | Source-specific evidence and historical review results |
 | [macos-executor-stage.md](macos-executor-stage.md) | Experimental executor integration and live controls |

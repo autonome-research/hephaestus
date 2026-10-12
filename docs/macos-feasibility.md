@@ -5,7 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # First macOS feasibility milestone (experimental, not a release)
 
-**Status: independent local experimental acceptance passed; not production support.**
+**Status: CI stabilization pending; production closed. Historical live acceptance
+is superseded for changed runtime sources until a fresh all-stage run succeeds.**
+See the [roadmap](macos-roadmap.md) and current [review results](macos-progress.md).
+Do not merge on the historical evidence below.
 `dist/macos-final-reviewed-20261012T152211Z/report.json` records a complete
 `accepted:true` run: native ARM64 containment/quota controls, real two-solid CAD
 and image-bound publication, delivered cancellation distinct from timeout/failure,
@@ -19,7 +22,8 @@ Production discovery remains disabled; this is not full-product/release support.
 The final independent report's SHA256 is
 `df0fa8086de37a4add4bf4773a4e9ecaf9d686f869b364ad7a7b64d42b93370a`.
 All 13 required stages passed. Before PR packaging, all 457 host, 173 executor
-and 173 renderer source-manifest entries still matched current files. Reports,
+and 173 renderer source-manifest entries matched files at that historical
+checkpoint, before the regression/type repairs. They no longer match. Reports,
 images, ownership journals and browser profiles remain local under ignored
 `dist/`; these paths are evidence references, not files shipped in the PR.
 
@@ -42,7 +46,9 @@ Development used a separate `hephaestus-macos-feasibility` worktree on branch
 `feat/macos-feasibility`, based on `16a0021a535d5859a7a13ec283d23f764f4d377c`.
 The original `main` checkout remains untouched. The operator subsequently
 explicitly authorized commits and a remote compatibility PR; the earlier
-local-only publication restriction is historical. Production OCI remains disabled.
+local-only publication restriction in those earlier entries is historical.
+The current review explicitly permits **no further commits or pushes**.
+Production OCI remains disabled.
 Read `CONTRIBUTING.md`, `repo_conventions.md`, and `docker/executor/README.md`
 before extending this work.
 

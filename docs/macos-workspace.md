@@ -13,13 +13,21 @@ publication, privileged worker or host CAD installation is needed.
 
 ## Current evidence
 
-Independent all-stage **local experimental acceptance** is recorded in
+**Current runtime repairs are not live-accepted.** The earlier all-stage pass is
+**superseded for changed host/image sources** until fresh current-source images
+and a new complete run succeed. Required native/typing CI and F1 lifecycle design
+remain open; see [progress](macos-progress.md) and the [roadmap](macos-roadmap.md).
+Do not merge on historical evidence. Setup commands below are a reproduction
+procedure, not proof that the present source passed.
+
+Historical independent all-stage **local experimental acceptance** is recorded in
 `dist/macos-final-reviewed-20261012T152211Z/report.json` (SHA256
 `df0fa8086de37a4add4bf4773a4e9ecaf9d686f869b364ad7a7b64d42b93370a`).
 All 13 required stages passed. It exercises this launcher with real requirement
 intake, HTTP build, Chrome raycast/context resolution, full 12-face GLB, kernel
 section and graceful SIGTERM shutdown. Its 457 host, 173 executor and 173 renderer
-source-manifest entries were rehashed before PR packaging with no differences.
+source-manifest entries were rehashed before the initial PR packaging with no
+differences **at that checkpoint**, not after the subsequent runtime repairs.
 The report directory retains source/image/input/bundle hashes and exact-resource
 checks locally; generated `dist/` evidence is not included in the repository.
 The smoke removes its tags: **prepare new images from current source** for manual
@@ -177,7 +185,8 @@ execution. [Progress](macos-progress.md) names the actual final report and comma
 
 ## Scope and remaining coverage
 
-This is a tested local build/render workspace, **not the full product on macOS**.
+The historical run tested a local build/render workspace, **not the full product
+on macOS**. That pass does not certify the current changed sources.
 
 - The browser pick gate uses the existing read-only scene hook plus authenticated
   context resolution. It proves a real resolvable face hit. The product's
@@ -197,9 +206,11 @@ This is a tested local build/render workspace, **not the full product on macOS**
   live cancellation, daemon/machine-death recovery and release packaging remain
   outside this local acceptance. Abrupt unknown-create settlement remains a
   durable refusal, not an absence guess. No production/release support claim is made.
-- Root pyright was run and **fails** in the partial host environment (missing
-  dependency/type information and typing debt). The native HTTP-boundary fixture
-  also still fails without host build123d; no unsafe fallback or dependency change
-  conceals it. The actual OCI HTTP build passes independently. Fresh focused host
-  tests: 963 passed; web: 1512 passed, typecheck/lint pass. These are not full-suite
-  or native-kernel certification.
+- Root pyright still **fails** in the partial host environment. Separately, the
+  initial fully provisioned PR CI had 2,007 branch-introduced type errors against
+  a zero-error baseline; missing host CAD did not explain those CI failures.
+  Repairs require new full-dependency CI. Native HTTP build tests still fail
+  locally without build123d; no fallback or dependency change conceals them.
+  The earlier OCI HTTP build and 963 focused host / 1512 web passes are historical.
+  Current selections and failures are in [progress](macos-progress.md); none
+  constitute full-suite, native-kernel or current live-image certification.

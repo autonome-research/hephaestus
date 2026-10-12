@@ -5,10 +5,106 @@ SPDX-License-Identifier: Apache-2.0
 
 # macOS progress — experimental executor and renderer
 
-## Independent acceptance and PR handoff (2026-10-12)
+## Independent regression review — uncommitted follow-up to 4429022
 
-**Independent local experimental macOS acceptance passed. Production discovery
-remains disabled; this is not full-product or release certification.**
+**Do not merge: required CI is not green. Production remains closed.**
+All live passes below are historical and **superseded for changed runtime sources**
+until fresh images and a new all-stage run succeed. Independent rehashing of all
+457 host / 173 executor / 173 renderer manifest entries found **26 / 21 / 21
+changed entries**, respectively, and no missing old entries; new source files
+also need fresh manifest coverage. The [roadmap](macos-roadmap.md)
+defines the next CI, clean-machine, reliability and narrowly scoped release gates,
+without schedule promises. No installer or capability expansion is included here.
+
+Review compared the actual accumulated diff against initial `4429022`, not an
+agent's success summary. Retained triage established 2,007 branch-introduced type
+errors (baseline zero), 31 new test failures plus five baseline failures, and eight
+downstream baseline browser failures. The missing local CAD environment does not
+explain those original fully provisioned CI regressions.
+
+Reviewed repairs preserve early native focus+section refusal, native default
+render dimensions, baseline golden-generator bytes, exact GLB/source/table/GC
+linkage and adversarial runtime validation. Typed records are constructed after
+closed raw admission, not used as permission to trust worker JSON. Fresh-process
+CAD import guards strengthen the five remote boundary cases; malformed-stream,
+identity, cleanup and failure assertions remain exercised, not skipped.
+
+This review additionally reproduced and fixed renderer-service identity mismatch,
+live identity drift and cross-renderer bundle export: publication now compares
+live identity before/after rendering with the returned identity, and GLB export
+requires the minted bundle's executor/renderer/source provenance to agree. Three
+new regressions failed before the fix and pass afterward. This checks consistency
+of **trusted host injection**; a protocol annotation is not worker attestation.
+Native rendering limits and ownership semantics are unchanged.
+
+F1 remains **design-held and locally failing**: native bounded passes kill on
+terminal, whereas OCI owners need duplex EOF, final durable records and parent
+reaping before reuse. No import exemption, hidden re-export or weakened lifecycle
+was added. Full native/core/server and strict typing authority still require CI.
+
+Current local results (complete logs under ignored
+`dist/macos-independent-regression-review/`):
+
+- Exact historical 963-test selection: **985 passed**, one Starlette/httpx warning
+  (19 prior added cases plus three review regressions). No skips/deselections.
+- Supplemental bounded-pass/focused-refusal/image-identity/HTTP error/idempotency/
+  catalog selection: **184 passed, 5 failed**, one warning. Failures retained:
+  `test_multiprocessing_is_imported_by_the_helper_and_nowhere_else_in_the_engine`
+  in `core/tests/test_bounded_pass.py`; `test_a_param_cas_conflict_is_two_hundred_with_the_discriminated_result`
+  and `test_the_path_part_always_wins_over_a_part_named_in_the_body` in
+  `server/tests/test_http_errors.py`; build-route variants of
+  `test_a_recognized_key_replays_the_stored_body_byte_for_byte` and
+  `test_the_same_key_with_a_different_payload_is_key_payload_mismatch` in
+  `server/tests/test_http_idempotency.py`. The latter four require missing local
+  build123d; they are **not passes**. Existing native test fixtures attempted their
+  ordinary build paths and refused; no CAD dependency/fallback was installed.
+- Offline provider catalog selection: **3 passed, 77 explicitly deselected**.
+- Web typecheck/lint pass; **1512 tests / 82 files pass**, one worker. Existing
+  jsdom canvas/navigation diagnostics remain in logs. No web source edits or
+  browser e2e run; the eight baseline browser failures remain pending reproduction.
+- Root partial-host Pyright: **810 errors / 7 warnings**, not a pass. Changed
+  files retain three missing-CAD-related diagnostics. Root Ruff, formatting,
+  docs (including the untracked roadmap explicitly), license and diff checks pass.
+- Local packaging **26.3 vs locked 26.2** and Pygments **2.21.0 vs locked 2.20.0**
+  make these Python results supplemental, not locked-environment acceptance.
+
+Exact focused command (900-second outer hang detector, unchanged markers):
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 \
+PYTHONPATH="$PWD/core/src:$PWD/opstore/src:$PWD/server/src:$PWD/contract/src" \
+.venv/bin/python -m pytest \
+  core/tests/test_render_remote.py core/tests/test_render_oci.py \
+  tests/test_macos_workspace.py tests/test_macos_renderer.py \
+  core/tests/test_oci_supervision.py core/tests/test_execution_identity.py \
+  tests/test_macos_staging.py tests/test_macos_executor.py \
+  tests/test_macos_executor_live.py tests/test_macos_feasibility.py \
+  core/tests/test_sandbox_oci.py core/tests/test_sandbox_oci_network.py \
+  core/tests/test_sandbox_oci_launcher.py core/tests/test_sandbox_oci_image.py \
+  core/tests/test_sandbox_oci_transfer.py -q --timeout=120
+```
+
+Supplemental selections use the same environment and timeout, with all files
+named above, including `core/tests/test_focused_section_refusal.py`,
+`server/tests/test_image_identity.py` and `server/tests/test_http_catalog_admission.py`.
+Provider selection: `server/tests/test_http_providers.py -k 'catalog_registration or concurrent_catalog'`.
+Web: `(cd web && pnpm typecheck && pnpm lint && pnpm test --maxWorkers=1)`.
+Full native CI, stage1 schema gate, pinned render/section/Khronos and both browser
+lanes remain required; no skipped downstream stage is a green check.
+
+No installs, commits, pushes, live OCI/CAD acceptance, providers/models or manual
+workspace workloads in this review. Synthetic tests owned temporary stores and
+finite child processes. Sibling remains clean at `16a0021`; Docker idle. Publication
+inventory excludes generated reports, journals, tokens, browser profiles and
+private/project CAD. Separate source-provenance disclosure remains unchanged:
+Nurb source was inspected in separate research; no source/assets were copied.
+Clean-machine reproducibility is not a source clean-room claim.
+
+## Independent acceptance and PR handoff (2026-10-12, historical)
+
+**Historical independent local experimental macOS acceptance passed for its recorded
+sources; superseded by subsequent runtime repairs. Production discovery remains
+disabled; this is not full-product or release certification.**
 The new all-stage run is
 `dist/macos-final-reviewed-20261012T152211Z/report.json`, `accepted:true`, SHA256
 `df0fa8086de37a4add4bf4773a4e9ecaf9d686f869b364ad7a7b64d42b93370a`.
@@ -21,13 +117,14 @@ was refused on two line-length errors; the two formatting-only fixes preceded
 this new run. Failed reports were not edited or promoted.
 
 Before PR packaging, all **457 host, 173 executor and 173 renderer** source-manifest
-entries were independently rehashed against current files: no missing or changed
-entries. This source comparison is not a new live acceptance run. Raw local reports
+entries were independently rehashed against files at that checkpoint: no missing
+or changed entries then. Subsequent runtime repairs invalidate that comparison for
+the present source. This source comparison was not a new live acceptance run. Raw local reports
 and diagnostic artifacts remain ignored under `dist/`, so their paths in these
 documents are evidence references, not promised downloadable repository files.
 Reproduction is documented in [the local workspace guide](macos-workspace.md).
 
-Fresh pre-publication checks are retained locally in
+Historical pre-publication checks are retained locally in
 `dist/macos-pr-handoff-20261012/`: **963 focused Python tests passed** (one existing
 Starlette/httpx deprecation warning); **1512 web tests passed across 82 files**
 with one worker; TypeScript typecheck, eslint, root ruff and formatting,
@@ -47,7 +144,8 @@ was removed, and no containers were running at shutdown verification.
 
 The operator explicitly authorized a commit series and remote PR after the local
 milestone. Earlier no-commit/no-publication instructions below describe the
-historical phases, not the current handoff. The series separates secure execution
+historical phases, not authorization for this uncommitted review to publish. The
+initial series separates secure execution
 and provenance, isolated rendering, workspace integration, acceptance tooling and
 documentation. No generated CAD, provider credentials, tokens, browser profiles,
 image artifacts, runtime journals or third-party CAD sources are included.

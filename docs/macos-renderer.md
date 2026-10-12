@@ -5,12 +5,14 @@ SPDX-License-Identifier: Apache-2.0
 
 # Experimental macOS ARM64 renderer integration
 
-**`renderer_stage_passed:true`, full `accepted:false`.** Fresh secure executor
-CAD now reaches host inspection, exact selection bundles, measured kernel
-sections and validated linked GLB publication without host CAD/EGL execution.
-Production discovery and `PRODUCTION_OCI_IMAGE` stay closed. Authenticated native
-browser, a complete workspace launcher, independent security/render reviews and
-final all-stage smoke are still required. This is not release certification.
+**Historical renderer-stage evidence; superseded for changed runtime sources.**
+The stage report below recorded `renderer_stage_passed:true`, full `accepted:false`.
+A later all-stage workspace/browser run passed, but subsequent regression/type
+repairs invalidate its authority for current sources too. Fresh images and live
+acceptance remain required after CI stabilization; see [progress](macos-progress.md)
+and the [roadmap](macos-roadmap.md). Production discovery and
+`PRODUCTION_OCI_IMAGE` stay closed. The protocol and limits below remain binding;
+historical results are not release certification.
 
 ## Reproduce
 
