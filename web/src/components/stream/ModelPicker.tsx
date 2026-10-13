@@ -67,6 +67,8 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
   const activeIndex = Math.min(active, Math.max(0, options.length - 1));
   const identity = model === null ? copy.models.none : "name" in model && typeof model.name === "string" ? model.name : model.model_id;
 
+  const accessibleLabel = `${identity}. ${label}. ${prefix}: ${model === null ? copy.models.none : modelIdentity(model)} · ${capability}. ${copy.composer.effort}: ${effortLabel(effort)}.`;
+
   const choose = (option: ModelOption) => {
     if (!option.available || busy) return;
     if (creation) creation.onChoose(option);
@@ -109,7 +111,8 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
       className={styles["button"]}
       expanded={open}
       data-model-button=""
-      title={`${label}. ${prefix}: ${model === null ? copy.models.none : modelIdentity(model)} · ${capability}. ${copy.composer.effort}: ${effortLabel(effort)}.`}
+      ariaLabel={accessibleLabel}
+      title={accessibleLabel}
       {...(busy ? { disabled: true as const, reason } : {})}
     >
       <span className={styles["identity"]}>{identity}</span>

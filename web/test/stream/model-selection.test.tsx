@@ -174,6 +174,8 @@ describe("model wire and shared state", () => {
     const button = host.querySelector("[data-model-button]");
     expect(button?.getAttribute("title")).toContain("Saved selection (not active): local/fake/spark");
     expect(button?.getAttribute("title")).toContain("Capability unknown");
+    expect(button?.getAttribute("aria-label")).toContain("Saved selection (not active): local/fake/spark");
+    expect(button?.getAttribute("aria-label")).toContain("Capability unknown");
     expect(host.textContent).toContain("model_unknown");
   });
   it("does not confuse unavailable-model repair with unresolved execution ownership", () => {
@@ -223,6 +225,10 @@ describe("model control interaction", () => {
     expect(button.textContent).toContain("Spark");
     expect(button.getAttribute("title")).toContain("local/fake/spark");
     expect(button.getAttribute("title")).toContain("Text only");
+    expect(button.getAttribute("aria-label")).toContain("Spark");
+    expect(button.getAttribute("aria-label")).toContain("Current model: local/fake/spark");
+    expect(button.getAttribute("aria-label")).toContain("Text only");
+    expect(button.getAttribute("aria-label")).toContain("Effort: Medium");
     button.focus(); click(button); await act(async () => {});
     expect(document.activeElement?.getAttribute("role")).toBe("option");
     expect(host.querySelector('[role="option"][aria-selected="true"]')?.textContent).toContain("Spark");

@@ -93,6 +93,8 @@ type ButtonBase = {
    * name. Copy comes from `copy.ts` like every other human-facing string.
    */
   readonly iconLabel?: string | undefined;
+  /** Full accessible name for a compact text control; include its visible label. */
+  readonly ariaLabel?: string | undefined;
   readonly title?: string | undefined;
   readonly className?: string | undefined;
   readonly children?: ReactNode;
@@ -109,6 +111,7 @@ export function Button(props: ButtonProps): React.JSX.Element {
     type = "button",
     icon,
     iconLabel,
+    ariaLabel,
     title,
     className,
     children,
@@ -145,7 +148,7 @@ export function Button(props: ButtonProps): React.JSX.Element {
           : { title })}
         {...(variant === "toggle" ? { "aria-pressed": pressed === true } : {})}
         {...(expanded === undefined ? {} : { "aria-expanded": expanded })}
-        {...(labelled ? { "aria-label": iconLabel } : {})}
+        aria-label={ariaLabel ?? (labelled ? iconLabel : undefined)}
         onClick={isDisabled ? refuse : onClick}
         {...dataProps(props)}
       >
