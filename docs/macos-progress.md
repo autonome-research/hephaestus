@@ -5,6 +5,36 @@ SPDX-License-Identifier: Apache-2.0
 
 # macOS progress — experimental executor and renderer
 
+## CI stabilization — downstream G4 blocker, 2026-10-13
+
+**Draft and blocked; do not merge.** At `edde884`, run `38325547893` completed
+with **20 of 21 jobs successful**. Root Pyright reported **0 errors / 0 warnings**;
+native core **2056 passed / 1 existing xfailed**. All three native server shards
+passed. Pinned render and section goldens passed, and **all 54 synthetic browser
+tests passed**. Khronos remains **2 skipped / 20 deselected** under the existing
+pinned-image configuration, not validated coverage.
+
+The now-reached G4 suite failed: **91 passed / 13 failed / 10 did not run** in
+`render goldens (pinned image)`. Full logs and failure inventories are retained
+per SHA under ignored `dist/macos-pr128-ci-followup-20261012T232523Z/`.
+An offline FakeAgent admission reproduction confirms that the actual web payload
+is refused with HTTP 400 `invalid_params`: HTTP does not admit `interaction_mode`,
+`dfm_mode` or `thinking_level`, although the browser sends them and
+`INTERFACE.md` §7A.10A requires them. This is a contract implementation gap, not
+missing native dependencies or an environment excuse. A safe repair needs closed
+HTTP/sidecar validation, per-turn fail-closed Plan tool restrictions, Modeling
+tool restoration, effort application and DFM context without request-text drift.
+Merely accepting/ignoring or deleting those fields would bypass the contract.
+
+The final bounded follow-up restores visible creation model/default identity,
+opens the explicit provider-management disclosure in its browser fixture, and
+allocates a unique retained recovery fixture on Playwright worker restart.
+Prompt assertions additionally expose the HTTP status/refusal reason without
+printing credentials. No browser assertions or security gates are relaxed.
+The final SHA's exact job result is recorded on PR #128; these smaller fixes do
+not claim to implement the missing turn-control contract. Fresh current-source
+ARM64 live acceptance is still a separate required phase.
+
 ## CI stabilization follow-up — first published run, 2026-10-12
 
 **Still draft; do not merge. No current-source Mac live acceptance.** Four
