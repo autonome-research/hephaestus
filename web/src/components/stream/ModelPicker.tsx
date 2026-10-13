@@ -104,7 +104,9 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
   };
 
   return <div className={styles["control"]} data-model-control="">
-    {creation ? <p className={styles["note"]}>{label}</p> : null}
+    {creation ? <p className={styles["note"]}>
+      {label}. {prefix}: {model === null ? copy.models.none : modelIdentity(model)} · {capability}
+    </p> : null}
     <Button
       variant="secondary"
       onClick={show}
