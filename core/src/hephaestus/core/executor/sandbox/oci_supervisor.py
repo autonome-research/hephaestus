@@ -14,21 +14,23 @@ import hashlib
 import json
 import os
 import pickle
-import selectors
 import signal
 import stat
-import subprocess
 import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
-from multiprocessing.connection import Connection, Pipe
 from pathlib import Path
 from types import FrameType
 from typing import Literal
 
 from hephaestus.core.errors import SandboxDeniedError
+from hephaestus.core.executor.bounded_pass import (
+    ChildConnection,
+    OwnerRefusal,
+    run_independent_owner,
+)
 from hephaestus.core.executor.cancellation import (
     Cancellation,
     ExecutionCancelled,
@@ -213,7 +215,7 @@ def _require_owners_complete(config: SupervisorConfig) -> None:
 
 
 def _owner(
-    connection: Connection,
+    connection: ChildConnection,
     config: SupervisorConfig,
     directory: Path,
     spec: SandboxSpec | None,
@@ -382,7 +384,7 @@ class SupervisedOciBackend:
             journal.require_clean()
         self._lock = threading.Lock()
         self._control_lock = threading.Lock()
-        self._connection: Connection | None = None
+        self._connection: ChildConnection | None = None
         self._identity: ExecutionIdentity | None = None
         self._report: CapabilityReport | None = None
         self._closed = False
@@ -474,9 +476,6 @@ class SupervisedOciBackend:
     def _invoke(self, spec: SandboxSpec | None, payload: bytes) -> ExecOutcome | None:
         if not self._lock.acquire(blocking=False):
             raise SandboxDeniedError("one supervised OCI operation at a time")
-        parent: Connection | None = None
-        child: Connection | None = None
-        process: subprocess.Popen[bytes] | None = None
         try:
             if self._closed:
                 raise SandboxDeniedError("OCI supervisor session closed")
@@ -517,60 +516,52 @@ class SupervisedOciBackend:
                 stream.write(request)
                 stream.flush()
                 os.fsync(stream.fileno())
-            parent, child = Pipe(duplex=True)
-            process = subprocess.Popen(
-                (sys.executable, "-m", __name__, "--owner", str(child.fileno()), str(request_path)),
-                pass_fds=(child.fileno(),),
-                start_new_session=True,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env={
-                    "PATH": "/usr/bin:/bin",
-                    "LANG": "C",
-                    "LC_ALL": "C",
-                    "PYTHONDONTWRITEBYTECODE": "1",
-                    "PYTHONPATH": os.pathsep.join(str(Path(p).resolve()) for p in sys.path if p),
-                },
-            )
-            child.close()
-            self.last_owner_pid = process.pid
-            save_evidence(directory / "owner.json", {"pid": process.pid})
-            with self._control_lock:
-                self._connection = parent
-            with selectors.DefaultSelector() as selector:
-                selector.register(parent.fileno(), selectors.EVENT_READ, "result")
-                if control is not None:
-                    selector.register(control.reader, selectors.EVENT_READ, "cancel")
-                deadline = time.monotonic() + OWNER_SECONDS + 15
-                while True:
-                    events = selector.select(max(0, deadline - time.monotonic()))
-                    if not events:
-                        raise SandboxDeniedError(
-                            "OCI owner deadline exceeded; recover durable ownership"
-                        )
-                    if any(key.data == "cancel" for key, _ in events):
-                        assert control is not None
-                        self.cancel_active("caller_cancel")
-                        selector.unregister(control.reader)
-                    if any(key.data == "result" for key, _ in events):
-                        try:
-                            message = pickle.loads(parent.recv_bytes(IPC_BYTES))
-                        except (EOFError, OSError) as exc:
-                            raise SandboxDeniedError(
-                                "OCI owner disconnected; recover durable ownership"
-                            ) from exc
-                        break
-            parent.close()  # delivers EOF to child control reader
+
+            def started(pid: int, connection: ChildConnection) -> None:
+                self.last_owner_pid = pid
+                save_evidence(directory / "owner.json", {"pid": pid})
+                with self._control_lock:
+                    self._connection = connection
+
+            def reaped(pid: int, exitcode: int) -> None:
+                save_evidence(directory / "reaped.json", {"pid": pid, "exitcode": exitcode})
+
+            def unreaped() -> None:
+                self._closed = True
+
+            def cancel() -> None:
+                self.cancel_active("caller_cancel")
+
             try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired as exc:
-                raise SandboxDeniedError("OCI owner could not be reaped cleanly") from exc
-            if process.returncode != 0:
-                raise SandboxDeniedError("OCI owner did not exit cleanly")
-            save_evidence(
-                directory / "reaped.json", {"pid": process.pid, "exitcode": process.returncode}
-            )
+                raw = run_independent_owner(
+                    lambda fd: (
+                        sys.executable,
+                        "-m",
+                        __name__,
+                        "--owner",
+                        str(fd),
+                        str(request_path),
+                    ),
+                    env={
+                        "PATH": "/usr/bin:/bin",
+                        "LANG": "C",
+                        "LC_ALL": "C",
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                        "PYTHONPATH": os.pathsep.join(
+                            str(Path(p).resolve()) for p in sys.path if p
+                        ),
+                    },
+                    timeout_s=OWNER_SECONDS + 15,
+                    maximum=IPC_BYTES,
+                    on_started=started,
+                    on_reaped=reaped,
+                    on_unreaped=unreaped,
+                    cancel_fd=control.reader.fileno() if control is not None else None,
+                    on_cancel=cancel,
+                )
+            except OwnerRefusal as exc:
+                raise SandboxDeniedError(f"OCI {exc}") from exc
+            message = pickle.loads(raw)
             if message[0] != "ok":
                 self._report = None
                 if message[0] == "cancel":
@@ -586,17 +577,6 @@ class SupervisedOciBackend:
         finally:
             with self._control_lock:
                 self._connection = None
-            if parent is not None:
-                parent.close()
-            if child is not None:
-                child.close()
-            if process is not None:
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    # Parent-side interruption gives owner EOF, not SIGKILL.
-                    # Its own alarm bounds its lifetime; pending state is retained.
-                    self._closed = True
             self._lock.release()
 
     def observe_running(self) -> dict[str, object]:
@@ -729,7 +709,7 @@ def _main() -> None:
     # channel; CAD bytes remain an opaque bytes field sent only into OCI.
     if len(sys.argv) != 4 or sys.argv[1] != "--owner":
         raise SystemExit("internal OCI owner invocation required")
-    connection = Connection(int(sys.argv[2]))
+    connection = ChildConnection(int(sys.argv[2]))
     with Path(sys.argv[3]).open("rb") as stream:
         raw = stream.read(IPC_BYTES + 1)
     if len(raw) > IPC_BYTES:

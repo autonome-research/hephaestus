@@ -40,26 +40,36 @@ that follows — cannot be forced through real wall-clock timing, so the body is
 reachable on its own against a scripted process/connection pair
 (``core/tests/test_bounded_pass.py``). ``time`` is likewise a module-level name
 so the clock those tests drive is the clock this loop reads.
+
+Independent cleanup owners use that same poll/deadline/drain body through
+:func:`run_independent_owner`, but with an explicit EOF-and-bounded-reap finish
+policy. They must complete resource cleanup after reporting a terminal message;
+killing them like a kernel pass would destroy that guarantee.
 """
 
 from __future__ import annotations
 
+import contextlib
 import multiprocessing
+import selectors
+import subprocess
 import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from multiprocessing.connection import Connection, Pipe
+from typing import Any
 
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from collections.abc import Callable
-    from multiprocessing.connection import Connection
+# Child-side endpoint for both spawn passes and independent cleanup owners.
+ChildConnection = Connection
 
-    #: The pipe end a bounded child is handed as its first argument. Re-exported
-    #: here so a call site can type its child function without importing
-    #: ``multiprocessing`` itself — which the structural guard in
-    #: ``core/tests/test_bounded_pass.py`` reserves to this module.
-    ChildConnection = Connection
-
-__all__ = ["BoundedPassOutcome", "run_bounded_pass", "supervise"]
+__all__ = [
+    "BoundedPassOutcome",
+    "ChildConnection",
+    "OwnerRefusal",
+    "run_bounded_pass",
+    "run_independent_owner",
+    "supervise",
+]
 
 #: How long one poll blocks before the loop re-checks the deadline and the
 #: child's liveness. Small enough that a ceiling is honoured promptly, large
@@ -143,11 +153,15 @@ def supervise(
     timeout_s: float,
     on_message: Callable[[str, Any], bool],
     poll_s: float = POLL_S,
+    finish: Callable[[], None] | None = None,
 ) -> BoundedPassOutcome:
     """The supervision body: poll ``parent`` until a terminal message or the ceiling.
 
-    Separated from the spawn wiring so it is reachable with a scripted process
-    and connection; :func:`run_bounded_pass` is the only production caller.
+    Shared by spawned passes and :func:`run_independent_owner`. ``finish`` is
+    an explicit lifecycle policy: ordinary passes kill/join; independent cleanup
+    owners close their duplex channel (parent EOF) and boundedly reap, NEVER
+    kill on a terminal message. Poll/deadline/death drains stay identical.
+    Scripted process/connection tests exercise their races without wall timing.
 
     The loop, and why each part is there:
 
@@ -166,8 +180,9 @@ def supervise(
       terminal message, so the flag is recomputed rather than left standing:
       "the subprocess died" can never be said about a run that answered.
     * **Join before reading the exit code.** ``exitcode`` is ``None`` until the
-      child is reaped, so the join has to precede the read; and the join has to
-      follow the kill, or a hung child would hang the parent instead.
+      child is reaped, so the join has to precede the read. The native policy
+      kills before joining; an independent owner's finish bounds its reap and
+      refuses reuse if the owner has not exited.
     """
     terminal: tuple[str, Any] | None = None
     died = False
@@ -201,12 +216,12 @@ def supervise(
                 # the pipe buffer): the child is
                 # crashing. Give it a moment to finish dying so the refusal
                 # carries its real exit code; a child that hangs instead meets
-                # the kill in ``finally``.
+                # the explicit finish policy in ``finally``.
                 proc.join(5.0)
                 died = True
                 break
         # The deadline fell (or a death drain ended on EOF): take what is
-        # already in the pipe before the kill.
+        # already in the pipe before finalization.
         while terminal is None:
             try:
                 if not parent.poll(0):
@@ -218,8 +233,167 @@ def supervise(
         # did not die.
         died = died and terminal is None
     finally:
-        if proc.is_alive():
-            proc.kill()
-        proc.join()
-        parent.close()
+        if finish is not None:
+            finish()
+        else:
+            if proc.is_alive():
+                proc.kill()
+            proc.join()
+            parent.close()
     return BoundedPassOutcome(terminal=terminal, died=died, exit_code=proc.exitcode)
+
+
+class OwnerRefusal(RuntimeError):
+    """An independent owner did not provide a clean terminal/reap acknowledgement."""
+
+
+class _OwnerProcess:
+    def __init__(self, process: subprocess.Popen[bytes]) -> None:
+        self.process = process
+
+    def is_alive(self) -> bool:
+        return self.process.poll() is None
+
+    def join(self, timeout: float) -> None:
+        # The shared EOF path gives a dying process a chance to finish. A live
+        # cleanup owner is never killed: its own ceiling remains authoritative.
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            self.process.wait(timeout=timeout)
+
+    @property
+    def exitcode(self) -> int | None:
+        return self.process.returncode
+
+
+class _OwnerControlFailure(RuntimeError):
+    def __init__(self, error: OSError | EOFError) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
+class _OwnerEndpoint:
+    def __init__(
+        self,
+        connection: Connection,
+        selector: selectors.BaseSelector,
+        maximum: int,
+        cancel_fd: int | None,
+        on_cancel: Callable[[], None],
+    ) -> None:
+        self.connection = connection
+        self.selector = selector
+        self.maximum = maximum
+        self.cancel_fd = cancel_fd
+        self.on_cancel = on_cancel
+
+    def poll(self, timeout: float) -> bool:
+        events = self.selector.select(timeout)
+        if any(key.data == "cancel" for key, _ in events):
+            try:
+                self.on_cancel()
+            except (OSError, EOFError) as exc:
+                # A domain control/evidence failure is NOT a pipe disconnect;
+                # do not let the shared receive loop consume that exception.
+                raise _OwnerControlFailure(exc) from exc
+            assert self.cancel_fd is not None
+            self.selector.unregister(self.cancel_fd)
+        return any(key.data == "result" for key, _ in events)
+
+    def recv(self) -> tuple[str, bytes]:
+        # Bound the frame before decoding any parent/owner protocol object.
+        return "terminal", self.connection.recv_bytes(self.maximum)
+
+
+def run_independent_owner(
+    command: Callable[[int], Sequence[str]],
+    *,
+    env: Mapping[str, str],
+    timeout_s: float,
+    maximum: int,
+    on_started: Callable[[int, ChildConnection], None],
+    on_reaped: Callable[[int, int], None],
+    on_unreaped: Callable[[], None],
+    cancel_fd: int | None = None,
+    on_cancel: Callable[[], None],
+    reap_s: float = 10.0,
+) -> bytes:
+    """Run a self-bounded, independent Popen cleanup owner over duplex IPC.
+
+    Unlike a kernel pass, this child must survive parent EOF long enough to
+    clean up its resources. No spawn/resource tracker and no kill on terminal,
+    cancellation, timeout or parent exception. The child must enforce its own
+    lifetime ceiling. Closing the parent's endpoint precedes the final bounded reap.
+    An unreaped owner invokes the caller's poison hook; only a terminal frame
+    AND a zero exit after reaping permit the durable acknowledgement callback.
+    Callers own domain evidence/protocol decoding, not a second polling loop.
+    """
+    parent, child = Pipe(duplex=True)
+    process: subprocess.Popen[bytes] | None = None
+    finished = False
+
+    def finish() -> None:
+        nonlocal finished
+        finished = True
+        parent.close()  # EOF wakes the independent owner's control reader
+        if process is not None:
+            try:
+                process.wait(timeout=reap_s)
+            except subprocess.TimeoutExpired:
+                on_unreaped()
+            except BaseException:
+                on_unreaped()
+                raise
+
+    try:
+        process = subprocess.Popen(
+            command(child.fileno()),
+            pass_fds=(child.fileno(),),
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+        )
+        child.close()  # never retain the peer and accidentally suppress EOF
+        on_started(process.pid, parent)
+        with selectors.DefaultSelector() as selector:
+            selector.register(parent.fileno(), selectors.EVENT_READ, "result")
+            if cancel_fd is not None:
+                selector.register(cancel_fd, selectors.EVENT_READ, "cancel")
+            endpoint = _OwnerEndpoint(parent, selector, maximum, cancel_fd, on_cancel)
+            outcome = supervise(
+                _OwnerProcess(process),
+                endpoint,
+                timeout_s=timeout_s,
+                on_message=lambda _kind, _payload: True,
+                finish=finish,
+            )
+        if outcome.terminal is None:
+            raise OwnerRefusal(
+                "owner disconnected; recover durable ownership"
+                if outcome.died
+                else "owner deadline exceeded; recover durable ownership"
+            )
+        if outcome.exit_code is None:
+            raise OwnerRefusal("owner could not be reaped cleanly")
+        if outcome.exit_code != 0:
+            raise OwnerRefusal("owner did not exit cleanly")
+        data = outcome.terminal[1]
+        if not isinstance(data, bytes):
+            raise OwnerRefusal("owner terminal frame is not bytes")
+        try:
+            on_reaped(process.pid, outcome.exit_code)
+        except BaseException:
+            # A successful wait without the caller's durable acknowledgement
+            # must not authorize reuse either.
+            on_unreaped()
+            raise
+        return data
+    except _OwnerControlFailure as exc:
+        raise exc.error from None
+    finally:
+        # Also covers spawn, on_started, selector and receive failures. Do not
+        # retry an expired reap (or double the caller's cleanup budget).
+        if not finished:
+            finish()
+        child.close()
