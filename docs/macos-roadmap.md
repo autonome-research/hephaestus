@@ -21,11 +21,11 @@ must finish, including unchanged pinned-render goldens, section golden, Khronos,
 synthetic browser and G4 e2e stages; no hidden failing selection, new exclusion,
 waived assertion, threshold relaxation or golden rebaseline.
 
-Resolve F1's shared lifecycle design without turning an independent cleanup owner
+Verify the shared F1 lifecycle repair without turning an independent cleanup owner
 into a kill-on-terminal native pass. Preserve duplex EOF/cancellation, bounded
 receives, durable ambiguous-create refusal, exact PID/group reaping and
-acknowledgement-before-reuse. Reproduce and address the eight recorded baseline
-browser failures. Local synthetic passes and partial-host typing are supplemental,
+acknowledgement-before-reuse. Require passing reruns of the reproduced baseline
+browser failures and any newly reached downstream failures. Local synthetic passes and partial-host typing are supplemental,
 not substitutes for full-dependency native CI.
 
 ## Phase 2 — clean-machine reproducible installation

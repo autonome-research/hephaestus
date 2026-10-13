@@ -5,7 +5,42 @@ SPDX-License-Identifier: Apache-2.0
 
 # macOS progress — experimental executor and renderer
 
-## Independent regression review — uncommitted follow-up to 4429022
+## CI stabilization follow-up — first published run, 2026-10-12
+
+**Still draft; do not merge. No current-source Mac live acceptance.** Four
+conventional follow-up commits through `32071c5` preserve the original five
+commits. Run `38322262646` completed with **17 successful / 4 failed jobs**, all
+21 jobs accounted for. Complete job logs are retained locally under ignored
+`dist/macos-pr128-ci-followup-20261012T232523Z/32071c581b2e8f9750d86d0e43de03ec157df992/`.
+
+The remaining failures were one Pyright private-export error for build123d
+`Shape`, F1's multiprocessing architecture guard, the HTTP renderer-import
+boundary, and nine synthetic browser cases (the eight documented baseline
+failures plus a focused-divider transition sampled before its final width).
+Native core reached **2041 passed / 1 failed / 1 xfailed**; server shards reached
+**696 passed / 3 skipped**, **487 passed / 1 deselected**, and
+**680 passed / 1 failed**. Pinned render goldens **25 passed** and the section
+golden **1 passed**; Khronos **2 skipped / 20 deselected** under the existing
+image configuration. Synthetic browser **45 passed / 9 failed**; G4 e2e was
+**not reached**. A successful job is not a claim its existing skips passed.
+
+The next repair uses the defining topology module for `Shape`, exposes only the
+bridge's renderer injection contract to HTTP, restores the model's accessible
+identity, bounds creation menus by their actual column, and makes keyboard
+focus styling immediate. F1 now shares the native poll/deadline/death-drain body
+with an explicit independent-owner finish policy: duplex EOF then bounded reap,
+never kill-on-terminal. Popen/no resource tracker, the 420-second owner ceiling,
+IPC bounds and durable acknowledgement-before-reuse remain. Additional scripted
+race and real synthetic owner tests cover terminal cleanup, cancellation,
+spawn/persistence/receive/reap failures and poisoning. These repairs still need
+full CI on their new SHA; source review and synthetic tests do not establish live
+container cancellation or current ARM64 image validity.
+
+No dependencies, image pins, goldens, strictness settings or workflow gates were
+changed. The earlier review below is a historical checkpoint, not current CI
+status. See PR #128 for the exact subsequent run result.
+
+## Independent regression review — pre-publication checkpoint against 4429022
 
 **Do not merge: required CI is not green. Production remains closed.**
 All live passes below are historical and **superseded for changed runtime sources**

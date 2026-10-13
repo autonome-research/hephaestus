@@ -7,9 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 
 **Historical scoped executor acceptance; not current-source certification.**
 The old scoped report had full `accepted:false`; a later complete workspace run
-passed, but changed runtime sources supersede that live acceptance. F1's shared
-lifecycle design remains unresolved. See the [roadmap](macos-roadmap.md) for
-fresh CI/recovery gates. Ownership rules below remain binding.
+passed, but changed runtime sources supersede that live acceptance. The shared
+F1 lifecycle repair now has separate kill/join and independent EOF/reap policies;
+full native CI and fresh live cancellation remain gates, not inferred passes.
+See the [roadmap](macos-roadmap.md) for fresh CI/recovery gates. Ownership rules below remain binding.
 
 The
 [executor CLI](macos-executor-stage.md) now uses this supported injection for fresh

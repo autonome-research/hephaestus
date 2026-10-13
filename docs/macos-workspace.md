@@ -15,8 +15,8 @@ publication, privileged worker or host CAD installation is needed.
 
 **Current runtime repairs are not live-accepted.** The earlier all-stage pass is
 **superseded for changed host/image sources** until fresh current-source images
-and a new complete run succeed. Required native/typing CI and F1 lifecycle design
-remain open; see [progress](macos-progress.md) and the [roadmap](macos-roadmap.md).
+and a new complete run succeed. Required native/typing CI and fresh live
+validation of the shared F1 lifecycle repair remain open; see [progress](macos-progress.md) and the [roadmap](macos-roadmap.md).
 Do not merge on historical evidence. Setup commands below are a reproduction
 procedure, not proof that the present source passed.
 
