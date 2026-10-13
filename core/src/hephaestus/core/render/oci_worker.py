@@ -83,7 +83,7 @@ def render(request: Request, brep: bytes | None) -> Response:
         or hashlib.sha256(brep).hexdigest() != request["brep_sha256"]
     ):
         raise ValueError("frozen BREP identity mismatch")
-    from build123d import Shape
+    from build123d.topology import Shape
     from hephaestus.core.executor.artifact_geometry import load_brep_shape
     from hephaestus.core.executor.tags import TagPlacement
     from hephaestus.core.render.cameras import camera_framing, parse_view

@@ -64,7 +64,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from hephaestus.agent_bridge.app import BridgeRuntime
 
     # Dependency annotation only, through the same CadOps boundary as geometry.
-    from hephaestus.core.render.oci_backend import OciRenderer
+    from hephaestus.agent_bridge.cad_ops import RenderService
 
 __all__ = [
     "CAPABILITY_TTL_SECONDS",
@@ -132,7 +132,7 @@ class WorkspaceRuntime:
     #: it is a comment. Defaulted to loopback so an in-process harness — which
     #: binds no socket at all — is not accidentally off-loopback.
     bind_host: str = "127.0.0.1"
-    renderer: OciRenderer | None = None
+    renderer: RenderService | None = None
     render_size: tuple[int, int] | None = None
     build_rlimits: Rlimits | None = None
     build_wall_clock_s: float | None = None
@@ -186,7 +186,7 @@ class WorkspaceRuntime:
         serve_mode: bool = True,
         backend: ExecBackend | None = None,
         bind_host: str = "127.0.0.1",
-        renderer: OciRenderer | None = None,
+        renderer: RenderService | None = None,
         render_size: tuple[int, int] | None = None,
         build_rlimits: Rlimits | None = None,
         build_wall_clock_s: float | None = None,
