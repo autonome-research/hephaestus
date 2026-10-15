@@ -265,6 +265,8 @@ export interface TurnOutcome {
  * per-turn legacy fallback this client must not skip.
  */
 export interface HistoryUserPrompt {
+  /** Requested choices, when recorded; absent on legacy turns (not guessed). */
+  readonly turn_controls?: PromptOptions;
   readonly run_id?: string;
   /** THE IDENTITY when present (§2.8(2)). Absent from a pre-amendment sidecar. */
   readonly turn?: number;

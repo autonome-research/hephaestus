@@ -159,7 +159,16 @@ API_PREFIX: Final[str] = WORKSPACE_API_PREFIX
 #: against the canonical schema, and a second gate here would be a second table.
 _PREVIEW_MEMBERS: Final[frozenset[str]] = frozenset({"context"})
 _PROMPT_MEMBERS: Final[frozenset[str]] = frozenset(
-    {"text", "run_id", "context", "include_events", "expected_model_revision"}
+    {
+        "text",
+        "run_id",
+        "context",
+        "include_events",
+        "expected_model_revision",
+        "interaction_mode",
+        "dfm_mode",
+        "thinking_level",
+    }
 )
 _ANSWER_MEMBERS: Final[frozenset[str]] = frozenset({"question_id", "answer"})
 _SESSION_CREATE_MEMBERS: Final[frozenset[str]] = frozenset(
@@ -2019,6 +2028,9 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         # compared nothing — so a client that misspelt `context` got a model turn
         # with no workspace context and nothing said about it.
         _closed_body(body, _PROMPT_MEMBERS, what="the prompt body")
+        from hephaestus.agent_bridge.turn_controls import parse_turn_controls
+
+        controls = parse_turn_controls(body)
         expected = expected_revision(body)
         text = body.get("text")
         if not isinstance(text, str) or not text:
@@ -2073,6 +2085,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
                         text,
                         run_id=run_id,
                         context=block,
+                        turn_controls=controls,
                         include_events=include_events,
                         expected_model_revision=expected,
                     ),

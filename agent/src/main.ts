@@ -50,6 +50,7 @@ import {
   type FlowProjection,
 } from "./session/credentials.js";
 import { SessionService, UnknownSessionError, type ManagedSession } from "./session/manager.js";
+import { readPrompt, applyTurnControls, turnControlContext } from "./session/turn-controls.js";
 import { ModelResolver, readModelRef, readRevision, modelError } from "./session/model-selection.js";
 import type { SessionProfile } from "./session/profiles.js";
 import {
@@ -807,9 +808,7 @@ function pinnedSummary(managed: ManagedSession): PinnedCadSummary {
 
 on("session.prompt", async (params) => {
   const svc = requireService();
-  const sessionId = String(params.session_id);
-  const runId = String(params.run_id);
-  const promptText = String(params.prompt);
+  const { sessionId, runId, promptText, contextBlock, controls } = readPrompt(params);
   // INTERFACE.md §7A.4 / §19.22 — the workspace's composed context block.
   //
   // It arrives as its OWN parameter and is prepended as its own user-role
@@ -817,8 +816,6 @@ on("session.prompt", async (params) => {
   // because `BridgeRuntime.prompt` binds `prompt` as the request every
   // VALIDATION.md §4/§5 rung judges against. Absent on every turn that carries
   // no workspace context, including every `heph agent` turn.
-  const contextBlock =
-    params.context === undefined || params.context === null ? undefined : String(params.context);
   const managed = svc.get(sessionId);
   if (managed === undefined) {
     throw new RpcError(ErrorCode.INVALID_PARAMS, `unknown session '${sessionId}'`);
@@ -828,6 +825,7 @@ on("session.prompt", async (params) => {
   const controller = svc.beginRun(sessionId, runId, params.expected_model_revision === undefined ? undefined : readRevision(params.expected_model_revision));
   const admittedModel = managed.session.model;
   if (!admittedModel) { svc.endRun(runId); throw modelError("selection_required"); }
+  const controlContext = turnControlContext(controls);
 
   // INTERFACE.md §2.8(3) — RECORD THE TURN AT PROMPT TIME.
   //
@@ -854,6 +852,7 @@ on("session.prompt", async (params) => {
       run_id: runId,
       text: promptText,
       envelope: contextBlock ?? null,
+      turn_controls: controls,
     });
   } catch (err) {
     log(`turn marker not recorded: ${err instanceof Error ? err.message : String(err)}`);
@@ -896,6 +895,9 @@ on("session.prompt", async (params) => {
   let state: "completed" | "cancelled" | "failed" = "completed";
   let errorMessage: string | undefined;
   try {
+    // Admission has succeeded. An SDK/persistence failure must settle this run
+    // through the ordinary terminal path, not strand Python's reserved slot.
+    applyTurnControls(managed.session, managed.build.tools, controls);
     // Everything this turn awaits runs INSIDE the run's async scope, so a tool
     // `execute` Pi fires anywhere under it resolves this run and not a
     // concurrent one. The scope wraps the context policy too: a threshold
@@ -903,9 +905,8 @@ on("session.prompt", async (params) => {
     // run's next ordinal.
     await runScope.run(run, async () => {
       const outcome = await promptWithTransientRetry(promptText, {
-        // With a context block the turn is sent as a content ARRAY whose leading
-        // block is the workspace context and whose second block is the operator's
-        // text verbatim (INTERFACE.md §7A.4).
+        // Controls and optional workspace context precede the operator's text
+        // verbatim. Neither is bound as the request on the Python side.
         //
         // DEVIATION, reported rather than glossed: **Pi admits no genuinely
         // separate second user-role text block.** `AgentSession.sendUserMessage`
@@ -915,11 +916,9 @@ on("session.prompt", async (params) => {
         // actually protects is on the Python side and is unaffected: the block
         // never reaches `bind_run_request_text`, so `prompt_number_diff` still
         // diffs the operator's own words. The second-order consequence is
-        // recorded here: a turn WITH context skips file-template expansion, one
-        // WITHOUT keeps it. That is the safer asymmetry — with a block prepended
-        // the operator's text is no longer at message start, so template
-        // expansion would fire on the workspace's own prose rather than on
-        // theirs — and it changes nothing for `heph agent`, which sends no block.
+        // recorded here: every controlled turn skips file-template expansion.
+        // With controls prepended, expansion would fire on application prose
+        // rather than the operator's. Ambient templates are disabled anyway.
         prompt: (text) => {
           // The single transient retry re-prompts with a sentence THIS sidecar
           // wrote (session/retry.ts). Pi persists it as an ordinary user message,
@@ -934,18 +933,18 @@ on("session.prompt", async (params) => {
                 run_id: runId,
                 text,
                 envelope: contextBlock ?? null,
+                turn_controls: controls,
                 origin: "agent",
               });
             } catch (err) {
               log(`retry turn marker not recorded: ${err instanceof Error ? err.message : String(err)}`);
             }
           }
-          return contextBlock === undefined
-            ? managed.session.prompt(text)
-            : managed.session.sendUserMessage([
-                { type: "text", text: contextBlock },
-                { type: "text", text },
-              ]);
+          return managed.session.sendUserMessage([
+            { type: "text", text: controlContext },
+            ...(contextBlock === undefined ? [] : [{ type: "text" as const, text: contextBlock }]),
+            { type: "text", text },
+          ]);
         },
         takeTurnError: () => {
           const captured = turnError;
@@ -967,7 +966,8 @@ on("session.prompt", async (params) => {
       state = outcome.state;
       if (outcome.errorMessage !== undefined) errorMessage = outcome.errorMessage;
       // Drive the context policy off post-turn usage (compaction/escalation).
-      await applyContextPolicy(managed, run, policy);
+      await applyContextPolicy(managed, run, policy, controller.signal);
+      if (controller.signal.aborted) state = "cancelled";
     });
   } catch (err) {
     if (controller.signal.aborted) {
@@ -1031,10 +1031,15 @@ async function applyContextPolicy(
   managed: ManagedSession,
   run: ActiveContext,
   policy: ContextPolicy,
+  signal: AbortSignal,
 ): Promise<void> {
+  if (signal.aborted) return;
   const usage = managed.session.getContextUsage();
   const fraction = usage?.percent != null ? usage.percent / 100 : null;
   for (const action of policy.evaluate(fraction)) {
+    // Cancellation also owns maintenance: do not start a fresh compaction
+    // provider request or budget question after Stop, including between actions.
+    if (signal.aborted) return;
     if (action.kind === "compact") {
       await managed.session.compact(action.instructions);
       policy.reset();
@@ -1092,6 +1097,7 @@ function wireUserPrompt(prompt: HistoryUserPrompt): { [k: string]: JsonValue } {
   };
   // ABSENT means the operator; only the sidecar's own retry sentence is marked.
   if (prompt.origin === "agent") wire.origin = "agent";
+  if (prompt.turn_controls !== undefined) wire.turn_controls = { ...prompt.turn_controls };
   // Omitted outcome means no terminal evidence; completion is explicit.
   if (prompt.run_id !== undefined) wire.run_id = prompt.run_id;
   if (prompt.outcome !== undefined) {

@@ -99,6 +99,7 @@ from .query_snapshot import (
 from .sessions import RunInFlightError
 from .sidecar import SidecarResolution, node_executable, resolve_sidecar
 from .supervisor import ProcessLossEvent, Supervisor, SupervisorConfig, SupervisorError
+from .turn_controls import DEFAULT_TURN_CONTROLS, TurnControls
 from .wiring import build_dispatcher
 from .workflows import PartPrompter, PartPromptOutcome, PromptRegistry
 
@@ -234,6 +235,7 @@ class _Run:
 
     run_id: str
     session_id: str
+    turn_controls: TurnControls = DEFAULT_TURN_CONTROLS
     events: deque[dict[str, Any]] = field(
         default_factory=lambda: deque[dict[str, Any]](maxlen=BUFFERED_EVENTS_MAX)
     )
@@ -1846,6 +1848,7 @@ class BridgeRuntime:
         *,
         run_id: str | None = None,
         context: str | None = None,
+        turn_controls: TurnControls = DEFAULT_TURN_CONTROLS,
         answerer: AskUserAnswerer | None = None,
         on_event: EventCallback | None = None,
         timeout: float | None = None,
@@ -1874,7 +1877,9 @@ class BridgeRuntime:
         if expected_model_revision is not None:
             expected_model_revision = revision(expected_model_revision)
         run_id = run_id or self.new_run_id()
-        run = _Run(run_id=run_id, session_id=session_id, on_event=on_event)
+        run = _Run(
+            run_id=run_id, session_id=session_id, on_event=on_event, turn_controls=turn_controls
+        )
         # Internal callers may omit the precondition, but never bypass admission.
         # Reads happen outside the global lock; _admit_turn rechecks atomically.
         if expected_model_revision is not None or session_id in self._model_states:
@@ -1911,13 +1916,13 @@ class BridgeRuntime:
                 "session_id": session_id,
                 "run_id": run_id,
                 "prompt": text,
+                **run.turn_controls.wire(),
             }
             if expected_model_revision is not None:
                 params["expected_model_revision"] = expected_model_revision
             if context is not None:
-                # Present only when there is one, so an unmodified sidecar sees
-                # the params it always saw and a turn with no workspace context
-                # is byte-identical on the wire to one from before this change.
+                # Workspace context stays optional and separate from operator
+                # text and the admitted turn controls, including legacy callers.
                 params["context"] = context
             # Through the self-healing path (§2.8(6)): a prompt for a session
             # the current child has forgotten is re-adopted and re-sent once,

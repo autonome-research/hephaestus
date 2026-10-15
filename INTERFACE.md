@@ -5387,6 +5387,23 @@ Plan until deliberately classified. A short model instruction asks for an
 actionable plan, but tool narrowing—not that instruction—is the mutation guard.
 Every turn explicitly reapplies its full profile tools in Modeling mode.
 
+**Implementation clarification 2026-10-15:** the inspection subset is a closed
+classification of the existing names, not a wildcard permission for future tools:
+`read_part`, `read_globals`, `read_project_check`, `read_artifact`,
+`read_constraints`, `read_couplings`, `read_joints`, `read_motion_checks`,
+`read_poses`, `read_proposals`, `read_reference`, `read_requirements`,
+`list_project_checks`, `list_references`, `list_skills`, `search_materials`,
+`search_parts_store`, `inspect_part`, `measure`, `compare_solids`,
+`compare_to_scan`, `query_snapshot`, `get_delegation_status`. Intersection with
+the profile remains mandatory; Plan grants no tool the profile lacks.
+The admitted choices remain fixed through the turn's automatic transient retry;
+a competing prompt cannot change them. They do not become session defaults.
+The prompt-time marker records the requested choices separately from operator
+text and workspace envelope. History `user_prompts` may add `turn_controls`
+with these three members; absent on legacy/unreadable records means unknown,
+not inferred defaults. `thinking_level` there is the **requested** effort,
+not a claim that Pi did not clamp it. This adds no event kind or tool schema.
+
 DFM selection adds manufacturing-review context to the model turn. It does not
 invoke `run_dfm`, change `[dfm] auto_run`, or replace the Inspector's explicit
 DFM controls. Process labels are Hephaestus copy, not imported branding.

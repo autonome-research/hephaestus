@@ -40,6 +40,47 @@ open dimension findings mean a successful build is not design-requirement
 completion. Earlier storage/executor reports and the observed-results section
 below are historical, not authority for later source changes.
 
+## Turn-control repair publication (2026-10-15; acceptance blocked)
+
+The focused repair implements INTERFACE §7A.10A: immutable per-turn
+Modeling/off/medium defaults, closed HTTP/private validation, Plan's explicit
+profile-intersected tools, Pi-clamped effort, DFM review context only, and optional
+history readback of requested choices. No agent attachment is enabled in the
+experimental Mac launcher (`allow_agent_attach=False` remains mandatory).
+
+Independent review found and repaired cancellation gaps: a cancelled run must
+not start a retry, post-turn compaction, or the next budget question. Real Pi
+queued-continuation coverage retains Plan tools and effort through the queue.
+**Semantic blocker:** Plan explicitly admits `get_delegation_status`, but that
+existing tool finalizes expired delegations durably. Inspection also publishes
+immutable render evidence. These are not source/configuration edits, but a
+literal promise of *no mutations* is false. Clarify permitted lifecycle/evidence
+side effects versus prohibited modeling writes before approving this contract;
+this review does not remove a normatively required tool or change status semantics.
+
+Evidence and exact commands: `dist/macos-turn-contract-independent-20261015/RESULT.md`.
+The broader lifecycle selection has **six failing re-adoption tests** (no observed
+auto-respawn after killing a test-owned sidecar), not waived as host-only failures.
+Root strict Pyright and the contract import-direction check also remain failed in
+the partial host environment; no full-dependency typing certification is available
+locally. Local passes do not settle the old G4 failures: four explicit parser
+refusals and eight cases with unproven causes still require new exact-source CI.
+Current-source all-stage Mac acceptance remains pending; historical acceptance
+above remains superseded. The independent review did not approve the contract.
+
+The operator subsequently authorized focused conventional commits and a non-force
+push of the exact 16-path repair to the existing draft PR #128. Publication is
+not review approval or acceptance: the semantic and lifecycle findings above
+remain open. No tool-policy broadening, supervisor repair, gate waiver, workflow
+change, or golden rebaseline is included. All 21 exact-source native CI jobs,
+including root strict Pyright with zero errors/warnings and unchanged G4 in the
+pinned-render job, are required. A pending run is not green. Publication evidence
+and full available job logs are retained locally by commit SHA under
+`dist/macos-pr128-publication-20261015/`; PR progress records the actual CI result.
+At most two publish/CI cycles are authorized for this phase, with a concrete
+failure diagnosis and renewed review of sensitive changes before any repair
+cycle. The PR remains draft/unmerged; fresh Mac acceptance is not claimed.
+
 ## Authority and baseline
 
 Development used a separate `hephaestus-macos-feasibility` worktree on branch
