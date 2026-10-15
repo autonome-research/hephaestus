@@ -111,6 +111,7 @@ it("keeps Plan and effort through a queued Pi continuation and cancellation at r
   registerHandlers(server);
   const dispatched: JsonValue[] = [];
   client.on("py.tool_dispatch", params => { dispatched.push(params); throw new Error("unexpected mutation"); });
+  client.on("py.delegate", params => { dispatched.push(params); throw new Error("unexpected queued delegation"); });
   const ask = vi.fn(() => { throw new Error("cancelled run must not ask a budget question"); });
   client.on("py.ask_user", ask);
   let cancellation: Promise<JsonValue> | undefined;
@@ -143,7 +144,12 @@ it("keeps Plan and effort through a queued Pi continuation and cancellation at r
     });
     fake.setScript([
       { kind: "text", chunks: ["initial plan"] },
-      { kind: "tool_calls", calls: [{ name: "create_part", arguments: { name: "forged", description: "queued write" } }] },
+      { kind: "tool_calls", calls: [
+        { name: "create_part", arguments: { name: "forged", description: "queued write" } },
+        { name: "delegate_part_agent", arguments: { part: "widget", prompt: "queued modeling", delivery: "follow_up" } },
+        { name: "set_params", arguments: { scope: "project", values: { wall: 3 } } },
+        { name: "update_requirement", arguments: { id: "req-1", patch: { text: "changed" } } },
+      ] },
       { kind: "text", chunks: ["still inspection only"] },
     ]);
     await expect(client.request("session.prompt", { session_id: "s", run_id: "queue", prompt: "inspect", interaction_mode: "plan", dfm_mode: "casting", thinking_level: "high" })).resolves.toMatchObject({ status: "completed" });
@@ -153,7 +159,9 @@ it("keeps Plan and effort through a queued Pi continuation and cancellation at r
       expect(request.bodyText).toContain('"reasoning_effort":"high"');
       expect(request.bodyText).toContain("casting");
     }
-    expect(fake.requests.at(-1)?.bodyText).toContain("Tool create_part not found");
+    for (const name of ["create_part", "delegate_part_agent", "set_params", "update_requirement"]) {
+      expect(fake.requests.at(-1)?.bodyText).toContain(`Tool ${name} not found`);
+    }
     expect(dispatched).toEqual([]);
     fake.setScript([{ kind: "error", message: "WebSocket error", status: 400 }, { kind: "text", chunks: ["must not retry"] }]);
     const usage = vi.spyOn(AgentSession.prototype, "getContextUsage").mockReturnValue({ tokens: 95, contextWindow: 100, percent: 95 });

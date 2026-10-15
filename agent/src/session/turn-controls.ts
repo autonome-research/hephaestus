@@ -64,7 +64,7 @@ const DFM_LABELS = {
 
 export function turnControlContext(controls: TurnControls): string {
   const mode = controls.interaction_mode === "plan"
-    ? "Plan: inspect only and propose an actionable plan; do not perform mutations."
+    ? "Plan: inspect and propose an actionable plan; do not change modeling source, configuration, parameters or requirements, or execute, delegate or queue modeling work. Inspection may retain immutable evidence; status reads may finalize expired deadlines. Only the existing bounded evidence and session bookkeeping effects are allowed, not arbitrary writes."
     : "Modeling: use the session's allowed tools as needed.";
   const dfm = controls.dfm_mode === "off"
     ? "No manufacturing-review context is selected for this turn."

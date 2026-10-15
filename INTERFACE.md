@@ -5384,7 +5384,7 @@ fail-closed inspection subset: `read_*`, `list_*`, `search_*`, `inspect_*`,
 `measure`, `compare_*`, `query_snapshot`, and `get_delegation_status` when the
 session profile already admits them. A new tool is therefore unavailable in
 Plan until deliberately classified. A short model instruction asks for an
-actionable plan, but tool narrowing—not that instruction—is the mutation guard.
+actionable plan, but tool narrowing—not that instruction—is the modeling-mutation guard.
 Every turn explicitly reapplies its full profile tools in Modeling mode.
 
 **Implementation clarification 2026-10-15:** the inspection subset is a closed
@@ -5396,6 +5396,45 @@ classification of the existing names, not a wildcard permission for future tools
 `search_parts_store`, `inspect_part`, `measure`, `compare_solids`,
 `compare_to_scan`, `query_snapshot`, `get_delegation_status`. Intersection with
 the profile remains mandatory; Plan grants no tool the profile lacks.
+
+**Plan effects clarification 2026-10-15 (scoped gap closure):** inspection-only
+means no changes to modeling inputs, not zero persistent writes. Plan MUST NOT
+create/edit/delete source, project configuration, parameters, requirements,
+constraints or other design state; build/rebuild, run modeling/check/DFM work,
+or execute/delegate/enqueue such work (including `delivery="follow_up"`).
+The same restriction holds through retries and queued Pi continuations. Only
+these existing incidental effects are permitted, within their existing bounds:
+
+- `read_part`, `read_globals`, and `read_project_check` may retain immutable
+  snapshots of the bytes read; they may not change those bytes or live pointers.
+- `inspect_part` and `query_snapshot` may publish content-addressed render
+  evidence of an **already stored** build/checkpoint: images, selection passes,
+  previews, tables/legends and bundles, with artifact-kind/provenance records and
+  retention links. Existing view/image/byte, worker and provenance bounds apply.
+  They may not build missing geometry, change the current build, rewrite old
+  evidence, or export arbitrary files. `query_snapshot`'s only child is the
+  existing ephemeral no-tools vision turn (1 turn, 1024 output tokens, 60 s,
+  ≤4 images, parent-budget charged); it is not a modeling delegation. This
+  permission does not implement missing vision wiring: a runtime unable to
+  deliver images still refuses `capability_not_available` before rendering.
+- `get_delegation_status` may finalize an **existing authorized** delegation
+  whose persisted deadline has expired as `timed_out`, or project its existing
+  terminal, including the corresponding delegation/admission records. Existing
+  terminal precedence and acknowledgment/slot rules remain; it may not admit,
+  dispatch, resume, enqueue or extend a child's work or deadline.
+- Ordinary turn/session machinery may persist transcript/control markers,
+  events, usage/budget charges, leases, admission/terminal/cancellation and
+  recovery bookkeeping, and existing bounded context maintenance. This is not
+  authority to change design state or to expose any additional tool.
+
+Authentication, profile intersection, model readiness/revision checks, budgets
+and cancellation remain mandatory. Stop forbids starting new provider work,
+including retries, vision children and context maintenance; already-started
+work still follows cancellation and bounded terminal/cleanup rules. These are
+closed exceptions for evidence and lifecycle accounting, not permission for
+arbitrary `.heph/` writes. Modeling source/configuration/parameter/requirements
+bytes and current modeling pointers must remain unchanged by a Plan turn.
+
 The admitted choices remain fixed through the turn's automatic transient retry;
 a competing prompt cannot change them. They do not become session defaults.
 The prompt-time marker records the requested choices separately from operator
