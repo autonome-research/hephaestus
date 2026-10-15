@@ -68,7 +68,9 @@ def test_cleanup_only_addresses_recorded_resources(tmp_path: Path) -> None:
             *,
             timeout: float = 30,
             require: bool = True,
+            cleanup: bool = False,
         ) -> tuple[int, str]:
+            assert cleanup
             del timeout, require
             calls.append(argv)
             return 0, "someone-elses-resource\n"
@@ -95,7 +97,9 @@ def test_cleanup_inventory_failure_is_not_absence(tmp_path: Path) -> None:
             *,
             timeout: float = 30,
             require: bool = True,
+            cleanup: bool = False,
         ) -> tuple[int, str]:
+            assert cleanup
             del argv, timeout, require
             raise OSError("daemon unavailable")
 

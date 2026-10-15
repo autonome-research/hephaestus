@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "core" / "src"))
 sys.path.insert(0, str(ROOT / "opstore" / "src"))
 
+from hephaestus.core.deadline import Deadline, clock_description, transport_budget  # noqa: E402
 from hephaestus.core.executor.sandbox.oci import (  # noqa: E402
     RUNTIME_ENV,
     SubprocessTransport,
@@ -93,7 +94,11 @@ def report_path(value: str) -> Path:
 
 
 class Smoke:
-    def __init__(self, directory: Path, wheelhouse: Path | None = None) -> None:
+    def __init__(
+        self, directory: Path, wheelhouse: Path | None = None, *, deadline: Deadline | None = None
+    ) -> None:
+        self.deadline = deadline or Deadline.after(2400)
+        self.cleanup_deadline = None
         self.directory = directory
         self.wheelhouse = wheelhouse
         self.logs = directory / "logs"
@@ -107,6 +112,10 @@ class Smoke:
             "schema_version": 1,
             "experimental": True,
             "started_at": time.time(),
+            "deadline_clock": clock_description(),
+            "work_deadline_ns": self.deadline.end_ns,
+            "work_seconds": 2400,
+            "cleanup_seconds": 120,
             "source_root": str(ROOT),
             "checks": {
                 name: {
@@ -141,8 +150,19 @@ class Smoke:
         self.save()
 
     def command(
-        self, argv: tuple[str, ...], *, timeout: float = 30, require: bool = True
+        self,
+        argv: tuple[str, ...],
+        *,
+        timeout: float = 30,
+        require: bool = True,
+        cleanup: bool = False,
     ) -> tuple[int, str]:
+        if cleanup and self.cleanup_deadline is None:
+            self.cleanup_deadline = Deadline.after(120)
+            self.report["cleanup_deadline_ns"] = self.cleanup_deadline.end_ns
+        budget = self.cleanup_deadline if cleanup else self.deadline
+        assert budget is not None
+        timeout = budget.cap(timeout)
         self.sequence += 1
         stem = f"{self.sequence:03d}"
         record: dict[str, Any] = {
@@ -154,14 +174,15 @@ class Smoke:
         self.report["commands"].append(record)
         self.save()
         try:
-            result = self.transport.run(
-                argv,
-                input=b"",
-                timeout=timeout,
-                stdout_limit=512 * 1024,
-                stderr_limit=512 * 1024,
-                env=RUNTIME_ENV,
-            )
+            with transport_budget(budget):
+                result = self.transport.run(
+                    argv,
+                    input=b"",
+                    timeout=timeout,
+                    stdout_limit=512 * 1024,
+                    stderr_limit=512 * 1024,
+                    env=RUNTIME_ENV,
+                )
         except (TransportTimeout, TransportOutputLimit) as exc:
             record["error"] = type(exc).__name__
             (self.logs / f"{stem}.log").write_bytes(
@@ -322,13 +343,18 @@ class Smoke:
         self.check("native_dependencies", "passed", "native cp313 ARM64 hash-checked binary wheels")
 
     def cleanup(self, *, retain_images: bool = False) -> None:
+        if self.cleanup_deadline is None:
+            self.cleanup_deadline = Deadline.after(120)
+            self.report["cleanup_deadline_ns"] = self.cleanup_deadline.end_ns
         failures: list[str] = []
         for name in self.owned:
             try:
-                self.command((*self.docker, "rm", "--force", name), require=False)
+                self.command((*self.docker, "rm", "--force", name), require=False, cleanup=True)
                 # A successful full inventory positively establishes absence; a failed
                 # inspect could instead mean the daemon is unavailable.
-                _, names = self.command((*self.docker, "ps", "-a", "--format", "{{.Names}}"))
+                _, names = self.command(
+                    (*self.docker, "ps", "-a", "--format", "{{.Names}}"), cleanup=True
+                )
                 if name in names.splitlines():
                     failures.append(name)
             except Exception as exc:
@@ -338,9 +364,10 @@ class Smoke:
         )
         for tag in () if retain_images else self.report["owned_image_tags"]:
             try:
-                self.command((*self.docker, "image", "rm", tag), require=False)
+                self.command((*self.docker, "image", "rm", tag), require=False, cleanup=True)
                 _, tags = self.command(
-                    (*self.docker, "image", "ls", "--format", "{{.Repository}}:{{.Tag}}")
+                    (*self.docker, "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"),
+                    cleanup=True,
                 )
                 if tag in tags.splitlines():
                     failures.append(tag)
@@ -361,19 +388,24 @@ class Smoke:
     def run(self) -> int:
         stage = "preflight"
         try:
+            self.deadline.remaining()
             self.preflight()
+            self.deadline.remaining()
             stage = "workspace_dependencies"
             from macos_workspace_dependencies import preflight as workspace_dependencies
 
             workspace_dependencies(self)
+            self.deadline.remaining()
             stage = "executor"
             from macos_executor_check import run_executor_stages
 
             run_executor_stages(self)
+            self.deadline.remaining()
             stage = "workspace"
             from macos_workspace_check import later_stages
 
             later_stages(self)
+            self.deadline.remaining()
         except (Exception, KeyboardInterrupt) as exc:
             self.report["milestone_error"] = f"{type(exc).__name__}: {exc}"
             self.check(stage, "failed", f"{type(exc).__name__}: {exc}")

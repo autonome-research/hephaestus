@@ -22,12 +22,19 @@ import stat
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import BinaryIO, Literal, Protocol, cast
 
+from hephaestus.core.deadline import (
+    Deadline,
+    continuous_seconds,
+    transport_budget,
+    transport_deadline,
+    wait_process,
+)
 from hephaestus.core.errors import SandboxDeniedError, ValidationError
 from hephaestus.core.executor.cancellation import Cancellation, ExecutionCancelled
 from hephaestus.core.executor.identity import ExecutionIdentity
@@ -246,14 +253,20 @@ class SubprocessTransport:
         env: Mapping[str, str],
         stdout_consumer: Callable[[bytes], None] | None = None,
     ) -> TransportResult:
-        if timeout <= 0:
+        if not math.isfinite(timeout) or timeout <= 0:
             raise TransportTimeout()
+        deadline = continuous_seconds() + timeout
+        enclosing = transport_deadline.get()
+        if enclosing is not None:
+            deadline = min(deadline, enclosing.end_ns / 1_000_000_000)
+        _remaining(deadline)
         if self.cancellation is not None and "start" in argv:
             self.cancellation.check()
         selector = selectors.DefaultSelector()
         try:
             if self.ownership is not None:
                 self.ownership.launching_client()
+            _remaining(deadline)  # recheck after ownership bookkeeping, before launch
             proc = subprocess.Popen(
                 tuple(argv),
                 stdin=subprocess.PIPE,
@@ -269,6 +282,9 @@ class SubprocessTransport:
         stdout = bytearray()
         stderr = bytearray()
         stdout_count = 0
+        reap_deadline: Deadline | None = None
+        group_deadline: Deadline | None = None
+        local_cleaned = False
         try:
             if self.ownership is not None:
                 self.ownership.client(proc.pid, reaped=False)
@@ -288,15 +304,20 @@ class SubprocessTransport:
             else:
                 proc.stdin.close()
             sent = 0
-            deadline = time.monotonic() + timeout
             while any(key.data != "cancel" for key in selector.get_map().values()):
-                remaining = deadline - time.monotonic()
+                remaining = deadline - continuous_seconds()
                 if remaining <= 0:
                     raise TransportTimeout(bytes(stdout), bytes(stderr))
-                events = selector.select(remaining)
-                if not events:
+                events = selector.select(min(remaining, 0.1))
+                if control is not None:
+                    control.check()
+                if continuous_seconds() >= deadline:
                     raise TransportTimeout(bytes(stdout), bytes(stderr))
+                if not events:
+                    continue
                 for key, _ in events:
+                    if continuous_seconds() >= deadline:
+                        raise TransportTimeout(bytes(stdout), bytes(stderr))
                     if key.data == "cancel":
                         assert control is not None
                         control.check()
@@ -335,7 +356,7 @@ class SubprocessTransport:
                     target.extend(chunk[: max(0, room)])
                     if len(chunk) > room:
                         raise TransportOutputLimit(cast(Literal["stdout", "stderr"], channel))
-            remaining = deadline - time.monotonic()
+            remaining = deadline - continuous_seconds()
             if remaining <= 0:
                 raise TransportTimeout(bytes(stdout), bytes(stderr))
             # Keep the group leader waitable (unreaped) until descendants have
@@ -343,7 +364,7 @@ class SubprocessTransport:
             while os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
                 if control is not None:
                     control.check()
-                if time.monotonic() >= deadline:
+                if continuous_seconds() >= deadline:
                     raise TransportTimeout(bytes(stdout), bytes(stderr))
                 time.sleep(0.01)
             # Darwin returns EPERM for a group containing only its zombie
@@ -351,10 +372,16 @@ class SubprocessTransport:
             # unkillable descendant still refuses in _reap_group.
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait(timeout=5.0)
-            self._reap_group(proc)
+            reap_deadline = Deadline.after(5.0)
+            wait_process(proc, reap_deadline)
+            group_deadline = Deadline.after(2.0)
+            self._reap_group(proc, group_deadline)
+            local_cleaned = True
+            _remaining(deadline)  # no successful result accepted after expiration
             return TransportResult(int(proc.returncode), bytes(stdout), bytes(stderr))
         except BaseException as exc:
+            if local_cleaned:
+                raise
             if isinstance(exc, ExecutionCancelled):
                 exc.stdout, exc.stderr = bytes(stdout), bytes(stderr)
             if proc.returncode is None:
@@ -364,10 +391,14 @@ class SubprocessTransport:
                 with contextlib.suppress(OSError):
                     proc.kill()
             try:
-                proc.wait(timeout=5.0)
+                if reap_deadline is None:
+                    reap_deadline = Deadline.after(5.0)
+                wait_process(proc, reap_deadline)
             except subprocess.TimeoutExpired as exc:
-                raise TransportReapError("OCI runtime client could not be reaped") from exc
-            self._reap_group(proc)
+                raise TransportReapError("OCI runtime client reap deadline exceeded") from exc
+            if group_deadline is None:
+                group_deadline = Deadline.after(2.0)
+            self._reap_group(proc, group_deadline)
             raise
         finally:
             selector.close()
@@ -376,20 +407,23 @@ class SubprocessTransport:
                     with contextlib.suppress(OSError):
                         stream.close()
 
-    def _reap_group(self, proc: subprocess.Popen[bytes]) -> None:
+    def _reap_group(self, proc: subprocess.Popen[bytes], deadline: Deadline) -> None:
         # Signalling happened before wait/reap while PID ownership was certain.
         # This check may refuse on surviving zombies, but never kills a reused PID.
-        deadline = time.monotonic() + 2.0
         while True:
+            if deadline.expired():
+                raise TransportReapError("OCI client process group absence deadline exceeded")
             try:
                 os.killpg(proc.pid, 0)
             except ProcessLookupError:
                 break
             except PermissionError:
                 pass  # Darwin zombie-only group; NOT proof of absence.
-            if time.monotonic() >= deadline:
+            if deadline.expired():
                 raise TransportReapError("OCI client process group remains")
             time.sleep(0.01)
+        if deadline.expired():
+            raise TransportReapError("OCI client process group absence deadline exceeded")
         if self.ownership is not None:
             self.ownership.client(proc.pid, reaped=True)
 
@@ -665,7 +699,11 @@ class OciBackend:
         cancellation: Cancellation | None = None,
         scratch_dir: Path | None = None,
         runtime_profile: str = "executor",
+        deadline: Deadline | None = None,
     ) -> None:
+        self._deadline = deadline
+        self._cleaning = False
+        self._cleanup_deadline: Deadline | None = None
         _profile_modules(runtime_profile)
         if runtime_profile == "renderer" and platform != "linux/arm64":
             raise ValueError("experimental renderer requires native linux/arm64")
@@ -810,6 +848,8 @@ class OciBackend:
         return report
 
     def execute(self, spec: SandboxSpec, stdin_payload: bytes) -> ExecOutcome:
+        if self._deadline is not None:
+            self._deadline.remaining()
         # Preflight deliberately runs before checking the capability gate, so a
         # malformed request never reaches (or depends on) transport state.
         _preflight(spec, self.image_ref, self.platform, self._runtime_profile)
@@ -842,15 +882,25 @@ class OciBackend:
         stderr_limit: int = PROBE_STDERR_MAX_BYTES,
         stdout_consumer: Callable[[bytes], None] | None = None,
     ) -> TransportResult:
-        return self._transport.run(
-            argv,
-            input=input,
-            timeout=timeout,
-            stdout_limit=stdout_limit,
-            stderr_limit=stderr_limit,
-            env=RUNTIME_ENV,
-            **({"stdout_consumer": stdout_consumer} if stdout_consumer is not None else {}),
-        )
+        if self._deadline is not None:
+            try:
+                timeout = self._deadline.cap(timeout)
+            except TimeoutError as exc:
+                raise TransportTimeout() from exc
+        # Preserve absolute expiry across evidence/fsync wrappers and scheduling.
+        local = Deadline.after(timeout)
+        if self._deadline is not None:
+            local = Deadline(min(local.end_ns, self._deadline.end_ns))
+        with transport_budget(local):
+            return self._transport.run(
+                argv,
+                input=input,
+                timeout=timeout,
+                stdout_limit=stdout_limit,
+                stderr_limit=stderr_limit,
+                env=RUNTIME_ENV,
+                **({"stdout_consumer": stdout_consumer} if stdout_consumer is not None else {}),
+            )
 
     def _validate_runtime(self) -> None:
         endpoint = self.runtime.endpoint
@@ -1268,10 +1318,18 @@ class OciBackend:
             self.ownership.require_clean()
             self.ownership.submitted(name)
         self._last_terminal_state = None
+        self._cleanup_deadline = None
         self.last_container_id = None
         self.last_transfer_records = {}
         self.last_transfer_observation = {}
-        deadline = time.monotonic() + float(spec.wall_clock_s)
+        previous_deadline = self._deadline
+        job_deadline = Deadline.after(float(spec.wall_clock_s))
+        self._deadline = Deadline(
+            min(job_deadline.end_ns, previous_deadline.end_ns)
+            if previous_deadline is not None
+            else job_deadline.end_ns
+        )
+        deadline = self._deadline.end_ns / 1_000_000_000
         container_id: str | None = None
         reconciled = False
         self._unsettled_creates.add(name)  # before the daemon can receive create
@@ -1377,8 +1435,10 @@ class OciBackend:
                 self.last_transfer_records = dict(receiver.files)
                 if self.cancellation is not None:
                     self.cancellation.check()
+                _remaining(deadline)
                 receiver.install(directory.path)
                 receiver.close()  # drop source links BEFORE caller can publish
+            _remaining(deadline)
             return ExecOutcome(exit_code, result, attached.stderr, False)
         except (TransportTimeout, subprocess.TimeoutExpired):
             return ExecOutcome(exit_code=137, stdout=b"", stderr=b"", timed_out=True)
@@ -1392,16 +1452,19 @@ class OciBackend:
             # Includes BaseExceptionGroup, receiver abort/unlink failures, client
             # reap failures and cancellation. Attach-client death is NOT worker
             # death. Never let an exceptional path bypass owned reconciliation.
-            if not reconciled:
-                try:
-                    self._cleanup(container_id or name)
-                except BaseException:
-                    self._passing_report = None
-                    if container_id is not None:
-                        self._unreconciled_containers.add(container_id)
-                    # Preserve the original failure as exception context; no
-                    # timeout/failure outcome may hide uncertain cleanup.
-                    raise
+            try:
+                if not reconciled:
+                    try:
+                        self._cleanup(container_id or name)
+                    except BaseException:
+                        self._passing_report = None
+                        if container_id is not None:
+                            self._unreconciled_containers.add(container_id)
+                        # Preserve the original failure as exception context; no
+                        # timeout/failure outcome may hide uncertain cleanup.
+                        raise
+            finally:
+                self._deadline = previous_deadline
 
     def _inspect(self, identity: str, *, timeout: float = 5.0) -> dict[str, object] | None:
         result = self._call(build_inspect_argv(self.runtime, identity), timeout=timeout)
@@ -1436,7 +1499,29 @@ class OciBackend:
             raise SandboxDeniedError("container disappeared before status inspection")
         return state
 
+    @contextlib.contextmanager
+    def _cleanup_budget(self) -> Generator[None]:
+        # Cleanup is not new workload. One separate 30s continuous budget per
+        # reconciliation, never reset by nested helpers or individual commands.
+        if self._cleaning:
+            yield
+            return
+        previous = self._deadline
+        if self._cleanup_deadline is None:
+            self._cleanup_deadline = Deadline.after(30.0)
+        self._deadline = self._cleanup_deadline
+        self._cleaning = True
+        try:
+            yield
+        finally:
+            self._deadline = previous
+            self._cleaning = False
+
     def _remove_and_confirm(self, identity: str) -> None:
+        with self._cleanup_budget():
+            self._remove_and_confirm_bounded(identity)
+
+    def _remove_and_confirm_bounded(self, identity: str) -> None:
         removed = self._call(build_remove_argv(self.runtime, identity), timeout=5.0)
         if removed.returncode != 0:
             raise SandboxDeniedError("OCI container removal failed")
@@ -1445,6 +1530,10 @@ class OciBackend:
         self._record_absence(identity)
 
     def _cleanup(self, identity: str) -> None:
+        with self._cleanup_budget():
+            self._cleanup_bounded(identity)
+
+    def _cleanup_bounded(self, identity: str) -> None:
         """Never confuse name absence with settlement of an interrupted create.
 
         Polling is only best-effort reclamation, not a daemon request barrier.
@@ -1467,6 +1556,10 @@ class OciBackend:
         self._cleanup_known(identity)
 
     def _cleanup_known(self, identity: str) -> bool:
+        with self._cleanup_budget():
+            return self._cleanup_known_bounded(identity)
+
+    def _cleanup_known_bounded(self, identity: str) -> bool:
         """Best-effort bounded reclamation; False means absent at first inspect."""
         failure: Exception | None = None
         try:
@@ -1535,13 +1628,14 @@ class OciBackend:
         self.ownership = ownership
         for name, record in ownership.state["containers"].items():
             if record["pending"] or not record["absent"]:
+                self._cleanup_deadline = None
                 self._last_terminal_state = None
                 self._cleanup_known(record["id"] or name)
         ownership.require_clean()
 
 
 def _remaining(deadline: float) -> float:
-    remaining = deadline - time.monotonic()
+    remaining = deadline - continuous_seconds()
     if remaining <= 0:
         raise TransportTimeout()
     return remaining

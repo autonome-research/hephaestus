@@ -184,6 +184,7 @@ def probe(smoke: Smoke, image_ref: str, *, storage_policy: str = "ordinary") -> 
             "linux/arm64",
             transport=RecordingTransport(smoke),
             storage_policy=storage_policy,
+            deadline=smoke.deadline,
         )
         report = backend.probe()
     finally:

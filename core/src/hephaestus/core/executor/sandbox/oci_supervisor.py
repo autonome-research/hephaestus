@@ -25,6 +25,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Literal
 
+from hephaestus.core.deadline import Deadline, clock_description
 from hephaestus.core.errors import SandboxDeniedError
 from hephaestus.core.executor.bounded_pass import (
     ChildConnection,
@@ -46,6 +47,7 @@ from .oci import (
     OciTransport,
     SubprocessTransport,
     TransportResult,
+    TransportTimeout,
     build_inspect_argv,
 )
 from .oci_ownership import OwnershipJournal
@@ -67,6 +69,7 @@ class SupervisorConfig:
     identity: OciIdentity
     storage_policy: str = "ordinary"
     runtime_profile: Literal["executor", "renderer"] = "executor"
+    deadline: Deadline | None = None
 
     def __post_init__(self) -> None:
         if not self.directory.is_absolute():
@@ -221,9 +224,12 @@ def _owner(
     spec: SandboxSpec | None,
     payload: bytes,
     expected: ExecutionIdentity | None,
+    deadline: Deadline,
 ) -> None:
     """Spawn target: no workload source executes in this process."""
 
+    # Retain the existing last-resort awake hang detector. It is NOT the
+    # suspend-inclusive deadline authority (the boundary checks below are).
     def expired(_signum: int, _frame: FrameType | None) -> None:
         raise TimeoutError("OCI owner lifetime exceeded")
 
@@ -232,6 +238,8 @@ def _owner(
     evidence: dict[str, object] = {
         "accepted": False,
         "stage": "probe" if spec is None else "execute",
+        "deadline_ns": deadline.end_ns,
+        "deadline_clock": clock_description(),
     }
     backend = None
     listener = None
@@ -274,6 +282,7 @@ def _owner(
         listener.start()
         try:
             with OwnershipJournal(config.directory / "ownership", config.binding()) as journal:
+                deadline.remaining()
                 journal.admit_operation()
                 real = SubprocessTransport(cancellation=cancellation, ownership=journal)
                 transport = EvidenceTransport(real, directory)
@@ -290,9 +299,11 @@ def _owner(
                     transport=transport,
                     scratch_dir=scratch,
                     runtime_profile=config.runtime_profile,
+                    deadline=deadline,
                 )
                 report = backend.probe()
                 evidence["capability"] = asdict(report)
+                deadline.remaining()
                 if not report.available:
                     raise SandboxDeniedError(str(report.reason))
                 identity = backend.execution_identity()
@@ -302,10 +313,12 @@ def _owner(
                     raise SandboxDeniedError("supervised execution identity changed")
                 result = None
                 if spec is not None:
+                    deadline.remaining()
                     # This file is a passive positive phase edge for observers.
                     save_evidence(directory / "executing.json", {"identity": identity.to_json()})
                     result = backend.execute(spec, payload)
                 cancellation.check()
+                deadline.remaining()
                 journal.require_clean()
                 evidence["terminal"] = dict(backend.last_terminal_state or {})
                 evidence["container_id"] = backend.last_container_id
@@ -325,7 +338,11 @@ def _owner(
                 connection.send(("ok", report, identity, result))
         except BaseException as exc:
             evidence["outcome"] = (
-                cancellation.reason if isinstance(exc, ExecutionCancelled) else "failure"
+                cancellation.reason
+                if isinstance(exc, ExecutionCancelled)
+                else "timeout"
+                if isinstance(exc, (TimeoutError, TransportTimeout))
+                else "failure"
             )
             evidence["error"] = f"{type(exc).__name__}: {exc}"
             if backend is not None:
@@ -400,6 +417,8 @@ class SupervisedOciBackend:
         return STORAGE_POLICIES[self.config.storage_policy]
 
     def execution_identity(self) -> ExecutionIdentity:
+        if self.config.deadline is not None:
+            self.config.deadline.remaining()
         if self._closed or self._identity is None or self._report is None:
             raise SandboxDeniedError("supervised execution identity unavailable")
         _require_owners_complete(self.config)
@@ -479,6 +498,10 @@ class SupervisedOciBackend:
         try:
             if self._closed:
                 raise SandboxDeniedError("OCI supervisor session closed")
+            deadline = Deadline.after(OWNER_SECONDS)
+            if self.config.deadline is not None:
+                self.config.deadline.remaining()
+                deadline = Deadline(min(deadline.end_ns, self.config.deadline.end_ns))
             _require_owners_complete(self.config)
             control = current_cancellation.get()
             if control is not None:
@@ -509,7 +532,9 @@ class SupervisedOciBackend:
             )
             # No multiprocessing.spawn resource-tracker/helper survives this owner.
             request_path = directory / "request.bin"
-            request = pickle.dumps((self.config, directory, spec, payload, self._identity))
+            request = pickle.dumps(
+                (self.config, directory, spec, payload, self._identity, deadline)
+            )
             if len(request) > IPC_BYTES:
                 raise SandboxDeniedError("owner request IPC bound")
             with request_path.open("xb") as stream:
@@ -533,6 +558,7 @@ class SupervisedOciBackend:
                 self.cancel_active("caller_cancel")
 
             try:
+                deadline.remaining()
                 raw = run_independent_owner(
                     lambda fd: (
                         sys.executable,
@@ -551,7 +577,7 @@ class SupervisedOciBackend:
                             str(Path(p).resolve()) for p in sys.path if p
                         ),
                     },
-                    timeout_s=OWNER_SECONDS + 15,
+                    timeout_s=min(OWNER_SECONDS + 15, deadline.remaining() + 15),
                     maximum=IPC_BYTES,
                     on_started=started,
                     on_reaped=reaped,
@@ -570,6 +596,7 @@ class SupervisedOciBackend:
             _, self._report, self._identity, result = message
             if control is not None:
                 control.check()
+            deadline.remaining()
             return result
         except BaseException:
             self._report = None
@@ -671,9 +698,13 @@ class SupervisedOciBackend:
         try:
             self.cancel_active("caller_cancel")
         finally:
-            if not self._lock.acquire(timeout=OWNER_SECONDS + 15):
-                raise SandboxDeniedError("OCI owner shutdown incomplete")
+            cleanup = Deadline.after(OWNER_SECONDS + 15)
+            while not self._lock.acquire(timeout=0.1):
+                if cleanup.expired():
+                    raise SandboxDeniedError("OCI owner shutdown incomplete")
             self._lock.release()
+            if cleanup.expired():
+                raise SandboxDeniedError("OCI owner shutdown exceeded its separate bound")
 
     def __enter__(self) -> SupervisedOciBackend:
         return self
@@ -714,8 +745,8 @@ def _main() -> None:
         raw = stream.read(IPC_BYTES + 1)
     if len(raw) > IPC_BYTES:
         raise SystemExit("owner request bound exceeded")
-    config, directory, spec, payload, expected = pickle.loads(raw)
-    _owner(connection, config, directory, spec, payload, expected)
+    config, directory, spec, payload, expected, deadline = pickle.loads(raw)
+    _owner(connection, config, directory, spec, payload, expected, deadline)
 
 
 if __name__ == "__main__":

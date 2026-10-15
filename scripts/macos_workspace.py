@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 for package in ("core", "opstore", "server", "contract"):
     sys.path.insert(0, str(ROOT / package / "src"))
 
+from hephaestus.core.deadline import Deadline, clock_description  # noqa: E402
 from hephaestus.core.executor.sandbox.base import Rlimits  # noqa: E402
 from hephaestus.core.executor.sandbox.oci import (  # noqa: E402
     RUNTIME_ENV,
@@ -64,25 +65,58 @@ class WorkspaceExecutor(SupervisedOciBackend):
 
     def probe(self):
         with serial_slot(self.serial):
+            if self.config.deadline is not None:
+                self.config.deadline.remaining()
             return super().probe()
 
     def execute(self, spec, stdin_payload):
         with serial_slot(self.serial):
+            if self.config.deadline is not None:
+                self.config.deadline.remaining()
             return super().execute(spec, stdin_payload)
 
 
 class WorkspaceRenderer(OciRenderer):
     def __init__(self, config, lock):
         self.serial = lock
+        self.deadline = config.deadline
         super().__init__(config)
 
     def probe(self):
         with serial_slot(self.serial):
+            if self.deadline is not None:
+                self.deadline.remaining()
             return super().probe()
 
     def render(self, request, brep):
         with serial_slot(self.serial):
+            if self.deadline is not None:
+                self.deadline.remaining()
             return super().render(request, brep)
+
+
+class DeadlineGate:
+    """Refuse admission on resume even if the expiry task has not run yet."""
+
+    def __init__(self, app, deadline):
+        self.app = app
+        self.deadline = deadline
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in {"http", "websocket"} and self.deadline.expired():
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1001})
+            else:
+                await send({"type": "http.response.start", "status": 503, "headers": []})
+                await send({"type": "http.response.body", "body": b"workspace deadline expired"})
+            return
+        await self.app(scope, receive, send)
+
+
+async def expire_session(server, deadline):
+    while not deadline.expired():
+        await asyncio.sleep(0.1)
+    server.should_exit = True
 
 
 def dispatch_local(workspace, tool, arguments):
@@ -228,6 +262,10 @@ async def serve(args):
     from hephaestus.http.runtime import WorkspaceRuntime
     from hephaestus.http.serve import with_bundle
 
+    deadline = Deadline.after(args.wall_seconds)
+    if args.deadline_ns is not None:
+        deadline = Deadline(min(deadline.end_ns, args.deadline_ns))
+    deadline.remaining()
     state = args.state_dir.resolve()
     state.mkdir(parents=True, mode=0o700, exist_ok=False)
     report = {
@@ -235,6 +273,8 @@ async def serve(args):
         "accepted": False,
         "pid": os.getpid(),
         "started_at": time.time(),
+        "deadline_clock": clock_description(),
+        "deadline_ns": deadline.end_ns,
         "cleanup_passed": False,
         "agent_started": False,
     }
@@ -252,7 +292,13 @@ async def serve(args):
         for role, image in (("executor", args.executor_image), ("renderer", args.renderer_image)):
             configs.append(
                 SupervisorConfig(
-                    runtime, image, "linux/arm64", state / role, identity, runtime_profile=role
+                    runtime,
+                    image,
+                    "linux/arm64",
+                    state / role,
+                    identity,
+                    runtime_profile=role,
+                    deadline=deadline,
                 )
             )
         serial = threading.RLock()
@@ -281,8 +327,10 @@ async def serve(args):
         report["capabilities"] = workspace.capabilities(refresh=True)
         if report["capabilities"]["secure_executor"] is not True:
             raise RuntimeError("injected capability projection refused")
+        deadline.remaining()
         if args.requirements is not None:
             report["requirements"] = record_requirements(workspace, args.requirements)
+        deadline.remaining()
         if args.build:
             report["build"] = dispatch_local(workspace, "build_part", {"name": args.build})
             if report["build"]["status"] != "ok":
@@ -309,6 +357,7 @@ async def serve(args):
                 await super().startup(sockets=sockets)
                 if not self.started:
                     raise RuntimeError("server did not start")
+                deadline.remaining()
                 ready = {"http": url, "token_path": str(token_path), "pid": os.getpid()}
                 if args.ready_fd is not None:
                     os.write(args.ready_fd, json.dumps(ready).encode() + b"\n")
@@ -322,17 +371,17 @@ async def serve(args):
 
         server = Server(
             uvicorn.Config(
-                with_bundle(build_app(workspace), bundle),
+                DeadlineGate(with_bundle(build_app(workspace), bundle), deadline),
                 access_log=False,
                 log_config=None,
                 log_level="critical",
                 timeout_graceful_shutdown=15,
             )
         )
-        # One finite local session, not a permanent service. This is a lifetime
-        # bound, not polling; each worker independently keeps its smaller bound.
-        loop = asyncio.get_running_loop()
-        expiry = loop.call_later(args.wall_seconds, setattr, server, "should_exit", True)
+        # Poll only to schedule shutdown; admission and worker boundaries also
+        # check the continuous deadline, independently of task scheduling order.
+        deadline.remaining()
+        expiry = asyncio.create_task(expire_session(server, deadline))
         try:
             await server.serve(sockets=[sock])
         finally:
@@ -390,6 +439,7 @@ def main():
     )
     parser.add_argument("--open-browser", action="store_true")
     parser.add_argument("--ready-fd", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--deadline-ns", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.images is not None:
         if args.executor_image or args.renderer_image:

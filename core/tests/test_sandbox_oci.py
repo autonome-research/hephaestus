@@ -516,8 +516,36 @@ def test_post_attach_inspection_respects_the_worker_deadline(
             TransportResult(1, b"", b"no such container"),
         ]
     )
-    ticks = iter((0.0, 0.0, 0.0, 0.0, 21.0))
-    monkeypatch.setattr(oci_module.time, "monotonic", lambda: next(ticks))
+    from hephaestus.core import deadline as clocks
+
+    now = [0]
+    monkeypatch.setattr(clocks, "continuous_ns", lambda: now[0])
+    original = transport.run
+
+    def run(
+        argv: Sequence[str],
+        *,
+        input: bytes,
+        timeout: float,
+        stdout_limit: int,
+        stderr_limit: int,
+        env: Mapping[str, str],
+        stdout_consumer: Callable[[bytes], None] | None = None,
+    ) -> TransportResult:
+        result = original(
+            argv,
+            input=input,
+            timeout=timeout,
+            stdout_limit=stdout_limit,
+            stderr_limit=stderr_limit,
+            env=env,
+            stdout_consumer=stdout_consumer,
+        )
+        if "start" in argv:
+            now[0] = 21_000_000_000
+        return result
+
+    monkeypatch.setattr(transport, "run", run)
     backend = OciBackend(runtime(), IMAGE, "linux/amd64", identity=IDENTITY, transport=transport)
     passing(backend)
     outcome = backend.execute(spec(out), b'{"out_dir":"."}')

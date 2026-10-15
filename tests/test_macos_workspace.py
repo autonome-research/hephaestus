@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "contract/src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from hephaestus.core.deadline import Deadline  # noqa: E402
 from hephaestus.core.executor.sandbox.base import CapabilityReport, Rlimits  # noqa: E402
 from hephaestus.http.runtime import WorkspaceRuntime  # noqa: E402
 
@@ -311,7 +312,7 @@ signal.pause()
     try:
         with pytest.raises((OSError, RuntimeError, KeyboardInterrupt)):
             check.run_browser_client(
-                SimpleNamespace(report={}, save=save),
+                SimpleNamespace(report={}, save=save, deadline=Deadline.after(480)),
                 [sys.executable, "-c", child_script],
                 tmp_path,
             )

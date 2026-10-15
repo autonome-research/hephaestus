@@ -103,8 +103,10 @@ def verify_cleanup(smoke, config):
         require(not saved["launch_pending"], "pending renderer client launch")
         state["clients"].update(saved["clients"])
         state["containers"].update(saved["containers"])
-    _, raw = smoke.command((*smoke.docker, "ps", "-a", "--no-trunc", "--format", "{{.ID}}"))
-    _, processes = smoke.command(("/bin/ps", "-axo", "pid=,pgid="))
+    _, raw = smoke.command(
+        (*smoke.docker, "ps", "-a", "--no-trunc", "--format", "{{.ID}}"), cleanup=True
+    )
+    _, processes = smoke.command(("/bin/ps", "-axo", "pid=,pgid="), cleanup=True)
     live = {int(word) for line in processes.splitlines() for word in line.split()}
     for client, record in state["clients"].items():
         require(record["reaped"] is True and int(client) not in live, "unreaped/live client group")
@@ -158,6 +160,7 @@ def live(smoke, image_ref, executor):
         smoke.directory / "supervisor",
         OciIdentity(os.getuid(), os.getgid()),
         runtime_profile="renderer",
+        deadline=smoke.deadline,
     )
     results = {}
     smoke.report["renderer_binding"] = config.binding()
@@ -251,6 +254,7 @@ def live(smoke, image_ref, executor):
             "linux/arm64",
             executor.directory / "supervisor",
             OciIdentity(os.getuid(), os.getgid()),
+            deadline=smoke.deadline,
         )
         with SupervisedOciBackend(config_executor) as backend:
             require(
@@ -332,7 +336,9 @@ def main() -> int:
             (smoke.directory / "host-source-sha256.json").read_bytes()
         ).hexdigest(),
     )
-    executor = RendererSmoke(smoke.directory / "executor", args.wheelhouse.resolve())
+    executor = RendererSmoke(
+        smoke.directory / "executor", args.wheelhouse.resolve(), deadline=smoke.deadline
+    )
 
     def interrupted(signum, frame):
         raise KeyboardInterrupt("renderer check interrupted")

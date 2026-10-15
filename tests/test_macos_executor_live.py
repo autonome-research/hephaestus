@@ -120,7 +120,7 @@ def synthetic_cleanup(tmp_path):
         directory=tmp_path,
         docker=("synthetic-docker",),
         report=report,
-        command=lambda argv: (0, ""),
+        command=lambda argv, *, cleanup=False: (0, "") if cleanup else (1, "not cleanup"),
     )
     return smoke, operation, journal
 
@@ -165,7 +165,8 @@ def test_cleanup_requires_actual_records_and_independent_absence(tmp_path, fault
         runs["explicit_cancel"] = runs.pop("build")
     else:
 
-        def command(argv):
+        def command(argv, *, cleanup=False):
+            assert cleanup
             if argv[0] == "/bin/ps":
                 return (
                     0,

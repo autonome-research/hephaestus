@@ -325,6 +325,7 @@ def run_cad(smoke, image):
         "linux/arm64",
         smoke.directory / "supervisor",
         OciIdentity(os.getuid(), os.getgid()),
+        deadline=smoke.deadline,
     )
     with SupervisedOciBackend(config) as backend:
         capability = backend.probe()
@@ -481,9 +482,11 @@ def verify_cleanup(smoke):
     evidence = smoke.report.get("executor_evidence")
     if not evidence:
         raise StageFailure("missing execution evidence")
-    _, raw = smoke.command((*smoke.docker, "ps", "-a", "--no-trunc", "--format", "{{.ID}}"))
+    _, raw = smoke.command(
+        (*smoke.docker, "ps", "-a", "--no-trunc", "--format", "{{.ID}}"), cleanup=True
+    )
     inventory = raw.splitlines()
-    _, processes = smoke.command(("/bin/ps", "-axo", "pid=,pgid="))
+    _, processes = smoke.command(("/bin/ps", "-axo", "pid=,pgid="), cleanup=True)
     live = {int(word) for line in processes.splitlines() for word in line.split()}
     supervisor = smoke.directory / "supervisor"
     journals = [supervisor / "ownership/state.json"]

@@ -28,7 +28,7 @@ def main():
     if not wheels.is_relative_to(ROOT) or not wheels.is_dir():
         parser.error("wheelhouse must be inside this checkout")
     smoke = RendererSmoke(report_path(args.report_dir), wheels)
-    renderer = RendererSmoke(smoke.directory / "renderer", wheels)
+    renderer = RendererSmoke(smoke.directory / "renderer", wheels, deadline=smoke.deadline)
     retain = False
 
     def interrupted(signum, frame):

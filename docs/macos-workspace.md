@@ -13,12 +13,22 @@ publication, privileged worker or host CAD installation is needed.
 
 ## Current evidence
 
-**Current runtime repairs are not live-accepted.** The earlier all-stage pass is
-**superseded for changed host/image sources** until fresh current-source images
-and a new complete run succeed. Required native/typing CI and fresh live
-validation of the shared F1 lifecycle repair remain open; see [progress](macos-progress.md) and the [roadmap](macos-roadmap.md).
-Do not merge on historical evidence. Setup commands below are a reproduction
-procedure, not proof that the present source passed.
+**The current unpublished gap closure needs new-source acceptance.** Baseline
+`8ea36417` has 21 successful exact-tree CI jobs and the accepted 13-stage report
+`dist/macos-pr128-acceptance-20261015T082028Z/report.json`; those results cannot
+be reused for changed sources or as proof of writable-bind guardrail compliance.
+The independent four-gap review, fresh local results and remaining acceptance
+limits are recorded at the top of [progress](macos-progress.md).
+Khronos requires new-source CI acceptance. The scoped continuous-clock implementation,
+expiration-at-resume semantics, separate cleanup bounds and still-unverified physical
+trial are described in [suspend-inclusive deadlines](suspend-inclusive-deadlines.md).
+The prior smoke's writable download/package binds remain a separate acceptance
+blocker: do not rerun that path under the no-writable-bind guardrail until repaired.
+Review evidence: `dist/macos-gap-independent-review-20261015T204655Z/`.
+Authoritative new-source CI, physical-suspend testing and clean-machine
+certification remain outstanding. Do not publish or merge on historical evidence.
+Setup commands below are a reproduction procedure, not proof this source passed;
+image preparation also uses the blocked writable-bind helpers.
 
 Historical independent all-stage **local experimental acceptance** is recorded in
 `dist/macos-final-reviewed-20261012T152211Z/report.json` (SHA256
@@ -206,10 +216,10 @@ on macOS**. That pass does not certify the current changed sources.
   live cancellation, daemon/machine-death recovery and release packaging remain
   outside this local acceptance. Abrupt unknown-create settlement remains a
   durable refusal, not an absence guess. No production/release support claim is made.
-- Root pyright still **fails** in the partial host environment. Separately, the
-  initial fully provisioned PR CI had 2,007 branch-introduced type errors against
-  a zero-error baseline; missing host CAD did not explain those CI failures.
-  Repairs require new full-dependency CI. Native HTTP build tests still fail
+- Root pyright still **fails** in the partial host environment. The initial
+  fully provisioned PR CI's 2,007 branch-introduced errors were repaired: baseline
+  `8ea36417` has zero errors/warnings in exact-tree CI. New source changes need
+  new full-dependency CI; the partial host cannot certify that gate. Native HTTP build tests still fail
   locally without build123d; no fallback or dependency change conceals them.
   The earlier OCI HTTP build and 963 focused host / 1512 web passes are historical.
   Current selections and failures are in [progress](macos-progress.md); none

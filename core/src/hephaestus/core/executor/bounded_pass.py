@@ -53,11 +53,12 @@ import contextlib
 import multiprocessing
 import selectors
 import subprocess
-import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from multiprocessing.connection import Connection, Pipe
 from typing import Any
+
+from hephaestus.core.deadline import Deadline, continuous_seconds, wait_process
 
 # Child-side endpoint for both spawn passes and independent cleanup owners.
 ChildConnection = Connection
@@ -138,6 +139,7 @@ def run_bounded_pass(
     ``core/tests/test_bounded_pass.py`` checks every child reachable from a
     ``run_bounded_pass`` call site actually does it, so it cannot be forgotten.
     """
+    continuous_seconds()  # fail closed before launching on an unsupported host
     ctx = multiprocessing.get_context("spawn")
     parent, write_end = ctx.Pipe(duplex=False)
     proc = ctx.Process(target=child, args=(write_end, *args))
@@ -154,6 +156,7 @@ def supervise(
     on_message: Callable[[str, Any], bool],
     poll_s: float = POLL_S,
     finish: Callable[[], None] | None = None,
+    strict_deadline: bool = False,
 ) -> BoundedPassOutcome:
     """The supervision body: poll ``parent`` until a terminal message or the ceiling.
 
@@ -186,21 +189,29 @@ def supervise(
     """
     terminal: tuple[str, Any] | None = None
     died = False
-    deadline = time.monotonic() + timeout_s
+    deadline = float("-inf")
 
     def _receive() -> bool:
         """Consume one message; True when the caller called it terminal."""
         nonlocal terminal
+        if strict_deadline and continuous_seconds() >= deadline:
+            return True  # stop the drain without accepting a late owner ACK
         kind, payload = parent.recv()
+        if strict_deadline and continuous_seconds() >= deadline:
+            return True  # a frame completed on resume, after its allowance
         if on_message(str(kind), payload):
             terminal = (str(kind), payload)
             return True
         return False
 
     try:
-        while terminal is None and time.monotonic() < deadline:
+        deadline = continuous_seconds() + timeout_s
+        while terminal is None and continuous_seconds() < deadline:
             try:
-                if parent.poll(poll_s):
+                ready = parent.poll(poll_s)
+                if strict_deadline and continuous_seconds() >= deadline:
+                    break
+                if ready:
                     _receive()
                 elif not proc.is_alive():
                     # Death, not a deadline — drain what it sent first, so a
@@ -222,7 +233,7 @@ def supervise(
                 break
         # The deadline fell (or a death drain ended on EOF): take what is
         # already in the pipe before finalization.
-        while terminal is None:
+        while terminal is None and not (strict_deadline and continuous_seconds() >= deadline):
             try:
                 if not parent.poll(0):
                     break
@@ -258,7 +269,7 @@ class _OwnerProcess:
         # The shared EOF path gives a dying process a chance to finish. A live
         # cleanup owner is never killed: its own ceiling remains authoritative.
         with contextlib.suppress(subprocess.TimeoutExpired):
-            self.process.wait(timeout=timeout)
+            wait_process(self.process, Deadline.after(timeout))
 
     @property
     def exitcode(self) -> int | None:
@@ -327,18 +338,21 @@ def run_independent_owner(
     AND a zero exit after reaping permit the durable acknowledgement callback.
     Callers own domain evidence/protocol decoding, not a second polling loop.
     """
+    continuous_seconds()  # no owned child before clock availability is established
     parent, child = Pipe(duplex=True)
     process: subprocess.Popen[bytes] | None = None
     finished = False
+    reap_failed = False
 
     def finish() -> None:
-        nonlocal finished
+        nonlocal finished, reap_failed
         finished = True
         parent.close()  # EOF wakes the independent owner's control reader
         if process is not None:
             try:
-                process.wait(timeout=reap_s)
+                wait_process(process, Deadline.after(reap_s))
             except subprocess.TimeoutExpired:
+                reap_failed = True
                 on_unreaped()
             except BaseException:
                 on_unreaped()
@@ -367,6 +381,7 @@ def run_independent_owner(
                 timeout_s=timeout_s,
                 on_message=lambda _kind, _payload: True,
                 finish=finish,
+                strict_deadline=True,
             )
         if outcome.terminal is None:
             raise OwnerRefusal(
@@ -374,8 +389,8 @@ def run_independent_owner(
                 if outcome.died
                 else "owner deadline exceeded; recover durable ownership"
             )
-        if outcome.exit_code is None:
-            raise OwnerRefusal("owner could not be reaped cleanly")
+        if reap_failed or outcome.exit_code is None:
+            raise OwnerRefusal("owner could not be reaped cleanly within its cleanup deadline")
         if outcome.exit_code != 0:
             raise OwnerRefusal("owner did not exit cleanly")
         data = outcome.terminal[1]

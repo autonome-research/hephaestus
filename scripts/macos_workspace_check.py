@@ -12,8 +12,26 @@ import signal
 import subprocess
 import threading
 
+from hephaestus.core.deadline import Deadline, wait_process
 from macos_milestone_smoke import ROOT, StageFailure
 from macos_workspace import document
+
+
+def terminate_owned_process(process):
+    """Return False on cleanup expiry, even if wait reaped a late result.
+
+    A TimeoutExpired from wait_process is NOT proof the child is still
+    waitable. Never signal its numeric group after reap/PID reuse is possible.
+    """
+    process.terminate()
+    try:
+        wait_process(process, Deadline.after(60))
+    except subprocess.TimeoutExpired:
+        if process.returncode is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            wait_process(process, Deadline.after(10))
+        return False
+    return True
 
 
 def run_browser_client(smoke, argv, directory):
@@ -24,6 +42,7 @@ def run_browser_client(smoke, argv, directory):
     """
     from hephaestus.core.executor.sandbox.oci import RUNTIME_ENV
 
+    deadline = Deadline(min(Deadline.after(480).end_ns, smoke.deadline.end_ns))
     state = {"launch_pending": True, "pid": None, "reaped": False}
     owner = directory / "client-owner.json"
     document(owner, state)
@@ -31,6 +50,7 @@ def run_browser_client(smoke, argv, directory):
     acknowledged = False
     errors = []
     try:
+        deadline.remaining()
         process = subprocess.Popen(
             argv,
             stdin=subprocess.DEVNULL,
@@ -64,20 +84,18 @@ def run_browser_client(smoke, argv, directory):
             "output_limit_bytes": 128 * 1024,
         }
         smoke.save()
-        code = process.wait(timeout=480)
+        code = wait_process(process, deadline)
         if code:
             raise StageFailure("browser client failed; see browser/browser.json")
     finally:
         old = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGINT, signal.SIGTERM)}
         try:
-            if process is not None and process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=60)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait(timeout=10)
-                    errors.append("forced client death; retain unresolved browser ownership")
+            if (
+                process is not None
+                and process.poll() is None
+                and not terminate_owned_process(process)
+            ):
+                errors.append("client cleanup deadline exceeded; browser ownership unresolved")
             if reader is not None and reader.ident is not None:
                 reader.join(timeout=5)
                 if reader.is_alive():
@@ -131,6 +149,11 @@ def browser(smoke, renderer_image):
     ownership = {"launch_pending": True, "pid": None, "reaped": False}
     document(directory / "server-owner.json", ownership)
     try:
+        ready_deadline = Deadline(min(Deadline.after(180).end_ns, smoke.deadline.end_ns))
+        session_seconds = min(600, int(smoke.deadline.remaining()))
+        if session_seconds < 1:
+            raise StageFailure("milestone deadline expired")
+        ready_deadline.remaining()
         process = subprocess.Popen(
             [
                 str(ROOT / ".venv/bin/python"),
@@ -144,7 +167,9 @@ def browser(smoke, renderer_image):
                 "--renderer-image",
                 renderer_image,
                 "--wall-seconds",
-                "600",
+                str(session_seconds),
+                "--deadline-ns",
+                str(smoke.deadline.end_ns),
                 "--requirements",
                 str(directory / "requirements.json"),
                 "--ready-fd",
@@ -181,8 +206,10 @@ def browser(smoke, renderer_image):
         reader.start()
         with selectors.DefaultSelector() as selector:
             selector.register(read_fd, selectors.EVENT_READ)
-            if not selector.select(180):
-                raise StageFailure("workspace readiness timed out")
+            while True:
+                if selector.select(min(0.1, ready_deadline.remaining())):
+                    ready_deadline.remaining()
+                    break
             raw = os.read(read_fd, 8192)
         if not raw.endswith(b"\n"):
             raise StageFailure("workspace did not produce complete readiness")
@@ -214,13 +241,8 @@ def browser(smoke, renderer_image):
             if write_fd != -1:
                 os.close(write_fd)
             if process is not None:
-                process.terminate()
-                try:
-                    process.wait(timeout=60)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait(timeout=10)
-                    errors.append("server forced termination; ownership unresolved")
+                if not terminate_owned_process(process):
+                    errors.append("server cleanup deadline exceeded; ownership unresolved")
                 ownership.update(reaped=True, returncode=process.returncode)
                 document(directory / "server-owner.json", ownership)
                 if reader is not None:
@@ -240,7 +262,7 @@ def browser(smoke, renderer_image):
                 if (project / ".heph/serve.json").exists():
                     errors.append("serve record remains")
                 # Positive inventory, not a failed kill(0) interpreted as absence.
-                _, raw = smoke.command(("/bin/ps", "-axo", "pid=,pgid="))
+                _, raw = smoke.command(("/bin/ps", "-axo", "pid=,pgid="), cleanup=True)
                 live = {int(word) for word in raw.split()}
                 browser_report = directory / "browser.json"
                 if browser_report.exists():
@@ -332,7 +354,9 @@ def later_stages(smoke):
     from macos_probe_executor import resolve_image
     from macos_renderer_check import RendererSmoke, live
 
-    renderer = RendererSmoke(smoke.directory / "renderer", smoke.wheelhouse)
+    renderer = RendererSmoke(
+        smoke.directory / "renderer", smoke.wheelhouse, deadline=smoke.deadline
+    )
     renderer.docker = smoke.docker
     try:
         renderer.native_dependencies()
