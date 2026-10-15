@@ -426,26 +426,64 @@ def test_pid_alive_reports_an_unreaped_zombie_as_dead() -> None:
         deadline = time.monotonic() + 10
         state = ""
         while time.monotonic() < deadline:
-            with open(f"/proc/{proc.pid}/stat", encoding="utf-8") as handle:
-                state = handle.read().rpartition(")")[2].split()[0]
-            if state == "Z":
+            # Independent observation, including on hosts without procfs. Do
+            # not use the predicate under test to establish its own precondition.
+            observed = subprocess.run(
+                ["/bin/ps", "-o", "stat=", "-p", str(proc.pid)],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5,
+            )
+            state = observed.stdout.strip()
+            if state.startswith("Z"):
                 break
             time.sleep(0.01)
-        assert state == "Z", f"the child never became a zombie (state {state!r})"
+        assert state.startswith("Z"), f"the child never became a zombie (state {state!r})"
         assert not pid_alive(proc.pid), "an unreaped zombie was reported alive"
     finally:
-        proc.wait()
+        proc.wait(timeout=5)
     # …and once reaped the pid is simply gone.
     assert not pid_alive(proc.pid)
 
 
-def test_pid_alive_reports_a_live_process_as_alive() -> None:
-    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+@pytest.mark.parametrize("without_procfs", [False, True])
+def test_pid_alive_reports_a_live_process_as_alive(
+    monkeypatch: pytest.MonkeyPatch, without_procfs: bool
+) -> None:
+    if without_procfs:
+        is_file = Path.is_file
+
+        def available(path: Path) -> bool:
+            return False if path == Path("/proc/self/stat") else is_file(path)
+
+        monkeypatch.setattr(Path, "is_file", available)
+    # A pipe holds an owned child, not a guessed sleep budget.
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE
+    )
     try:
+        assert proc.poll() is None
         assert pid_alive(proc.pid)
     finally:
         proc.kill()
-        proc.wait()
+        proc.wait(timeout=5)
+    assert not pid_alive(proc.pid)
+
+
+def test_pid_alive_refuses_failed_portable_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unavailable(_path: Path) -> bool:
+        return False
+
+    monkeypatch.setattr(Path, "is_file", unavailable)
+
+    def failed(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert kwargs["timeout"] == 5
+        return subprocess.CompletedProcess([], 1, "", "ps: unavailable")
+
+    monkeypatch.setattr(subprocess, "run", failed)
+    with pytest.raises(RuntimeError, match="ps failed"):
+        pid_alive(os.getpid())
 
 
 # -- watchdog: the clock stops while the CHILD is waiting on US -----------
