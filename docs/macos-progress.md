@@ -5,6 +5,88 @@ SPDX-License-Identifier: Apache-2.0
 
 # macOS progress — experimental executor and renderer
 
+## Independent four-gap review — 2026-10-15, unpublished
+
+**Hold publication/merge and certification. No commits or pushes.** Reviewed the
+actual accumulated source/contracts, not only the phase reports. Evidence and
+exact commands: `dist/macos-gap-independent-review-20261015T204655Z/`.
+
+- **Plan implemented/tested:** closed tool/profile intersection, immutable
+  evidence and existing-delegation/lifecycle exceptions; no modeling-input,
+  build, delegation or queued-modeling bypass found. Real packaged-sidecar tests
+  publish synthetic render evidence and finalize an expired delegation while
+  comparing modeling bytes and all live CAS pointers. This is not host CAD.
+- **Re-adoption implemented/tested on Darwin:** fresh packaged sidecar, all
+  **8 cases pass**, including the six prior failures. Independently executing
+  the original predicate reports a live owned child dead because `/proc` is
+  absent; the repair reports live, then dead after reap. Zombie/error controls
+  and existing review/refusal assertions remain.
+- **Khronos implemented/locally controlled:** fresh official Linux/macOS release
+  bytes and executable hashes match the recorded pins; real macOS CLI rejects
+  malformed/semantically invalid GLBs. **34 controls pass**; required absence
+  deliberately fails, never skips. The Linux binary and both original HTTP
+  route tests still need explicit new-source CI passes; synthetic GLB controls
+  are not route acceptance.
+- **Deadlines implemented/locally controlled:** actual Darwin timebase **125/3**
+  and independent ns arithmetic verified; injected resume/UTC controls and
+  shared OCI/native-supervision regressions pass. Review reproduced and repaired
+  a late-reap cleanup path that could signal a no-longer-owned numeric process
+  group, and kept browser/readiness caps absolute across clock progression.
+  Cleanup expiry still refuses; no forced death becomes successful acceptance.
+  Physical suspend and legacy bwrap/agent/persisted-UTC paths remain unverified
+  or unmigrated; see [deadline scope/procedure](suspend-inclusive-deadlines.md).
+
+Fresh serial selection: **1359 Python passed / 2 existing skips** (Linux-only
+parent-death signal and unimplemented quick-edit route); **372 agent** and
+**1514 web** tests pass, with their typecheck/lint. Root strict Pyright remains
+**2170 errors / 7 warnings**, **not a typing pass**. Earlier CAD-dependent failures
+and teardown errors remain retained and unresolved locally; no full-suite,
+native Linux, pinned-render/browser-e2e or release claim follows.
+
+Writable `/work` binds remain in `macos_milestone_smoke.py`,
+`macos_prepare_executor.py` and `macos_prepare_renderer.py`. The prior **13/13 raw
+harness pass is not guardrail-compliant acceptance**. Repair/review those helpers
+before a fresh authorized smoke; none was run here. Current-source CI, physical
+suspend evidence and clean-machine certification remain separate outstanding
+work, not retroactive proof of machine-global invariance. Production discovery
+and experimental agent attachment stay disabled. The [roadmap](macos-roadmap.md)
+retains its existing gates; this review adds no arbitrary acceptance thresholds.
+
+## Scoped gap closure checkpoint — 2026-10-15, historical unpublished phase
+
+Worktree baseline `8ea36417fd349ab02cab95bf9d03fc5096adf68a` had exact-tree CI
+run `38701895713` successful in all 21 jobs (G4 114, agent 372, web 1514,
+Pyright zero errors/warnings) and accepted experimental Mac report
+`dist/macos-pr128-acceptance-20261015T082028Z/report.json` (13 stages; SHA256
+`f8f6800494b1c322b05e004ec9ab457c4e4915d3a6c7e5b0f3abaa401e4d1324`).
+Those are **baseline evidence, not acceptance of this changed source**.
+The older sections below are historical checkpoints, not current CI results.
+
+The gap-closure evidence and exact source/resource inventories live in ignored
+`dist/macos-pr128-gap-closure-20261015T185308Z/`; its local result report records
+final commands, outcomes and successor paths. No commits/pushes or activation are
+part of this phase.
+
+- `INTERFACE.md` §7A.10A now explicitly distinguishes forbidden modeling writes
+  and queued/delegated execution from the closed immutable inspection-evidence
+  and deadline/session-bookkeeping effects. Profile/auth/cancellation and Stop
+  remain binding. Real packaged-sidecar tests exercise publication/deadline
+  writes over synthetic geometry, unchanged modeling inputs, denied mutators
+  and Pi queued continuations. Synthetic pixels are not CAD acceptance.
+- All six local re-adoption failures reproduced. A diagnostic showed successful
+  automatic respawn/configuration, not a stalled lifecycle: `pid_alive` treated
+  absent Darwin `/proc` as a dead PID before its portable fallback. The bounded
+  repair checks procfs availability, preserves zombie detection and refuses
+  failed process probes. The full re-adoption file then passed all eight cases;
+  history, new-incarnation review, named refusals and ownership assertions remain.
+- New-source authoritative CI/native x86 gates and fresh all-stage Mac acceptance
+  are required; the evidence result records any new local attempt separately.
+  At this checkpoint the two Khronos skips and suspend-inclusive deadlines were
+  **successor gaps**; subsequent implementation and remaining acceptance limits
+  are recorded in the independent review above. No deliberate host sleep or daemon restart
+  is authorized. Historical global-state invariance remains unprovable; resource
+  comparisons apply only to this phase's observed baseline.
+
 ## CI stabilization — downstream G4 blocker, 2026-10-13
 
 **Draft and blocked; do not merge.** At `edde884`, run `38325547893` completed

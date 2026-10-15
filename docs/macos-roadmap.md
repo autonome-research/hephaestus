@@ -12,6 +12,27 @@ by this document. [Progress](macos-progress.md) separates current results from
 historical failures and passes; prior live acceptance is **superseded for changed
 runtime sources** until fresh images and a new all-stage run succeed.
 
+## Current implementation versus certification — 2026-10-15
+
+The unpublished four-gap repair has local source review and serial regression
+coverage, not certification: Plan's bounded evidence/lifecycle exceptions and
+Darwin re-adoption are tested; official hash-pinned Khronos provisioning is wired
+fail-closed but its two original route tests still require explicit CI **passes,
+not skips**. Mac/shared-OCI continuous deadlines have real clock acquisition and
+injected progression controls, not a physical suspend trial. Legacy bwrap,
+agent watchdog and persisted UTC paths are outside that migration.
+
+Before another all-stage smoke, repair/review the existing writable download and
+package binds. The retained 13/13 raw harness result is **not guardrail-compliant
+acceptance**. Root partial-host typing still fails; full native/typing/render
+coverage belongs to current-source CI. Clean-machine certification below has not
+been performed. No publication or activation is authorized by this review.
+
+See [current results](macos-progress.md) and the separately authorized
+[physical-suspend procedure](suspend-inclusive-deadlines.md). These distinguish
+implemented, locally tested and unverified claims; they do not add new numerical
+gates to the existing phases below or promise historical global-state proof.
+
 ## Phase 1 — CI correctness
 
 Exit only when the exact reviewed tree has successful locked dependency
