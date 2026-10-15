@@ -22,29 +22,54 @@ design — see `tests/stage4/test_g4_section_golden.py`'s module docstring and
 `web/e2e/README.md`. Reproduce a red locally by running it in this image, never
 by re-baselining on the host; a digest bump is a renderer re-baseline PR.
 
-## What else is baked, and which test consumes it
+## Required Khronos validation (job-local, not baked)
 
-Beyond the renderer, the sandbox and the browser, the image carries one tool
-that exists only for a test:
+The existing `render goldens (pinned image)` job installs the official Khronos
+Linux x64 CLI into its temporary directory with
+`scripts/install_gltf_validator.py`. The renderer image digest and goldens are
+unchanged; no rebuild, publication, global install, or adapter is needed.
 
-| Baked | Version | Consumed by |
-|---|---|---|
-| Khronos `gltf_validator` | `2.0.0-dev.3.10` (`GLTF_VALIDATOR_VERSION` in the Dockerfile) | `server/tests/test_http_gltf.py`'s Khronos lane |
+`docker/ci/gltf-validator.lock.json` is the dependency lock:
 
-`mission_plan.md` states glTF validation as a project claim, and that lane was
-the only place the claim was attempted — while the binary existed in no image,
-so it skipped on every machine and in every job (J-mirrors-and-dx-15). It is a
-*bonus* lane by design: `core/src/hephaestus/core/render/gltf.py`'s in-process
-structural validator asserts the invariants the gate names without the binary.
-Pinned rather than floating for the same reason the renderer is.
+- Release: **2.0.0-dev.3.10**, official `KhronosGroup/glTF-Validator` GitHub asset
+  `gltf_validator-2.0.0-dev.3.10-linux64.tar.xz`.
+- Upstream tag commit: `bcd52cc4ba5f333b2999a58f67cc05ddf28b4fb1`.
+- Archive SHA-256: `168eba887964125abe17ae97899b38d0b3cfd73c266c78424c194929ddcbc522`.
+- Executable SHA-256: `5cba1e097935c9efd929d24a49610824259b030f0ae45672273bfbcbb5b87a62`.
 
-**Arming it is a two-step landing.** Baking the binary changes the image digest,
-which is a re-baseline PR with its own rules. Until `ci.yml`'s digest names an
-image built from the current Dockerfile, the lane runs and *skips*. The PR that
-bumps the digest also sets `HEPHAESTUS_REQUIRE_GLTF_VALIDATOR: "1"` on the
-`render goldens (pinned image)` job, after which an absent binary fails **by
-name** instead of skipping — the same fail-rather-than-skip policy the renderer
-gate applies.
+These hashes were computed from the downloaded official release bytes, not from
+an upstream checksum/signature (the release API supplies no digest). They lock
+those reviewed bytes against subsequent replacement; they are not a claim of
+reproducible compilation or independent signature verification. The upstream
+Apache-2.0 `LICENSE` and dependency `NOTICES` are retained beside the unmodified
+binary. No executable or CAD asset is vendored into the repository.
+
+The job sets `HEPHAESTUS_REQUIRE_GLTF_VALIDATOR=1` and an explicit
+`HEPHAESTUS_GLTF_VALIDATOR` path. Download/TLS/HTTP, integrity, missing-tool,
+version, invocation, malformed-report and validation errors all fail. Required
+mode does not fall back to PATH. Other lanes/developer machines may explicitly
+skip when the optional validator is absent. A configured but broken path fails
+even outside the required lane.
+
+The CLI is invoked directly as `gltf_validator -r -o primary.glb`; `-o` means
+JSON to stdout, **not** an output directory. Exit zero alone is insufficient:
+the report must identify the locked version and explicitly contain zero errors.
+Warnings and full issue messages remain visible; none are filtered. The no-arg
+version probe expects upstream's exit **1** and exact version banner.
+
+Acceptance requires the CI log to show **both** named tests in
+`server/tests/test_http_gltf.py` passing: the required-binary check and
+`test_the_khronos_validator_accepts_the_glb`, which validates the exact HTTP
+response body from a real securely built assembly. `-vv -s` logs their names
+and the validator report. The companion `server/tests/test_khronos_validator.py`
+checks real malformed/semantically invalid GLBs plus missing-tool/error paths;
+`tests/stage7h/test_khronos_install.py` checks installation failure policy and
+CI wiring. Neither structural tests nor these controls replace route acceptance.
+Native geometry generation remains a CI/secure-OCI task, not a host test.
+
+A green historical job with two skipped Khronos tests is **not** validation.
+The job-local installation replaces the former unarmed Dockerfile recipe; CI
+must run the new source before this coverage gap can be called verified closed.
 
 ## The one hazard: the container writes into your worktree
 

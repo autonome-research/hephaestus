@@ -31,9 +31,9 @@ golden mismatch in an unrelated stage.
 **Validation follows the Stage 1 precedent** (``tests/stage1/test_gltf_gate.py``,
 ``gltf.py``'s module docstring): ``validate_gltf`` asserts the structural
 invariants the gate names without requiring the Khronos ``gltf-validator``, which
-is a separate non-Python tool. Where that binary *is* installed, one extra test
-runs it — strengthening CI that has it without making it a dependency of CI that
-does not.
+is a separate non-Python tool. The pinned-render CI lane installs the official
+integrity-locked binary job-locally and REQUIRES both Khronos tests to pass.
+Absence remains an explicit optional skip only outside that lane.
 
 The fixture is the **public clean-room** ``assembly`` project (§14): six solids,
 which is what makes §5.2's pairwise-centroid clause non-vacuous — G4.6 demands a
@@ -43,9 +43,7 @@ by having no pairs.
 
 from __future__ import annotations
 
-import json
 import shutil
-import subprocess
 from collections.abc import Generator
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -55,6 +53,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+from _khronos import validate_glb, validator_binary
 from hephaestus.core.errors import ValidationError
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
 from hephaestus.core.project_store.store import artifact_ref, blob_hash_of_ref
@@ -403,78 +402,24 @@ def test_a_glb_whose_bundle_no_longer_resolves_is_refused(tmp_path: Path) -> Non
     assert response.json()["reason"] == "stale_selection"
 
 
-#: Set by the `render goldens (pinned image)` CI job once the pinned image bakes
-#: the Khronos validator (see that job's comment in `.github/workflows/ci.yml`,
-#: J-mirrors-and-dx-15). Deliberately a SEPARATE variable from
-#: ``HEPHAESTUS_CI_IMAGE_DIGEST``: the digest bump and "the image now has the
-#: binary" are two different facts, and gating on the digest alone would fail
-#: this lane the instant the image is repinned for an unrelated reason, before
-#: the Dockerfile change that adds the binary has landed.
-_REQUIRE_VALIDATOR_ENV = "HEPHAESTUS_REQUIRE_GLTF_VALIDATOR"
+@pytest.fixture(scope="module")
+def khronos_binary() -> str:
+    """Resolve before building geometry: required absence is a failure, never a skip."""
+    return validator_binary()
 
 
-def test_the_khronos_validator_binary_is_present_when_required() -> None:
-    """J-mirrors-and-dx-15: this bonus lane may not silently skip once required.
-
-    The test right below is a deliberate bonus lane — its docstring says so, and
-    ``validate_gltf`` already asserts the structural invariants the gate names
-    without it — so skipping for an *absent* binary is correct on a developer
-    machine. What must not happen is the same skip firing once CI has declared
-    the binary should be there: that would make the plan's glTF-validation claim
-    permanently unattempted rather than merely optional. The fail-rather-than-
-    skip precedent is the renderer gate (``tests/render``): a mismatch there is
-    reported by name, never quietly passed over. This asserts the same
-    discipline for the validator binary, gated on the variable the `render
-    goldens (pinned image)` job's own comment names.
-    """
-    import os
-
-    if os.environ.get(_REQUIRE_VALIDATOR_ENV) != "1":
-        pytest.skip(
-            f"{_REQUIRE_VALIDATOR_ENV} is not set — the Khronos gltf-validator is "
-            "not required here (a developer machine, or a pinned image that has "
-            "not yet baked the binary)"
-        )
-    binary = shutil.which("gltf_validator") or shutil.which("gltf-validator")
-    assert binary is not None, (
-        f"{_REQUIRE_VALIDATOR_ENV}=1, but neither `gltf_validator` nor "
-        "`gltf-validator` is on PATH. The pinned image is supposed to bake this "
-        "binary (mission_plan.md's glTF-validation claim; docker/ci/README.md "
-        "should document it alongside every other baked tool) — install it into "
-        "docker/ci/Dockerfile rather than letting this lane skip, or unset "
-        f"{_REQUIRE_VALIDATOR_ENV} until it does."
-    )
+def test_the_khronos_validator_binary_is_present_when_required(khronos_binary: str) -> None:
+    """The required lane checks executable integrity AND the real version banner."""
+    assert Path(khronos_binary).is_file()
 
 
-@pytest.mark.skipif(
-    shutil.which("gltf_validator") is None and shutil.which("gltf-validator") is None,
-    reason="the Khronos gltf-validator is a separate non-Python tool (Stage 1 precedent)",
-)
-def test_the_khronos_validator_accepts_the_glb(geometry: Geometry, tmp_path: Path) -> None:
-    """The Khronos validator, when the machine has it.
-
-    ``gltf.py``'s module docstring states the Stage 1 precedent: the binary is a
-    separate non-Python tool, and :func:`validate_gltf` asserts the structural
-    invariants the gate names without requiring it. This test is the *bonus*
-    lane — it strengthens a CI image that installs the binary and skips
-    everywhere else, rather than making one dependency of the suite.
-    """
-    binary = shutil.which("gltf_validator") or shutil.which("gltf-validator")
-    assert binary is not None
+def test_the_khronos_validator_accepts_the_glb(
+    khronos_binary: str, geometry: Geometry, tmp_path: Path
+) -> None:
+    """Validate the exact HTTP response body, not a synthetic/structural substitute."""
     path = tmp_path / "primary.glb"
     path.write_bytes(geometry.glb)
-    completed = subprocess.run(
-        [binary, "-r", "-o", str(tmp_path), str(path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    report_path = tmp_path / "primary.glb.report.json"
-    raw: object = json.loads(report_path.read_text()) if report_path.is_file() else {}
-    report = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
-    issues = cast("dict[str, Any]", report.get("issues", {}))
-    assert completed.returncode == 0, completed.stderr or completed.stdout
-    assert int(issues.get("numErrors", 0)) == 0, json.dumps(issues)
+    validate_glb(khronos_binary, path)
 
 
 # --------------------------------------------------------------------------

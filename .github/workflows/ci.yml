@@ -692,6 +692,8 @@ jobs:
     env:
       CI: "true"
       npm_config_store_dir: /tmp/pnpm-store
+      HEPHAESTUS_REQUIRE_GLTF_VALIDATOR: "1"
+      HEPHAESTUS_GLTF_VALIDATOR: ${{ runner.temp }}/gltf-validator/gltf_validator
       # J-mirrors-and-dx-25: see the note on the stage lanes. This job stages
       # the sidecar, so a "node or pnpm unavailable" skip is a regression.
       HEPHAESTUS_REQUIRE_SIDECAR: "1"
@@ -719,14 +721,20 @@ jobs:
       # inside a path this lane names (J-mirrors-and-dx-18).
       - run: uv run pytest tests/render -m pinned_image -q
       - run: uv run pytest tests/stage4/test_g4_section_golden.py -m pinned_image -q
-      # The Khronos glTF validator bonus lane (J-mirrors-and-dx-15). It SKIPS
-      # until the image digest above is bumped to one built from the current
-      # docker/ci/Dockerfile, which bakes the pinned validator; the same PR that
-      # bumps the digest sets HEPHAESTUS_REQUIRE_GLTF_VALIDATOR=1 in this job's
-      # `env:` block, after which the test fails by name instead of skipping —
-      # the fail-rather-than-skip policy the renderer gate already applies.
-      # docker/ci/README.md records the binary, its pin and this consumer.
-      - run: uv run pytest server/tests/test_http_gltf.py -k khronos -q
+      # Official Linux x64 release, job-local and SHA-256 locked. No image
+      # rebuild/digest bump or renderer rebaseline. Any provisioning error fails.
+      - name: install locked official Khronos validator
+        run: uv run python scripts/install_gltf_validator.py "$RUNNER_TEMP/gltf-validator"
+      - name: Khronos negative controls (real invalid GLBs + fail-closed policy)
+        run: uv run pytest server/tests/test_khronos_validator.py -vv -s
+      # Explicit node IDs + verbose output: both must actually PASS, not merely
+      # collect, skip, or be replaced by the structural validator's tests.
+      - name: Khronos required binary and route-served GLB
+        run: >-
+          uv run pytest
+          server/tests/test_http_gltf.py::test_the_khronos_validator_binary_is_present_when_required
+          server/tests/test_http_gltf.py::test_the_khronos_validator_accepts_the_glb
+          -vv -s
       # Own Vite server and synthetic API evidence; never the G4 fixture server.
       - name: isolated chat browser checks
         working-directory: web
