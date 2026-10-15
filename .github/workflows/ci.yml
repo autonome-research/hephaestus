@@ -693,7 +693,6 @@ jobs:
       CI: "true"
       npm_config_store_dir: /tmp/pnpm-store
       HEPHAESTUS_REQUIRE_GLTF_VALIDATOR: "1"
-      HEPHAESTUS_GLTF_VALIDATOR: ${{ runner.temp }}/gltf-validator/gltf_validator
       # J-mirrors-and-dx-25: see the note on the stage lanes. This job stages
       # the sidecar, so a "node or pnpm unavailable" skip is a regression.
       HEPHAESTUS_REQUIRE_SIDECAR: "1"
@@ -726,10 +725,14 @@ jobs:
       - name: install locked official Khronos validator
         run: uv run python scripts/install_gltf_validator.py "$RUNNER_TEMP/gltf-validator"
       - name: Khronos negative controls (real invalid GLBs + fail-closed policy)
+        env:
+          HEPHAESTUS_GLTF_VALIDATOR: ${{ runner.temp }}/gltf-validator/gltf_validator
         run: uv run pytest server/tests/test_khronos_validator.py -vv -s
       # Explicit node IDs + verbose output: both must actually PASS, not merely
       # collect, skip, or be replaced by the structural validator's tests.
       - name: Khronos required binary and route-served GLB
+        env:
+          HEPHAESTUS_GLTF_VALIDATOR: ${{ runner.temp }}/gltf-validator/gltf_validator
         run: >-
           uv run pytest
           server/tests/test_http_gltf.py::test_the_khronos_validator_binary_is_present_when_required

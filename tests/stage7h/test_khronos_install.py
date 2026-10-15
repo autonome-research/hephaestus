@@ -91,9 +91,10 @@ def test_ci_requires_the_locked_tool_and_both_actual_http_tests() -> None:
     ci = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text())
     job = ci["jobs"]["render-goldens"]
     assert job["env"]["HEPHAESTUS_REQUIRE_GLTF_VALIDATOR"] == "1"
-    assert job["env"]["HEPHAESTUS_GLTF_VALIDATOR"] == (
-        "${{ runner.temp }}/gltf-validator/gltf_validator"
-    )
+    # runner is unavailable in jobs.<job>.env (GitHub rejects the workflow
+    # before creating any jobs); it is available in steps.<step>.env.
+    assert "HEPHAESTUS_GLTF_VALIDATOR" not in job["env"]
+    assert all("runner." not in str(value) for value in job["env"].values())
     runs = [step["run"] for step in job["steps"] if "run" in step]
     install = 'uv run python scripts/install_gltf_validator.py "$RUNNER_TEMP/gltf-validator"'
     controls = "uv run pytest server/tests/test_khronos_validator.py -vv -s"
@@ -101,6 +102,12 @@ def test_ci_requires_the_locked_tool_and_both_actual_http_tests() -> None:
     assert "::test_the_khronos_validator_binary_is_present_when_required" in validate
     assert "-vv -s" in validate
     assert runs.index(install) < runs.index(controls) < runs.index(validate)
+    for command in (controls, validate):
+        step = next(step for step in job["steps"] if step.get("run") == command)
+        assert step["env"]["HEPHAESTUS_GLTF_VALIDATOR"] == (
+            "${{ runner.temp }}/gltf-validator/gltf_validator"
+        )
+        assert "if" not in step and not step.get("continue-on-error", False)
     lock = json.loads((REPO / "docker/ci/gltf-validator.lock.json").read_text())
     assert lock["url"] == (
         f"{lock['repository']}/releases/download/{lock['version']}/"
