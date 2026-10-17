@@ -81,6 +81,11 @@ to start another model/build/render operation.
   daemon-command deadline; they are not additional worker runtime.
 - An independent owner's parent closes IPC on timeout and allows the existing
   separate **10-second reap**. It does not kill the cleanup owner on a late ACK.
+  Process polling retries `TimeoutExpired` only after the requested slice has
+  elapsed on the continuous clock. CPython's POSIX wait uses an awake-monotonic
+  timeout with sleeping probes; an early timeout is unknown acknowledgement,
+  not a completed poll. It propagates immediately, poisoning the owner session
+  without retry or busy spin. A later child exit cannot supply the missing ACK.
   Owner close retains its existing **435-second** separate wait, now continuous.
 - Browser/server shutdown retains **60 seconds** for graceful termination,
   **10 seconds** for forced reap, and **5 seconds** for its log-reader join.
@@ -120,9 +125,12 @@ suspend-inclusive guarantee for every engine/agent path on Linux. Linux support
 here is the genuine BOOTTIME facility and the shared OCI/owner supervision paths;
 real Linux CI is still required.
 
-The existing smoke download/package writable-bind issue is not repaired here.
-Do **not** run that smoke as guardrail-compliant acceptance until separately
-repaired/reviewed. No old smoke report becomes compliant because clocks changed.
+The deadline-only phase did not repair the smoke download/package writable
+binds. The subsequent [bounded preparation repair](macos-preparation.md) replaces
+those binds with read-only snapshots and private quota-limited storage. Its
+local controls are not live acceptance: green final exact-source CI and fresh
+compliant ARM64 Mac acceptance remain due. Neither repair makes an old smoke
+report compliant.
 
 ## Validation and future physical trial
 

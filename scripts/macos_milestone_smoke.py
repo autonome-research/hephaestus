@@ -14,7 +14,7 @@ import hashlib
 import json
 import os
 import platform
-import secrets
+import re
 import shutil
 import signal
 import sys
@@ -33,6 +33,7 @@ from hephaestus.core.executor.sandbox.oci import (  # noqa: E402
     TransportOutputLimit,
     TransportTimeout,
 )
+from hephaestus.core.executor.sandbox.oci_transfer import _Receiver  # noqa: E402
 
 BASE = (
     "python:3.13.7-slim-bookworm@sha256:"
@@ -149,6 +150,20 @@ class Smoke:
         self.report["checks"][name] = {"status": status, "detail": detail}
         self.save()
 
+    def _save_build_ownership(self) -> None:
+        target = self.directory / "build-ownership.json"
+        temporary = self.directory / "build-ownership.next"
+        with temporary.open("w") as stream:
+            json.dump(self.report["build_ownership"], stream, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(target)
+        fd = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
     def command(
         self,
         argv: tuple[str, ...],
@@ -156,7 +171,16 @@ class Smoke:
         timeout: float = 30,
         require: bool = True,
         cleanup: bool = False,
+        receiver: _Receiver | None = None,
     ) -> tuple[int, str]:
+        name = None
+        if "create" in argv and "--name" in argv:
+            name = argv[argv.index("--name") + 1]
+            records = self.report.setdefault("build_ownership", {})
+            if name not in self.owned or name in records or len(records) >= 4:
+                raise StageFailure("unowned/duplicate/excessive preparation create")
+            records[name] = {"pending": True, "id": None}
+            self._save_build_ownership()
         if cleanup and self.cleanup_deadline is None:
             self.cleanup_deadline = Deadline.after(120)
             self.report["cleanup_deadline_ns"] = self.cleanup_deadline.end_ns
@@ -165,10 +189,20 @@ class Smoke:
         timeout = budget.cap(timeout)
         self.sequence += 1
         stem = f"{self.sequence:03d}"
+        stdout_limit = (
+            receiver.policy.export_bytes
+            + receiver.policy.result_bytes
+            + receiver.schema.header_max
+            + 128
+            if receiver is not None
+            else 512 * 1024
+        )
         record: dict[str, Any] = {
             "argv": list(argv),
             "timeout_seconds": timeout,
-            "output_limit_per_stream": 512 * 1024,
+            "stdout_limit": stdout_limit,
+            "stderr_limit": 512 * 1024,
+            "streamed_preparation_export": receiver is not None,
             "log": f"logs/{stem}.log",
         }
         self.report["commands"].append(record)
@@ -179,9 +213,10 @@ class Smoke:
                     argv,
                     input=b"",
                     timeout=timeout,
-                    stdout_limit=512 * 1024,
+                    stdout_limit=stdout_limit,
                     stderr_limit=512 * 1024,
                     env=RUNTIME_ENV,
+                    **({"stdout_consumer": receiver.feed} if receiver is not None else {}),
                 )
         except (TransportTimeout, TransportOutputLimit) as exc:
             record["error"] = type(exc).__name__
@@ -189,6 +224,14 @@ class Smoke:
                 getattr(exc, "stdout", b"") + b"\n" + getattr(exc, "stderr", b"")
             )
             raise StageFailure(f"{argv[0]}: {type(exc).__name__}; see {record['log']}") from exc
+        except BaseException as exc:
+            record["error"] = type(exc).__name__
+            (self.logs / f"{stem}.log").write_bytes(
+                getattr(exc, "stdout", b"")[: 512 * 1024]
+                + b"\n"
+                + getattr(exc, "stderr", b"")[: 512 * 1024]
+            )
+            raise
         finally:
             self.save()
         record["returncode"] = result.returncode
@@ -196,6 +239,12 @@ class Smoke:
             b"STDOUT\n" + result.stdout + b"\nSTDERR\n" + result.stderr
         )
         self.save()
+        if name is not None:
+            raw = result.stdout.decode("ascii", errors="strict")
+            if result.returncode != 0 or re.fullmatch(r"[0-9a-f]{64}\n", raw) is None:
+                raise StageFailure("preparation create settlement unknown")
+            self.report["build_ownership"][name] = {"pending": False, "id": raw.strip()}
+            self._save_build_ownership()
         if require and result.returncode != 0:
             raise StageFailure(f"command exited {result.returncode}; see {record['log']}")
         return result.returncode, result.stdout.decode("utf-8", errors="strict")
@@ -261,85 +310,14 @@ class Smoke:
             shutil.copyfile(source, staging / name)
             hashes[name] = hashlib.sha256(source.read_bytes()).hexdigest()
         self.report["dependency_locks"] = hashes
-        package_source = ("--index-url", "https://pypi.org/simple")
-        if self.wheelhouse is not None:
-            shutil.copytree(self.wheelhouse, staging / "cache")
-            package_source = ("--no-index", "--find-links=/work/cache")
-        name = "heph-macos-download-" + secrets.token_hex(16)
-        self.owned.append(name)  # recorded before create: covers ambiguous create failures
-        self.save()
-        self.command(
-            (
-                *self.docker,
-                "create",
-                "--name",
-                name,
-                "--label",
-                "org.hephaestus.macos-feasibility=download",
-                "--platform",
-                "linux/arm64",
-                "--pull=never",
-                "--user",
-                f"{os.getuid()}:{os.getgid()}",
-                "--read-only",
-                "--log-driver=none",
-                "--cap-drop",
-                "ALL",
-                "--security-opt",
-                "no-new-privileges=true",
-                "--network",
-                "bridge",
-                "--ipc",
-                "none",
-                "--memory",
-                "768m",
-                "--memory-swap",
-                "768m",
-                "--pids-limit",
-                "64",
-                "--cpus",
-                "1",
-                "--ulimit",
-                "cpu=240:240",
-                "--ulimit",
-                "fsize=268435456:268435456",
-                "--tmpfs",
-                "/tmp:rw,nosuid,nodev,noexec,size=268435456",
-                "--mount",
-                f"type=bind,source={staging},destination=/work",
-                "--workdir",
-                "/work",
-                BASE,
-                "python",
-                "-I",
-                "-m",
-                "pip",
-                "--isolated",
-                "--disable-pip-version-check",
-                "download",
-                *package_source,
-                "--no-cache-dir",
-                "--only-binary=:all:",
-                "--require-hashes",
-                "--timeout",
-                "20",
-                "--retries",
-                "1",
-                "--dest",
-                "/work/wheels",
-                "-r",
-                "/work/requirements.lock",
-                "-r",
-                "/work/build-requirements.lock",
-            )
+        from macos_preparation import prepare_files
+
+        prepare_files(
+            self,
+            "download" if self.wheelhouse is None else "download-cache",
+            staging / "wheels",
+            self.wheelhouse,
         )
-        # start/attach's status is not the container's status: inspect it explicitly.
-        self.command((*self.docker, "start", "--attach", name), timeout=300, require=False)
-        _, raw = self.command((*self.docker, "inspect", "--format", "{{json .State}}", name))
-        state = json.loads(raw)
-        self.report["download_state"] = state
-        if state["Running"] or state["ExitCode"] != 0 or state.get("OOMKilled"):
-            raise StageFailure("native hash-locked wheel download failed; see download state/logs")
         self.check("native_dependencies", "passed", "native cp313 ARM64 hash-checked binary wheels")
 
     def cleanup(self, *, retain_images: bool = False) -> None:
@@ -349,7 +327,9 @@ class Smoke:
         failures: list[str] = []
         for name in self.owned:
             try:
-                self.command((*self.docker, "rm", "--force", name), require=False, cleanup=True)
+                ownership = self.report.get("build_ownership", {}).get(name, {})
+                target = ownership.get("id") or name
+                self.command((*self.docker, "rm", "--force", target), require=False, cleanup=True)
                 # A successful full inventory positively establishes absence; a failed
                 # inspect could instead mean the daemon is unavailable.
                 _, names = self.command(
@@ -359,6 +339,8 @@ class Smoke:
                     failures.append(name)
             except Exception as exc:
                 failures.append(f"{name}: {exc}")
+        if any(r["pending"] for r in self.report.get("build_ownership", {}).values()):
+            failures.append("unsettled preparation create; retain build-ownership.json")
         self.report["retained_image_artifacts"] = (
             list(self.report["owned_image_tags"]) if retain_images else []
         )

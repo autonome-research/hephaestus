@@ -24,6 +24,11 @@ stage now integrates durable supervision and live identity validation; productio
 activation, renderer/browser and independent reviews remain separate gates. See [progress](macos-progress.md) and the
 [executor handoff](macos-executor-stage.md).
 
+The separate [bounded preparation/export contract](macos-preparation.md) now
+removes the writable host binds previously used by downloader/source packaging.
+Its unit controls do not certify a fresh live Mac run; the historical smoke is
+not compliant acceptance and final exact-source CI/ARM64 acceptance remain due.
+
 ## Reproduce
 
 Run serially from `feat/macos-feasibility`, with Docker Desktop's active context

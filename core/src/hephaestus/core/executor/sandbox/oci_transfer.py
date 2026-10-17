@@ -26,7 +26,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import BinaryIO, Protocol, TypeAlias, cast
+from typing import BinaryIO, Protocol, Self, TypeAlias, cast
 
 from .oci_protocol import BUILD_WORKER, DFM_WORKER, PROBE_WORKER
 from .oci_storage_policy import (
@@ -187,7 +187,9 @@ def open_directory(path: Path) -> int:
         raise
 
 
-def open_regular(directory_fd: int, name: object, maximum: int) -> tuple[BinaryIO, os.stat_result]:
+def open_regular(
+    directory_fd: int, name: object, maximum: int, *, allow_empty: bool = False
+) -> tuple[BinaryIO, os.stat_result]:
     if (
         not isinstance(name, str)
         or not name
@@ -198,7 +200,11 @@ def open_regular(directory_fd: int, name: object, maximum: int) -> tuple[BinaryI
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not 0 < info.st_size <= maximum:
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or not (0 if allow_empty else 1) <= info.st_size <= maximum
+        ):
             raise ValueError("not a bounded singly linked regular file")
         return os.fdopen(fd, "rb", buffering=0), info
     except BaseException:
@@ -421,6 +427,41 @@ def artifact_ids(result: object, operation: str) -> list[str]:
     return sorted(artifacts)
 
 
+class _TransferSchema:
+    """Internal framing adapter, NOT an execution/worker admission registry.
+
+    The public CAD entrypoints always use this closed schema. Development
+    preparation reuses only the byte/file machinery with its own closed schema.
+    """
+
+    header_max = HEADER_MAX
+    file_count = 2
+
+    def identity(self, nonce: object, operation: object) -> tuple[str, str]:
+        return _identity(nonce, operation)
+
+    def ids(self, result: object, operation: str) -> list[str]:
+        return artifact_ids(result, operation)
+
+    def name(self, ident: str) -> str:
+        return NAMES[ident]
+
+    def limit(self, ident: str) -> int:
+        if ident not in LIMITS:
+            raise ValueError("unknown artifact id")
+        return LIMITS[ident]
+
+
+class _TransferBounds(Protocol):
+    @property
+    def result_bytes(self) -> int: ...
+    @property
+    def export_bytes(self) -> int: ...
+
+
+_CAD_SCHEMA = _TransferSchema()
+
+
 def export(
     stream: WriteStream,
     result: object,
@@ -430,16 +471,30 @@ def export(
     policy: StoragePolicy,
 ) -> None:
     """Admit before sending; a collection/write error deliberately has no footer."""
-    nonce, operation = _identity(nonce, operation)
+    _export(stream, result, nonce, operation, directory, policy, _CAD_SCHEMA)
+
+
+def _export(
+    stream: WriteStream,
+    result: object,
+    nonce: object,
+    operation: object,
+    directory: Path,
+    policy: _TransferBounds,
+    schema: _TransferSchema,
+) -> None:
+    nonce, operation = schema.identity(nonce, operation)
     data = encode(result, policy.result_bytes)
-    ids = artifact_ids(result, operation)
+    ids = schema.ids(result, operation)
+    if len(ids) > schema.file_count or len(ids) != len(set(ids)):
+        raise ValueError("artifact count/duplicates")
     with contextlib.ExitStack() as stack:
         directory_fd = open_directory(directory)
         stack.callback(os.close, directory_fd)
         files: list[tuple[str, BinaryIO, os.stat_result]] = []
         for ident in ids:
             source, info = open_regular(
-                directory_fd, NAMES[ident], min(LIMITS[ident], policy.export_bytes)
+                directory_fd, schema.name(ident), min(schema.limit(ident), policy.export_bytes)
             )
             stack.enter_context(source)
             files.append((ident, source, info))
@@ -452,7 +507,7 @@ def export(
                 "result_length": len(data),
                 "artifacts": [{"id": ident, "length": info.st_size} for ident, _, info in files],
             },
-            HEADER_MAX,
+            schema.header_max,
         )
         digest = hashlib.sha256()
 
@@ -476,7 +531,7 @@ class _Descriptor:
     length: int
 
 
-class Receiver:
+class _Receiver:
     """Single-use incremental receiver; errors poison it and remove partials.
 
     feed never copies a complete transport chunk: even a single giant feed has
@@ -485,9 +540,15 @@ class Receiver:
     """
 
     def __init__(
-        self, directory: Path, nonce: object, operation: object, policy: StoragePolicy
+        self,
+        directory: Path,
+        nonce: object,
+        operation: object,
+        policy: _TransferBounds,
+        schema: _TransferSchema,
     ) -> None:
-        nonce, operation = _identity(nonce, operation)
+        nonce, operation = schema.identity(nonce, operation)
+        self.schema = schema
         self.nonce, self.operation, self.policy = nonce, operation, policy
         self.dirfd = open_directory(directory)
         self.buffer = bytearray()
@@ -507,7 +568,7 @@ class Receiver:
         self.installed = False
         self.closed = False
 
-    def __enter__(self) -> Receiver:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(
@@ -533,7 +594,7 @@ class Receiver:
                 self.total
                 > self.policy.result_bytes
                 + self.policy.export_bytes
-                + HEADER_MAX
+                + self.schema.header_max
                 + len(MAGIC)
                 + 4
                 + len(FOOTER)
@@ -573,7 +634,7 @@ class Receiver:
             if part[: len(MAGIC)] != MAGIC:
                 raise ValueError("transfer version/magic mismatch")
             self.need = struct.unpack("!I", part[-4:])[0]
-            if not 0 < self.need <= HEADER_MAX:
+            if not 0 < self.need <= self.schema.header_max:
                 raise ValueError("header length exceeds bound")
             self.state = "header"
         elif self.state == "header":
@@ -584,7 +645,7 @@ class Receiver:
             self.state = "done"
         else:
             if self.state == "result":
-                ids = artifact_ids(unique_json(bytes(self.result)), self.operation)
+                ids = self.schema.ids(unique_json(bytes(self.result)), self.operation)
                 if ids != [d.ident for d in self.descriptors]:
                     raise ValueError("artifact set/order disagreement")
             else:
@@ -611,7 +672,7 @@ class Receiver:
         if type(length) is not int or not 0 < length <= self.policy.result_bytes:
             raise ValueError("result length exceeds bound")
         descriptors = header["artifacts"]
-        if not isinstance(descriptors, list) or len(descriptors) > 2:
+        if not isinstance(descriptors, list) or len(descriptors) > self.schema.file_count:
             raise ValueError("artifact count")
         seen: set[str] = set()
         total = 0
@@ -619,9 +680,10 @@ class Receiver:
             if not isinstance(desc, dict) or set(desc) != {"id", "length"}:
                 raise ValueError("artifact descriptor")
             ident, size = desc["id"], desc["length"]
-            if not isinstance(ident, str) or ident not in NAMES or ident in seen:
+            if not isinstance(ident, str) or ident in seen:
                 raise ValueError("unknown/duplicate artifact id")
-            if type(size) is not int or not 0 < size <= LIMITS[ident]:
+            maximum = self.schema.limit(ident)
+            if type(size) is not int or not 0 < size <= maximum:
                 raise ValueError("artifact length exceeds bound")
             seen.add(ident)
             total += size
@@ -636,7 +698,7 @@ class Receiver:
             return
         desc = self.descriptors[self.index]
         self.index += 1
-        name = NAMES[desc.ident]
+        name = self.schema.name(desc.ident)
         self.target = _exclusive(self.dirfd, name)
         self.created.append(name)
         self.file_hash = hashlib.sha256()
@@ -668,7 +730,9 @@ class Receiver:
             fd = open_directory(destination)
             # Revalidate collected bytes before making any destination visible.
             for ident, record in self.files.items():
-                source, info = open_regular(self.dirfd, NAMES[ident], LIMITS[ident])
+                source, info = open_regular(
+                    self.dirfd, self.schema.name(ident), self.schema.limit(ident)
+                )
                 digest = hashlib.sha256()
                 with source:
                     for chunk in _collect(source, info):
@@ -676,7 +740,7 @@ class Receiver:
                 if info.st_size != record.length or digest.hexdigest() != record.sha256:
                     raise ValueError("collected artifact changed")
             for ident in self.files:
-                name = NAMES[ident]
+                name = self.schema.name(ident)
                 os.link(name, name, src_dir_fd=self.dirfd, dst_dir_fd=fd, follow_symlinks=False)
                 installed.append(name)
             # Keep source links until close; no fallible source-unlink step can
@@ -707,6 +771,15 @@ class Receiver:
             os.close(self.dirfd)
             self.buffer.clear()
             self.result.clear()
+
+
+class Receiver(_Receiver):
+    """CAD receiver: callers cannot supply a wider schema or worker allowlist."""
+
+    def __init__(
+        self, directory: Path, nonce: object, operation: object, policy: StoragePolicy
+    ) -> None:
+        super().__init__(directory, nonce, operation, policy, _CAD_SCHEMA)
 
 
 def read_job(stream: ReadStream) -> Json:

@@ -13,7 +13,6 @@ import base64
 import hashlib
 import json
 import os
-import re
 import signal
 from pathlib import Path
 
@@ -34,49 +33,10 @@ from macos_probe_executor import resolve_image
 class RendererSmoke(Smoke):
     """Trusted build containers also retain ambiguous create intent durably.
 
-    Workload lifecycle uses the full reviewed supervisor/journal. The inherited
-    preparation helper has a smaller name ledger; an absence inventory alone
-    must not turn an unacknowledged packaging/download create into success.
+    Workload lifecycle uses the full reviewed supervisor/journal. Smoke now
+    shares the durable preparation ledger with every helper/standalone route;
+    absence alone cannot settle an unacknowledged packaging/download create.
     """
-
-    def _save_build_ownership(self):
-        target = self.directory / "build-ownership.json"
-        temporary = self.directory / "build-ownership.next"
-        with temporary.open("w") as stream:
-            json.dump(self.report["build_ownership"], stream, sort_keys=True)
-            stream.flush()
-            os.fsync(stream.fileno())
-        temporary.replace(target)
-        fd = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-
-    def command(self, argv, **kwargs):
-        name = None
-        if "create" in argv and "--name" in argv:
-            name = argv[argv.index("--name") + 1]
-            records = self.report.setdefault("build_ownership", {})
-            if name in records or len(records) >= 4:
-                raise StageFailure("duplicate/excessive preparation ownership")
-            records[name] = {"pending": True, "id": None}
-            self._save_build_ownership()
-        result = super().command(argv, **kwargs)
-        if name is not None:
-            code, raw = result
-            if code != 0 or re.fullmatch(r"[0-9a-f]{64}\n", raw) is None:
-                raise StageFailure("preparation create settlement unknown")
-            self.report["build_ownership"][name] = {"pending": False, "id": raw.strip()}
-            self._save_build_ownership()
-        return result
-
-    def cleanup(self, *, retain_images=False):
-        super().cleanup(retain_images=retain_images)
-        if any(r["pending"] for r in self.report.get("build_ownership", {}).values()):
-            self.check(
-                "cleanup", "failed", "unsettled preparation create; retain build-ownership.json"
-            )
 
 
 def save(path: Path, data: object) -> None:

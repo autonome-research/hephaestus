@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import secrets
 import shutil
 import sys
@@ -15,100 +14,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from macos_milestone_smoke import Smoke
 
-PREPARE = """set -eu
-python -m venv /work/venv
-/work/venv/bin/python -m pip --isolated --disable-pip-version-check install \
-  --no-index --find-links=/work/wheels --require-hashes -r /work/build-requirements.lock
-export SOURCE_DATE_EPOCH=0
-/work/venv/bin/python -m pip --isolated --disable-pip-version-check wheel \
-  --no-index --no-deps --no-build-isolation --wheel-dir=/work/wheels \
-  /work/source/docker/executor/package /work/source/opstore
-python /work/source/docker/executor/write_local_lock.py /work/wheels
-"""
-
 
 def prepare(smoke: Smoke) -> str:
-    from macos_milestone_smoke import BASE, ROOT, StageFailure
+    from macos_milestone_smoke import ROOT
+    from macos_preparation import prepare_files
 
     staging = smoke.directory / "download"
-    source = staging / "source"
-    for relative in ("core/src", "opstore/src", "docker/executor/package"):
-        shutil.copytree(
-            ROOT / relative,
-            source / relative,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".venv", "dist", "src")
-            if relative == "docker/executor/package"
-            else shutil.ignore_patterns("__pycache__", "*.pyc"),
-        )
-    for relative in (
-        "opstore/pyproject.toml",
-        "schemas/bridge_limits.json",
-        "docker/executor/write_local_lock.py",
-    ):
-        target = source / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ROOT / relative, target)
-    source_hashes = {
-        str(path.relative_to(source)): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in sorted(source.rglob("*"))
-        if path.is_file()
-    }
-    (smoke.directory / "executor-source-sha256.json").write_text(
-        json.dumps(source_hashes, indent=2) + "\n"
-    )
-    smoke.report["executor_source_manifest"] = "executor-source-sha256.json"
-    smoke.save()
-    name = "heph-macos-package-" + secrets.token_hex(16)
-    smoke.owned.append(name)
-    smoke.save()
-    smoke.command(
-        (
-            *smoke.docker,
-            "create",
-            "--name",
-            name,
-            "--platform",
-            "linux/arm64",
-            "--pull=never",
-            "--user",
-            f"{os.getuid()}:{os.getgid()}",
-            "--read-only",
-            "--log-driver=none",
-            "--cap-drop",
-            "ALL",
-            "--security-opt",
-            "no-new-privileges=true",
-            "--network",
-            "none",
-            "--ipc",
-            "none",
-            "--memory",
-            "1g",
-            "--memory-swap",
-            "1g",
-            "--cpus",
-            "1",
-            "--pids-limit",
-            "128",
-            "--ulimit",
-            "cpu=120:120",
-            "--tmpfs",
-            "/tmp:rw,nosuid,nodev,noexec,size=268435456",
-            "--mount",
-            f"type=bind,source={staging},destination=/work",
-            "--workdir",
-            "/work",
-            BASE,
-            "/bin/sh",
-            "-c",
-            PREPARE,
-        )
-    )
-    smoke.command((*smoke.docker, "start", "--attach", name), timeout=180, require=False)
-    _, raw = smoke.command((*smoke.docker, "inspect", "--format", "{{json .State}}", name))
-    state = json.loads(raw)
-    if state["Running"] or state["ExitCode"] != 0 or state.get("OOMKilled"):
-        raise StageFailure("offline local wheel build failed")
+    prepare_files(smoke, "package", staging / "local-wheels", staging / "wheels")
+    smoke.report["executor_source_manifest"] = "prepare-package/inputs-sha256.json"
     context = smoke.directory / "image-context"
     shutil.copytree(
         ROOT / "docker/executor",
@@ -116,6 +29,9 @@ def prepare(smoke: Smoke) -> str:
         ignore=shutil.ignore_patterns("package", "__pycache__"),
     )
     shutil.copytree(staging / "wheels", context / "dist/executor-wheelhouse")
+    for path in (staging / "local-wheels").iterdir():
+        with (context / "dist/executor-wheelhouse" / path.name).open("xb") as target:
+            target.write(path.read_bytes())
     native_cache = ROOT / "dist/macos-executor-native"
     if native_cache.is_dir():
         shutil.copytree(native_cache, context / "dist/executor-native")
