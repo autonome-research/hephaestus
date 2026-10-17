@@ -417,8 +417,6 @@ def interference_report(
     records why the solids could not be enumerated — an unmeasured compound
     says so instead of reporting a clean sheet.
     """
-    from hephaestus.geom.measure import interference
-
     cap = MAX_INTERFERENCE_PAIRS if max_pairs is None else max_pairs
     pairs = list(combinations(range(len(solids)), 2))
     measured = pairs[:cap]
@@ -426,6 +424,9 @@ def interference_report(
     warnings: list[dict[str, JSONValue]] = []
     overlaps: list[JSONValue] = []
     for left, right in measured:
+        # An unavailable/empty report must not require the missing kernel.
+        from hephaestus.geom.measure import interference
+
         name_a, shape_a = solids[left]
         name_b, shape_b = solids[right]
         volume = float(interference(cast("Any", shape_a), cast("Any", shape_b)))

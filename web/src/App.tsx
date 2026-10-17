@@ -49,13 +49,17 @@ function useHeldToken(): string | null {
  * pin whose `pin_mode` is `"pinned"`." `observeCurrent` enforces that itself, so
  * this effect can fire on every build response without ever moving a held pin.
  */
-function CurrentBuildObserver(): null {
+export function CurrentBuildObserver(): null {
   const part = useWorkspace((s) => s.part);
+  const pinMode = useWorkspace((s) => s.pin_mode);
+  const pinnedRef = useWorkspace((s) => s.artifact_ref);
   const build = useBuild(part);
   const ref = build.data?.artifact_ref ?? null;
   useEffect(() => {
+    // A pasted same-part URL can clear its ref while the query stays cached.
+    // Re-observe that actual server answer; observeCurrent still refuses held pins.
     workspaceStore.observeCurrent(ref);
-  }, [ref]);
+  }, [ref, part, pinMode, pinnedRef]);
   return null;
 }
 

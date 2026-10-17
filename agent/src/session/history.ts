@@ -17,6 +17,7 @@
 // keeps the G4.11 event archive green without a re-baseline.
 
 import { imageIdentities } from "../image-identity.js";
+import { readTurnControls, type TurnControls } from "./turn-controls.js";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { HephaestusEvent, EventKind } from "../events.js";
 import type { JsonValue } from "../framing.js";
@@ -126,6 +127,7 @@ export interface HistoryTurnOutcome {
  * `<session_id>@prompt:<seq>` an unusable row key.
  */
 export interface HistoryUserPrompt {
+  readonly turn_controls?: TurnControls;
   readonly turn: number;
   readonly seq: number;
   readonly run_id?: string;
@@ -279,6 +281,7 @@ function assistantOutcome(message: PiAssistantMessage): HistoryTurnOutcome | nul
 
 /** The prompt-time marker's payload, read defensively (it is durable JSON). */
 interface TurnMarker {
+  readonly turn_controls?: TurnControls;
   readonly run_id?: string;
   readonly text: string | null;
   readonly envelope: string | null;
@@ -295,7 +298,18 @@ function readTurnMarker(data: unknown): TurnMarker | null {
   // Absent means operator, so every marker written before `origin` existed keeps
   // its meaning; only the literal "agent" changes the attribution.
   const origin = record.origin === "agent" ? "agent" : "operator";
+  let controls: TurnControls | undefined;
+  if ("turn_controls" in data && data.turn_controls !== null && typeof data.turn_controls === "object" &&
+      "interaction_mode" in data.turn_controls && typeof data.turn_controls.interaction_mode === "string" &&
+      "dfm_mode" in data.turn_controls && typeof data.turn_controls.dfm_mode === "string" &&
+      "thinking_level" in data.turn_controls && typeof data.turn_controls.thinking_level === "string") {
+    try {
+      controls = readTurnControls({ interaction_mode: data.turn_controls.interaction_mode,
+        dfm_mode: data.turn_controls.dfm_mode, thinking_level: data.turn_controls.thinking_level });
+    } catch { /* Legacy/corrupt records have unknown choices, never invented defaults. */ }
+  }
   return { text, envelope, origin,
+    ...(controls !== undefined ? { turn_controls: controls } : {}),
     ...(typeof record.run_id === "string" ? { run_id: record.run_id } : {}),
   };
 }
@@ -325,6 +339,7 @@ function makeEvent(
 
 /** Mutable per-turn accumulator; frozen into a `HistoryUserPrompt` at the end. */
 interface TurnAccumulator {
+  readonly turn_controls?: TurnControls;
   readonly run_id?: string;
   readonly turn: number;
   readonly seq: number;
@@ -436,6 +451,7 @@ function walkEntries(entries: readonly SessionEntry[], runId: string): Walk {
         text: marker !== null ? marker.text : userPromptText(message.content),
         envelope: marker !== null ? marker.envelope : null,
         origin: marker !== null ? marker.origin : "operator",
+        ...(marker?.turn_controls !== undefined ? { turn_controls: marker.turn_controls } : {}),
         ...(marker?.run_id !== undefined ? { run_id: marker.run_id } : {}),
         assistantOutcome: null,
         markerOutcome: null,
@@ -488,6 +504,7 @@ function walkEntries(entries: readonly SessionEntry[], runId: string): Walk {
     // unlinked legacy turns may fall back to the last assistant's evidence.
     const outcome = acc.markerOutcome ?? (acc.run_id === undefined ? acc.assistantOutcome : null);
     const base = { turn: acc.turn, seq: acc.seq, text: acc.text, envelope: acc.envelope,
+      ...(acc.turn_controls !== undefined ? { turn_controls: acc.turn_controls } : {}),
       ...(acc.run_id !== undefined ? { run_id: acc.run_id } : {}),
     };
     const attributed = acc.origin === "agent" ? { ...base, origin: "agent" as const } : base;

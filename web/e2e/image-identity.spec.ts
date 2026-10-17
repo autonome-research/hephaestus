@@ -46,7 +46,10 @@ for (const sol of [false, true]) test(`packaged ${sol ? "pinned Sol Codex" : "ge
       await composer.locator("[data-composer-input]").fill("Owned image transport identity probe; no visual assessment claim.");
       const done = page.waitForResponse(response => response.url().endsWith(`/sessions/${sid}/prompt`) && response.request().method() === "POST");
       await send.click();
-      expect((await (await done).json() as { run_status: string }).run_status).toBe("completed");
+      const promptResponse = await done;
+      const promptBody = await promptResponse.json() as { run_status: string; reason?: string };
+      expect(promptResponse.status(), `prompt refusal: ${promptBody.reason ?? "none"}`).toBe(200);
+      expect(promptBody.run_status).toBe("completed");
       const images = page.locator('[data-image-state="shown"]');
       if (model === world.text_model) {
         await expect(images).toHaveCount(0);
@@ -153,7 +156,10 @@ test("pinned Sol missing current build remains a tool failure with zero images",
     await composer.locator("[data-composer-input]").fill("Owned missing-build image probe.");
     const done = page.waitForResponse(r => r.url().endsWith(`/sessions/${created.session_id}/prompt`) && r.request().method() === "POST");
     await composer.locator("[data-composer-send]").click();
-    expect((await (await done).json() as { run_status: string }).run_status).toBe("completed");
+    const promptResponse = await done;
+    const promptBody = await promptResponse.json() as { run_status: string; reason?: string };
+    expect(promptResponse.status(), `prompt refusal: ${promptBody.reason ?? "none"}`).toBe(200);
+    expect(promptBody.run_status).toBe("completed");
     await expect(page.locator('[data-tool-name="inspect_part"]')).toHaveAttribute("data-status", "error");
     await expect(page.locator("[data-image-state]")).toHaveCount(0);
     expect(codex.requests).toHaveLength(2);

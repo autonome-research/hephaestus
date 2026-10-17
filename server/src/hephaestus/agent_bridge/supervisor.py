@@ -1173,12 +1173,17 @@ def pid_alive(pid: int) -> bool:
     itself contain spaces or parentheses. Parsing therefore starts after the
     last ``)``, which is the one place a comm cannot hide.
     """
-    try:
-        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
-    except FileNotFoundError:
-        return False  # no such process
-    except (PermissionError, NotADirectoryError, OSError):
-        raw = ""  # no procfs (or an unreadable one): fall back below
+    raw = ""
+    # Absence of a pid file proves death only on an available procfs. Darwin
+    # has no /proc at all; treating ENOENT there as death bypassed the fallback
+    # for *every* live child, masking orphans and rejecting successful respawns.
+    if Path("/proc/self/stat").is_file():
+        try:
+            raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            return False  # procfs exists, but this process does not
+        except OSError:
+            pass  # unreadable procfs: fall back below
     if raw:
         _, _, after_comm = raw.rpartition(")")
         fields = after_comm.split()
@@ -1192,8 +1197,14 @@ def pid_alive(pid: int) -> bool:
             f"cannot determine whether pid {pid} is alive: no readable /proc and no 'ps' on PATH"
         )
     r = subprocess.run(
-        [listing, "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False
+        [listing, "-o", "stat=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
     )
+    if r.returncode == 1 and not r.stdout.strip() and not r.stderr.strip():
+        return False  # ps found no matching pid (Linux and Darwin)
     if r.returncode != 0 or not r.stdout.strip():
-        return False
+        raise RuntimeError(f"cannot determine whether pid {pid} is alive: ps failed")
     return "Z" not in r.stdout.strip()

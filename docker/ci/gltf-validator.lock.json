@@ -1,0 +1,9 @@
+{
+  "version": "2.0.0-dev.3.10",
+  "repository": "https://github.com/KhronosGroup/glTF-Validator",
+  "source_commit": "bcd52cc4ba5f333b2999a58f67cc05ddf28b4fb1",
+  "url": "https://github.com/KhronosGroup/glTF-Validator/releases/download/2.0.0-dev.3.10/gltf_validator-2.0.0-dev.3.10-linux64.tar.xz",
+  "sha256": "168eba887964125abe17ae97899b38d0b3cfd73c266c78424c194929ddcbc522",
+  "binary_sha256": "5cba1e097935c9efd929d24a49610824259b030f0ae45672273bfbcbb5b87a62",
+  "license": "Apache-2.0; bundled dependencies listed in archive NOTICES"
+}

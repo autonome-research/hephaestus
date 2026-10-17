@@ -2,8 +2,10 @@
 
 Provides the §8 ``input_hashes`` ingredients: script/source text hashes,
 canonical effective-parameter hashing, the consumed-``hc`` projection hash,
-the ``PARAMS`` declaration hash, and the pinned toolchain hash (python +
-build123d + OCP exact versions via ``importlib.metadata``).
+the ``PARAMS`` declaration hash, and the pinned NATIVE toolchain hash (python +
+build123d + OCP exact versions via ``importlib.metadata``). OCI uses the trusted
+image-bound identity in ``executor.identity`` instead; these host metadata
+functions must never stand in for the worker's execution environment.
 
 Every hash string is ``"sha256:<hex>"``; canonical JSON is sorted-key,
 compact-separator, UTF-8 (``opstore.hashing.canonical_json``).

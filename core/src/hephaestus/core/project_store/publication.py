@@ -19,16 +19,22 @@ from __future__ import annotations
 
 import contextlib
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Final, Literal, cast
 
-from hephaestus.core.errors import ConflictError, ValidationError
+from hephaestus.core.errors import ConflictError, SandboxDeniedError, ValidationError
+from hephaestus.core.executor.artifacts import read_artifact
 from hephaestus.core.executor.fingerprint import (
     FingerprintBaseline,
     descriptors_from_json,
     descriptors_to_json,
+)
+from hephaestus.core.executor.identity import (
+    ExecutionIdentity,
+    backend_execution_identity,
+    recorded_execution_identity,
 )
 from hephaestus.core.executor.imports import (
     ImportPayload,
@@ -36,6 +42,7 @@ from hephaestus.core.executor.imports import (
     static_import_declarations,
 )
 from hephaestus.core.executor.runner import UnpublishedBuild
+from hephaestus.core.executor.sandbox.base import ExecBackend
 from hephaestus.core.hashing import consumed_hc_hash, toolchain_hash
 from hephaestus.core.project_store.artifact_kinds import (
     record_artifact_kind,
@@ -231,7 +238,7 @@ def input_mismatches(
     expected: InputHashes,
     *,
     live_script: str | None,
-    live_toolchain: str,
+    live_toolchain: str | None,
     live_part_params: str | None,
     live_imports: Mapping[str, str | None],
     consumed_hc: Mapping[str, JSONValue],
@@ -420,7 +427,13 @@ class Publisher:
         *,
         locks: LockManager | None = None,
         owner: OwnerId | None = None,
+        backend: ExecBackend | None = None,
+        native_toolchain_hash: Callable[[], str] | None = None,
     ) -> None:
+        # Same backend as run_build, never inferred from stored metadata.
+        # None retains native behaviour; OCI records compare as non-native.
+        self._backend = backend
+        self._native_toolchain_hash = native_toolchain_hash
         self.layout = layout
         self._store = store
         self.locks = locks or LockManager(store, owner=owner)
@@ -724,6 +737,13 @@ class Publisher:
         become current. Idempotent on ``op_id`` for the current-pointer flip.
         """
         build = _with_worker_facts(build)
+        recorded = recorded_execution_identity(
+            dict(build.result.metadata), build.result.input_hashes.toolchain
+        )
+        if recorded != build.execution_identity:
+            raise ValidationError(
+                "build execution identity missing or inconsistent", kind="contract"
+            )
         part = build.result.part
         if build.result.status == "failed":
             kind: PublicationKind = "failed"
@@ -808,12 +828,22 @@ class Publisher:
         """Install every artifact file as a content-addressed blob; verify refs."""
         refs: list[str] = []
         blobs: list[str] = []
+        if build.artifact_bytes is not None and set(build.artifact_bytes) != set(
+            build.artifact_files
+        ):
+            raise ConflictError("validated artifact byte set is incomplete")
         for ref in sorted(build.artifact_files):
-            path = build.artifact_files[ref]
-            if ref.startswith(SOURCE_MAP_REF_PREFIX) and build.source_map is not None:
-                data = canonical_json(dict(build.source_map)).encode("utf-8")
+            if build.artifact_bytes is not None:
+                data = build.artifact_bytes[ref]
             else:
-                data = path.read_bytes()
+                # Compatibility for trusted internal constructors, not a raw-path
+                # escape hatch. Production runner always supplies byte snapshots.
+                path = build.artifact_files[ref]
+                if path != build.out_dir / path.name:
+                    raise ConflictError("artifact path is outside build staging")
+                data = read_artifact(build.out_dir, path.name)
+                if ref.startswith(SOURCE_MAP_REF_PREFIX) and build.source_map is not None:
+                    data = canonical_json(dict(build.source_map)).encode("utf-8")
             stored = self._store.blobs.put(data, retention)
             expected = blob_hash_of_ref(ref)
             if stored != expected:
@@ -830,6 +860,25 @@ class Publisher:
         # construction, because they are exactly the keys of `artifact_files`.
         record_artifact_refs(self._store, refs)
         return tuple(refs), tuple(blobs)
+
+    def _live_toolchain(self, recorded: ExecutionIdentity | None) -> str | None:
+        """One identity comparison for publication AND freshness.
+
+        A different/missing/unavailable executor is stale, never authorization to
+        substitute the stored fingerprint. Native hashes remain byte-compatible.
+        OCI-to-native reads need no host CAD installation to report staleness.
+        """
+        try:
+            live = backend_execution_identity(self._backend)
+        except (SandboxDeniedError, ValidationError):
+            return None
+        if (live is None) != (recorded is None):
+            return None
+        return (
+            (self._native_toolchain_hash or toolchain_hash)()
+            if live is None
+            else live.toolchain_hash
+        )
 
     def _revalidate(self, build: UnpublishedBuild) -> tuple[str, ...]:
         """Recheck script/part-param/toolchain/consumed-hc hashes under locks.
@@ -852,7 +901,7 @@ class Publisher:
                 live_script=(
                     sha256_bytes(script_path.read_bytes()) if script_path.is_file() else None
                 ),
-                live_toolchain=toolchain_hash(),
+                live_toolchain=self._live_toolchain(build.execution_identity),
                 live_part_params=(
                     sha256_canonical_json(declaration) if isinstance(declaration, dict) else None
                 ),
@@ -915,13 +964,15 @@ class Publisher:
             return None
         if not isinstance(result_raw, dict):
             raise ValidationError("current bundle has no result record", kind="contract")
-        expected = BuildResult.from_json(cast("Mapping[str, JSONValue]", result_raw)).input_hashes
+        result = BuildResult.from_json(cast("Mapping[str, JSONValue]", result_raw))
+        expected = result.input_hashes
+        recorded = recorded_execution_identity(dict(result.metadata), expected.toolchain)
         script_path = self.layout.part_path(part)
         live_script = sha256_bytes(script_path.read_bytes()) if script_path.is_file() else None
         mismatches = input_mismatches(
             expected,
             live_script=live_script,
-            live_toolchain=toolchain_hash(),
+            live_toolchain=self._live_toolchain(recorded),
             live_part_params=None,
             compare_part_params=False,
             live_imports={path: self.parts.import_hash(path) for path in sorted(expected.imports)},

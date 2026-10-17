@@ -49,7 +49,10 @@ test("actual picker preserves the session/draft and changes the next provider HT
   await input.fill("HEPH_MODEL_SELECTION first text-only turn");
   const textTurn = page.waitForResponse(r => r.url().endsWith(`/sessions/${sid}/prompt`) && r.request().method() === "POST");
   await send.click();
-  expect((await (await textTurn).json() as { run_status: string }).run_status).toBe("completed");
+  const promptResponse = await textTurn;
+  const promptBody = await promptResponse.json() as { run_status: string; reason?: string };
+  expect(promptResponse.status(), `prompt refusal: ${promptBody.reason ?? "none"}`).toBe(200);
+  expect(promptBody.run_status).toBe("completed");
   expect(requests().slice(beforeText).map(r => r.model)).toEqual([text.model_id]);
   await expect(page.getByText("HEPH_MODEL_SELECTION_DONE", { exact: true })).toBeVisible();
   const historyBefore = await page.locator("[data-event-id]").evaluateAll(nodes => nodes.map(n => n.getAttribute("data-event-id")));

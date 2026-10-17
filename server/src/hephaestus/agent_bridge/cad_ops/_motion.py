@@ -51,7 +51,7 @@ projected (``partial: true``, the ``check_assembly`` rule).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from hephaestus.core.errors import AddressingError
 from hephaestus.core.motion import (
@@ -75,10 +75,12 @@ from hephaestus.core.project_store.kinematics import (
     PoseSet,
     PoseState,
 )
-from hephaestus.core.render.posed import PosedSceneResult, render_posed_scene
 from opstore.types import JSONValue
 
 from ._base import CadOpError, CadOpsState
+
+if TYPE_CHECKING:
+    from hephaestus.core.render.posed import PosedSceneResult
 
 __all__ = ["MotionOps"]
 
@@ -189,6 +191,8 @@ class MotionOps(CadOpsState):
         tool and NOT dispatched (``KINEMATICS.md`` §6: the posed render is exposed
         through ``heph render --pose`` and the reviewer context only).
         """
+        from hephaestus.core.render.posed import render_posed_scene
+
         return render_posed_scene(self.layout, self._store, **kwargs)
 
     # -- joint writes ------------------------------------------------------

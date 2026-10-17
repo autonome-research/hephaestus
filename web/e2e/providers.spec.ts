@@ -170,6 +170,11 @@ async function revealProviders(page: Page): Promise<void> {
   await expect(control).toBeVisible({ timeout: 90_000 });
   await control.click();
   await expect(page.getByRole("group", { name: "Choose model" })).toBeVisible();
+  // Management is an explicit disclosure within the picker, not its default
+  // contents. Keep every credential/discovery assertion on the real panel.
+  await page.locator("[data-manage-providers]").click();
+  await expect(page.locator("[data-manage-providers]")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("[data-model-providers]")).toBeVisible();
 }
 
 test.describe.configure({ mode: "serial" });

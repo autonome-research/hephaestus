@@ -30,7 +30,7 @@ import io
 import json
 import sys
 import traceback
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, cast
@@ -97,7 +97,9 @@ def _float_map(raw: JSONValue) -> dict[str, float]:
     return out
 
 
-def evaluate_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
+def evaluate_job(
+    job: Mapping[str, JSONValue], *, input_dir: Path | None = None
+) -> dict[str, JSONValue]:
     """Run one DFM job and return the worker result record (pure protocol).
 
     Importable and callable in-process for tests; production callers reach it
@@ -131,7 +133,7 @@ def evaluate_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
     if not isinstance(brep_name, str) or not brep_name:
         result["error"] = "job is missing the 'brep' artifact filename"
         return result
-    brep_path = out_dir / brep_name
+    brep_path = (input_dir or out_dir) / brep_name
     try:
         geometry = load_brep_shape(brep_path.read_bytes(), scratch_dir=out_dir)
     except Exception as exc:
@@ -240,26 +242,39 @@ def _run_rule(
     }
 
 
-def main() -> int:
+def main(*, oci_args: Sequence[str] = ()) -> int:
     """Protocol entrypoint: JSON job on stdin, JSON result on stdout."""
+    from hephaestus.core.executor.sandbox.oci_protocol import DFM_WORKER
+    from hephaestus.core.executor.sandbox.oci_worker_io import worker_io
+
+    transport = worker_io(oci_args)
     try:
-        job_raw: object = json.loads(sys.stdin.read())
+        job_raw: object = transport.read() if transport else json.loads(sys.stdin.read())
     except json.JSONDecodeError as exc:
         print(f"dfm worker: invalid job JSON: {exc}", file=sys.stderr)
         return 2
     if not isinstance(job_raw, dict):
         print("dfm worker: job must be a JSON object", file=sys.stderr)
         return 2
+    job = cast("Mapping[str, JSONValue]", job_raw)
     try:
-        result = evaluate_job(cast("Mapping[str, JSONValue]", job_raw))
+        if transport and (job.get("out_dir") != "." or job.get("brep") != "source.brep"):
+            raise ValueError("OCI DFM paths must be fixed")
+        result = evaluate_job(
+            job,
+            input_dir=Path("/inputs") if transport else None,
+        )
     except Exception as exc:  # pragma: no cover - defensive
         print(f"dfm worker: internal error: {type(exc).__name__}: {exc}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         return 3
-    json.dump(result, sys.stdout)
-    sys.stdout.flush()
+    if transport:
+        transport.send(result, DFM_WORKER)
+    else:
+        json.dump(result, sys.stdout)
+        sys.stdout.flush()
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(oci_args=sys.argv[1:]))

@@ -708,7 +708,7 @@ def write_specs(
 
 
 def register_catalog_provider(
-    path: Path, *, catalog_entry: dict[str, Any], auth_type: str
+    path: Path, *, catalog_entry: dict[str, Any], auth_type: object
 ) -> tuple[ProvidersFile, dict[str, Any]]:
     """Append one Pi-owned provider from the runtime catalog, preserving order.
 
@@ -717,8 +717,10 @@ def register_catalog_provider(
     are never replaced, and the lock closes the concurrent read-modify-write
     window that a client-side merge cannot close.
     """
+    if not isinstance(auth_type, str):
+        raise _refuse(400, "invalid_params", "auth_type must be a string")
     if auth_type not in CATALOG_AUTH_METHODS:
-        raise _refuse(400, "unsupported_auth_type", "unknown provider authentication method")
+        raise _refuse(422, "unsupported_auth_type", "unknown provider authentication method")
     provider_id = catalog_entry.get("id")
     if not isinstance(provider_id, str) or not provider_id:
         raise _refuse(404, "provider_unknown", "the runtime catalog has no such provider")

@@ -64,6 +64,7 @@ from hephaestus.contract import toolgen
 from hephaestus.contract.tools_decl import READ_ARTIFACT_PAGE_MAX, TOOLS_BY_NAME
 from hephaestus.core.checks.report import project_check_report
 from hephaestus.core.errors import HephaestusError
+from hephaestus.core.executor.cancellation import run_cancellable
 from hephaestus.core.types import BuildFreshness, BuildResult
 from hephaestus.mcp.validate import SchemaError, normalize_arguments
 from starlette.applications import Starlette
@@ -158,7 +159,16 @@ API_PREFIX: Final[str] = WORKSPACE_API_PREFIX
 #: against the canonical schema, and a second gate here would be a second table.
 _PREVIEW_MEMBERS: Final[frozenset[str]] = frozenset({"context"})
 _PROMPT_MEMBERS: Final[frozenset[str]] = frozenset(
-    {"text", "run_id", "context", "include_events", "expected_model_revision"}
+    {
+        "text",
+        "run_id",
+        "context",
+        "include_events",
+        "expected_model_revision",
+        "interaction_mode",
+        "dfm_mode",
+        "thinking_level",
+    }
 )
 _ANSWER_MEMBERS: Final[frozenset[str]] = frozenset({"question_id", "answer"})
 _SESSION_CREATE_MEMBERS: Final[frozenset[str]] = frozenset(
@@ -608,8 +618,8 @@ class _Api:
 
         if decl.sequential:
             async with self._sequential:
-                return await asyncio.to_thread(run)
-        return await asyncio.to_thread(run)
+                return await run_cancellable(run)
+        return await run_cancellable(run)
 
     async def read_tool(self, tool: str, arguments: dict[str, Any]) -> Any:
         """A keyless tool call (a read, an inspection, a measurement).
@@ -676,6 +686,7 @@ class _Api:
         template: str,
         body: dict[str, Any],
         operation: Callable[[], dict[str, Any]],
+        prepare: Callable[[], Awaitable[None]] | None = None,
     ) -> Response:
         """The §19-item-7 half: a keyed mutation with **no tool behind it**.
 
@@ -696,6 +707,10 @@ class _Api:
         recorded = await asyncio.to_thread(self.runtime.ledger.begin, op_id, digest, key=key)
         if recorded is not None:
             return _replayed(recorded.response)
+        # Admission (including replay/conflict/freshness) precedes even catalog
+        # discovery. Preparation may start a runtime and is not a free read.
+        if prepare is not None:
+            await prepare()
         result = await asyncio.to_thread(operation)
         await asyncio.to_thread(self.runtime.ledger.commit, op_id, digest, result)
         return JSONResponse(_result_body(result))
@@ -1461,29 +1476,39 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         if not isinstance(provider_id, str) or not provider_id:
             raise HttpRefusal(400, "invalid_params", "provider_id must be a non-empty string")
         if not isinstance(auth_type, str):
-            raise HttpRefusal(400, "unsupported_auth_type", "auth_type is required")
-        catalog = await _native_catalog()
-        entries = catalog.get("catalog")
-        catalog_rows: list[dict[str, Any]] = (
-            [
-                cast("dict[str, Any]", row)
-                for row in cast("list[Any]", entries)
-                if isinstance(row, dict)
-            ]
-            if isinstance(entries, list)
-            else []
-        )
-        entry = next(
-            (row for row in catalog_rows if str(row.get("id", "")) == provider_id),
-            None,
-        )
-        if entry is None:
-            raise HttpRefusal(404, "provider_unknown", "no such provider in the runtime catalog")
+            raise HttpRefusal(400, "invalid_params", "auth_type must be a string")
         config_path = agent_attach.provider_config_path(runtime.root)
+        entry: dict[str, Any] | None = None
+
+        async def prepare() -> None:
+            nonlocal entry
+            if auth_type not in providers.CATALOG_AUTH_METHODS:
+                raise HttpRefusal(422, "unsupported_auth_type", "unknown authentication method")
+            catalog = await _native_catalog()
+            entries = catalog.get("catalog")
+            catalog_rows: list[dict[str, Any]] = (
+                [
+                    cast("dict[str, Any]", row)
+                    for row in cast("list[Any]", entries)
+                    if isinstance(row, dict)
+                ]
+                if isinstance(entries, list)
+                else []
+            )
+            entry = next(
+                (row for row in catalog_rows if str(row.get("id", "")) == provider_id),
+                None,
+            )
+            if entry is None:
+                raise HttpRefusal(
+                    404, "provider_unknown", "no such provider in the runtime catalog"
+                )
+
         registered_spec: dict[str, Any] = {}
 
         def write() -> dict[str, Any]:
             nonlocal registered_spec
+            assert entry is not None  # prepared only after key admission
             written, registered_spec = providers.register_catalog_provider(
                 config_path, catalog_entry=entry, auth_type=auth_type
             )
@@ -1497,7 +1522,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
             }
 
         response = await api.keyed_non_tool(
-            request, template="/providers/register", body=body, operation=write
+            request, template="/providers/register", body=body, operation=write, prepare=prepare
         )
         # Runtime sync is idempotent and deliberately after the durable write.
         # A failed sync leaves the declaration visible on disk and a retry of
@@ -1505,20 +1530,17 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         backend = runtime.credentials
         if backend is not None:
             if not registered_spec:
-                entry_models = entry.get("models")
-                model_rows = (
-                    cast("list[Any]", entry_models) if isinstance(entry_models, list) else []
+                # Replay syncs the durable declaration, not a newly discovered
+                # catalog that may have changed since this key committed.
+                current = providers.read_providers_file(config_path)
+                registered_spec = next(
+                    (dict(row) for row in current.providers if row.get("id") == provider_id),
+                    registered_spec,
                 )
-                registered_spec = {
-                    "id": provider_id,
-                    "kind": "pi_native",
-                    "models": [
-                        {"id": str(cast("dict[str, Any]", model).get("id"))}
-                        for model in model_rows
-                        if isinstance(model, dict)
-                        and isinstance(cast("dict[str, Any]", model).get("id"), str)
-                    ],
-                }
+                if not registered_spec:
+                    raise HttpRefusal(
+                        404, "provider_unknown", "registered provider no longer exists"
+                    )
             await relay_async(
                 lambda: backend.register_provider(registered_spec), provider_id=provider_id
             )
@@ -2006,6 +2028,9 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         # compared nothing — so a client that misspelt `context` got a model turn
         # with no workspace context and nothing said about it.
         _closed_body(body, _PROMPT_MEMBERS, what="the prompt body")
+        from hephaestus.agent_bridge.turn_controls import parse_turn_controls
+
+        controls = parse_turn_controls(body)
         expected = expected_revision(body)
         text = body.get("text")
         if not isinstance(text, str) or not text:
@@ -2060,6 +2085,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
                         text,
                         run_id=run_id,
                         context=block,
+                        turn_controls=controls,
                         include_events=include_events,
                         expected_model_revision=expected,
                     ),

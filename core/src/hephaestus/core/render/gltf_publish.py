@@ -58,11 +58,13 @@ derived render artifact has.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from hephaestus.core.errors import ValidationError
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
-from hephaestus.core.project_store.artifact_kinds import record_artifact_kind
+from hephaestus.core.project_store.artifact_kinds import record_artifact_kind, recorded_kinds
 from hephaestus.core.project_store.store import artifact_ref as make_artifact_ref
 from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.core.render.bundle import (
@@ -71,9 +73,7 @@ from hephaestus.core.render.bundle import (
     StaleSelectionError,
     resolve_selection,
 )
-from hephaestus.core.render.cameras import camera_framing, parse_view
-from hephaestus.core.render.channels import scene_from_shape
-from hephaestus.core.render.gltf import export_gltf, validate_gltf
+from hephaestus.core.render.defaults import DEFAULT_HEIGHT, DEFAULT_WIDTH
 from hephaestus.core.render.inspect import (
     RenderProject,
     RenderSource,
@@ -82,14 +82,10 @@ from hephaestus.core.render.inspect import (
     scene_tessellation,
     tag_placements_from_source_map,
 )
-from hephaestus.core.render.offscreen import DEFAULT_HEIGHT, DEFAULT_WIDTH, OffscreenSession
-from hephaestus.core.render.selection import (
-    SelectionCatalog,
-    build_selection_catalog,
-    encode_png,
-    render_selection_view,
-)
-from hephaestus.core.render.tessellate import Tessellation
+
+if TYPE_CHECKING:
+    from hephaestus.core.render.selection import SelectionCatalog
+    from hephaestus.core.render.tessellate import Tessellation
 
 from opstore import OpStore
 
@@ -136,7 +132,13 @@ class PublishedGltf:
     minted: bool
 
 
-def resolve_published_gltf(store: OpStore, source_artifact_ref: str) -> PublishedGltf | None:
+def resolve_published_gltf(
+    store: OpStore,
+    source_artifact_ref: str,
+    *,
+    gltf_ref: str | None = None,
+    required_provenance: dict[str, Any] | None = None,
+) -> PublishedGltf | None:
     """A previously published GLB for **exactly** this build ref, or ``None``.
 
     Walks the ``gltf → source build`` GC edges backwards. A candidate is accepted
@@ -152,16 +154,30 @@ def resolve_published_gltf(store: OpStore, source_artifact_ref: str) -> Publishe
     source_blob = blob_hash_of_ref(source_artifact_ref)
     if not store.blobs.has(source_blob):
         return None
-    candidates = sorted(source for source, target in store.gc.links() if target == source_blob)
+    links = set(store.gc.links())
+    candidates = sorted(source for source, target in links if target == source_blob)
+    if gltf_ref is not None:
+        requested = blob_hash_of_ref(gltf_ref)
+        candidates = [requested] if requested in candidates else []
     for blob in candidates:
         if not store.blobs.has(blob):
             continue
         data = store.blobs.get(blob)
         if data[:4] != GLB_MAGIC:
             continue
+        if GLTF_KIND not in recorded_kinds(store, blob):
+            continue
         published = _accept(store, data, blob, source_artifact_ref, minted=False)
-        if published is not None:
-            return published
+        if published is None or (blob, blob_hash_of_ref(published.bundle_ref)) not in links:
+            continue
+        if gltf_ref is not None and published.ref != gltf_ref:
+            continue
+        if required_provenance is not None:
+            payload = json.loads(store.blobs.get(blob_hash_of_ref(published.bundle_ref)))
+            provenance = payload.get("provenance", {})
+            if any(provenance.get(k) != v for k, v in required_provenance.items()):
+                continue
+        return published
     return None
 
 
@@ -169,8 +185,8 @@ def publish_gltf_for_build(
     project: RenderProject,
     source_artifact_ref: str,
     *,
-    width: int = DEFAULT_WIDTH,
-    height: int = DEFAULT_HEIGHT,
+    width: int | None = None,
+    height: int | None = None,
     view: str = GLTF_VIEW,
 ) -> PublishedGltf:
     """Resolve or mint the published GLB for ``source_artifact_ref``.
@@ -188,29 +204,78 @@ def publish_gltf_for_build(
     just published does not resolve against this build. **In no case is an
     unlinked GLB returned or stored.**
     """
-    existing = resolve_published_gltf(project.store, source_artifact_ref)
+    width = width if width is not None else (256 if project.renderer else DEFAULT_WIDTH)
+    height = height if height is not None else (192 if project.renderer else DEFAULT_HEIGHT)
+    resolved: RenderSource = resolve_build_artifact(project, source_artifact_ref)
+    if project.renderer is not None:
+        from hephaestus.core.render.remote_service import frozen_request
+
+        frozen_request(project, resolved, "selection", view, width, height)
+    required_provenance = None
+    if project.renderer is not None:
+        from hephaestus.core.executor.identity import backend_execution_identity
+
+        assert resolved.result is not None  # frozen_request required the published join
+        executor_identity = backend_execution_identity(project.backend)
+        if executor_identity is None:
+            raise ValidationError("remote GLB requires executor identity", kind="contract")
+        required_provenance = {
+            "renderer_identity": project.renderer.execution_identity().to_json(),
+            "executor_identity": executor_identity.to_json(),
+            "source_map_ref": resolved.result.source_map_ref,
+            "build_input_hashes": resolved.result.input_hashes.to_json(),
+        }
+    existing = resolve_published_gltf(
+        project.store, source_artifact_ref, required_provenance=required_provenance
+    )
     if existing is not None:
         return existing
+    provenance = None
+    if project.renderer is not None:
+        from hephaestus.core.render.remote_service import export_remote
 
-    resolved: RenderSource = resolve_build_artifact(project, source_artifact_ref)
-    shape = load_brep_shape(resolved.brep)
-    scene = scene_from_shape(shape)
-    tess = scene_tessellation(scene)
-    _check_solid_count(resolved, len(tess.solids))
+        bundle = _mint_bundle(
+            project.store,
+            resolved.source_artifact_ref,
+            project=project,
+            source=resolved,
+            view=view,
+            width=width,
+            height=height,
+        )
+        data, provenance = export_remote(project, resolved, bundle, view, width, height)
+    else:
+        from hephaestus.core.render.channels import scene_from_shape
+        from hephaestus.core.render.gltf import export_gltf, validate_gltf
+        from hephaestus.core.render.selection import build_selection_catalog
 
-    labels = build_solid_labels(resolved.result, len(tess.solids))
-    placements = tag_placements_from_source_map(resolved.source_map)
-    catalog = build_selection_catalog(tess, placements=placements, labels=labels)
-
-    bundle = _mint_bundle(
-        project.store,
-        resolved.source_artifact_ref,
-        tess=tess,
-        catalog=catalog,
-        view=view,
-        width=width,
-        height=height,
-    )
+        shape = load_brep_shape(resolved.brep)
+        scene = scene_from_shape(shape)
+        tess = scene_tessellation(scene)
+        _check_solid_count(resolved, len(tess.solids))
+        labels = build_solid_labels(resolved.result, len(tess.solids))
+        placements = tag_placements_from_source_map(resolved.source_map)
+        catalog = build_selection_catalog(tess, placements=placements, labels=labels)
+        bundle = _mint_bundle(
+            project.store,
+            resolved.source_artifact_ref,
+            tess=tess,
+            catalog=catalog,
+            view=view,
+            width=width,
+            height=height,
+        )
+        data = export_gltf(
+            shape,
+            catalog,
+            bundle_ref=bundle.bundle_ref,
+            source_artifact_ref=resolved.source_artifact_ref,
+            selection_table_ref=bundle.selection_table_ref,
+            tess=tess,
+            labels=labels,
+            scene=scene,
+        )
+        validate_gltf(data, expected_solid_count=len(tess.solids))
     # The link is checked before the GLB is built, not after: a bundle that does
     # not resolve against this build must never reach `export_gltf`'s
     # `bundle_ref`, because that is precisely how an unlinked GLB is born.
@@ -220,19 +285,14 @@ def publish_gltf_for_build(
         expected_source_artifact_ref=resolved.source_artifact_ref,
     )
 
-    data = export_gltf(
-        shape,
-        catalog,
-        bundle_ref=bundle.bundle_ref,
-        source_artifact_ref=resolved.source_artifact_ref,
-        selection_table_ref=bundle.selection_table_ref,
-        tess=tess,
-        labels=labels,
-        scene=scene,
-    )
-    validate_gltf(data, expected_solid_count=len(tess.solids))
-
+    # Validate every embedded mesh/face ID and all three refs BEFORE installation.
+    if _accept(project.store, data, "", resolved.source_artifact_ref, minted=True) is None:
+        raise ValidationError("GLB linkage validation failed before publication", kind="contract")
     blob = project.store.blobs.put(data)
+    if provenance is not None:
+        from hephaestus.core.render.remote_service import link_provenance
+
+        link_provenance(project.store, [make_artifact_ref(GLTF_KIND, blob)], provenance)
     bundle_blob = blob_hash_of_ref(bundle.bundle_ref)
     source_blob = blob_hash_of_ref(resolved.source_artifact_ref)
     # gltf -> bundle / source build: pinning the GLB retains everything a pick
@@ -283,8 +343,10 @@ def _mint_bundle(
     store: OpStore,
     source_artifact_ref: str,
     *,
-    tess: Tessellation,
-    catalog: SelectionCatalog,
+    tess: Tessellation | None = None,
+    catalog: SelectionCatalog | None = None,
+    project: RenderProject | None = None,
+    source: RenderSource | None = None,
     view: str,
     width: int,
     height: int,
@@ -298,6 +360,18 @@ def _mint_bundle(
     The composite preview is skipped: it is a human-facing image the GLB route
     has no use for, and it is optional in the bundle by construction.
     """
+    if project is not None and project.renderer is not None:
+        from hephaestus.core.render.remote_service import selection_bundle
+
+        if source is None or source.source_artifact_ref != source_artifact_ref:
+            raise ValidationError("missing frozen bundle source", kind="contract")
+        return selection_bundle(project, source, view, width, height)[0]
+    from hephaestus.core.render.cameras import camera_framing, parse_view
+    from hephaestus.core.render.offscreen import OffscreenSession
+    from hephaestus.core.render.selection import encode_png, render_selection_view
+
+    if tess is None or catalog is None:
+        raise ValidationError("missing native bundle geometry", kind="contract")
     framing = camera_framing(*tess.bounds(), parse_view(view), width=width, height=height)
     with OffscreenSession(width, height) as session:
         arrays = render_selection_view(session, tess, catalog, framing, include_preview=False)
@@ -326,28 +400,31 @@ def _accept(
     parse failure, a missing or mismatched ``asset.extras``, or a bundle that no
     longer resolves against this source.
     """
+    from hephaestus.core.render.glb_gate import parse_glb, validate_linked_glb
+
     try:
-        validation = validate_gltf(data)
-    except ValidationError:
-        return None
-    if validation.source_artifact_ref != source_artifact_ref:
-        return None
-    bundle_ref = validation.bundle_ref
-    if bundle_ref is None:
-        return None
-    try:
+        doc, _ = parse_glb(data)
+        extras = doc["asset"]["extras"]
+        bundle_ref = extras["selection_bundle_ref"]
         resolution = resolve_selection(
             store, bundle_ref, expected_source_artifact_ref=source_artifact_ref
         )
-    except StaleSelectionError:
+        validation = validate_linked_glb(
+            data,
+            source_ref=source_artifact_ref,
+            bundle_ref=bundle_ref,
+            selection_table_ref=resolution.selection_table_ref,
+            entries={str(k): v.to_json() for k, v in resolution.entries.items()},
+        )
+    except (StaleSelectionError, ValidationError, ValueError, KeyError, TypeError):
         return None
     return PublishedGltf(
-        ref=make_artifact_ref(GLTF_KIND, blob),
+        ref=make_artifact_ref(GLTF_KIND, blob) if blob else "",
         blob_hash=blob,
         data=data,
         source_artifact_ref=source_artifact_ref,
         bundle_ref=resolution.bundle_ref,
         selection_table_ref=resolution.selection_table_ref,
-        mesh_count=validation.mesh_count,
+        mesh_count=validation["mesh_count"],
         minted=minted,
     )

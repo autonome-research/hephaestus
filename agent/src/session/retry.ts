@@ -105,6 +105,7 @@ export async function promptWithTransientRetry(
   promptText: string,
   deps: PromptRunDeps,
 ): Promise<PromptRunOutcome> {
+  if (deps.aborted()) return { state: "cancelled" };
   await deps.prompt(promptText);
   if (deps.aborted()) return { state: "cancelled" };
   let turnError = deps.takeTurnError();
@@ -112,6 +113,9 @@ export async function promptWithTransientRetry(
     const transient = transientErrorClass(turnError);
     if (transient !== undefined) {
       deps.onRetry(turnError, transient);
+      // Audit subscribers may cancel synchronously. Never start a fresh Pi
+      // prompt (which owns a fresh abort controller) after cancellation won.
+      if (deps.aborted()) return { state: "cancelled" };
       await deps.prompt(RETRY_CONTINUATION_PROMPT);
       if (deps.aborted()) return { state: "cancelled" };
       turnError = deps.takeTurnError();

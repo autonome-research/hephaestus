@@ -22,6 +22,10 @@ from hephaestus.core.executor.sandbox.oci_protocol import (
     manifest_bytes,
 )
 
+from .oci_identity import collect_runtime_identity
+from .oci_storage import StorageRefusal, require_storage
+from .oci_storage_policy import STORAGE_POLICIES
+
 EXIT_USAGE = 64
 EXIT_PROTOCOL = 65
 EXIT_WORKER = 66
@@ -59,6 +63,8 @@ class LaunchRequest:
     cpu_seconds: int
     address_space_bytes: int
     nproc: int
+    storage_policy: str = "ordinary"
+    nonce: str = "0" * 64
 
     def __post_init__(self) -> None:
         values = (
@@ -68,6 +74,11 @@ class LaunchRequest:
         )
         if type(self.protocol_version) is not int or self.protocol_version != PROTOCOL_VERSION:
             raise ValueError("unsupported protocol version")
+        if (
+            self.storage_policy not in STORAGE_POLICIES
+            or re.fullmatch(r"[0-9a-f]{64}", self.nonce) is None
+        ):
+            raise ValueError("invalid storage invocation")
         if self.module not in APPROVED_MODULES:
             raise ValueError("worker is not allowlisted")
         if any(type(value) is not int or not 1 <= value <= maximum for value, maximum in values):
@@ -88,7 +99,7 @@ def parse_argv(argv: Sequence[str]) -> Literal["manifest"] | LaunchRequest:
     """Parse the deliberately small launcher grammar without coercions."""
     if len(argv) == 1 and argv[0] == "manifest":
         return "manifest"
-    if len(argv) != 6 or argv[0] != "run":
+    if len(argv) != 8 or argv[0] != "run":
         raise _LaunchError("invalid_invocation", EXIT_USAGE)
 
     version = argv[1]
@@ -102,12 +113,16 @@ def parse_argv(argv: Sequence[str]) -> Literal["manifest"] | LaunchRequest:
     except ValueError:
         raise _LaunchError("worker_not_allowed", EXIT_WORKER) from None
 
+    if argv[6] not in STORAGE_POLICIES or re.fullmatch(r"[0-9a-f]{64}", argv[7]) is None:
+        raise _LaunchError("invalid_invocation", EXIT_USAGE)
     return LaunchRequest(
         protocol_version=PROTOCOL_VERSION,
         module=module,
         cpu_seconds=_positive_decimal(argv[3], MAX_CPU_SECONDS),
         address_space_bytes=_positive_decimal(argv[4], MAX_ADDRESS_SPACE_BYTES),
         nproc=_positive_decimal(argv[5], MAX_NPROC),
+        storage_policy=argv[6],
+        nonce=argv[7],
     )
 
 
@@ -148,13 +163,13 @@ def exec_worker(request: LaunchRequest) -> NoReturn:
         raise OSError("interpreter path is not absolute")
     os.execve(
         executable,
-        [executable, "-I", "-m", module],
+        [executable, "-I", "-m", module, "--oci-transfer", request.storage_policy, request.nonce],
         dict(FIXED_WORKER_ENV),
     )
     raise AssertionError("os.execve returned")  # pragma: no cover
 
 
-def _write(stream: TextIO, payload: bytes) -> None:
+def write_payload(stream: TextIO, payload: bytes) -> None:
     buffer = getattr(stream, "buffer", None)
     if buffer is not None:
         buffer.write(payload)
@@ -169,23 +184,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         parsed = parse_argv(args)
     except _LaunchError as exc:
-        _write(sys.stderr, diagnostic_bytes(exc.code))
+        write_payload(sys.stderr, diagnostic_bytes(exc.code))
         return exc.exit_code
 
     if parsed == "manifest":
-        _write(sys.stdout, manifest_bytes())
+        try:
+            inventory = collect_runtime_identity()
+        except Exception:
+            write_payload(sys.stderr, diagnostic_bytes("execution_identity_failed"))
+            return EXIT_PROTOCOL
+        write_payload(sys.stdout, manifest_bytes(inventory))
         return 0
 
     try:
         apply_rlimits(parsed)
     except Exception:
-        _write(sys.stderr, diagnostic_bytes("resource_limit_failed"))
+        write_payload(sys.stderr, diagnostic_bytes("resource_limit_failed"))
+        return EXIT_RLIMIT
+
+    try:
+        require_storage(STORAGE_POLICIES[parsed.storage_policy])
+    except StorageRefusal as exc:
+        diagnostic = diagnostic_bytes("storage_profile_failed", observations=exc.observations)
+        if len(diagnostic) > 16384:
+            diagnostic = diagnostic_bytes("storage_observation_oversized")
+        write_payload(sys.stderr, diagnostic)
+        return EXIT_RLIMIT
+    except Exception:
+        write_payload(sys.stderr, diagnostic_bytes("storage_observation_failed"))
         return EXIT_RLIMIT
 
     try:
         exec_worker(parsed)
     except Exception:
-        _write(sys.stderr, diagnostic_bytes("execve_failed"))
+        write_payload(sys.stderr, diagnostic_bytes("execve_failed"))
         return EXIT_EXEC
 
 

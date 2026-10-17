@@ -333,6 +333,19 @@ over generic interruption synthesis. Crashes at enqueue, dispatch ack,
 cancellation, terminal insertion, or parent response therefore produce at most
 one child and exactly one semantically distinct terminal.
 
+**Experimental OCI identity amendment (2026-10-08).** Native toolchain hashing
+is unchanged. Explicitly injected OCI execution binds `input_hashes.toolchain`
+to a trusted pre-workload installed source/package/version inventory plus the
+daemon-attested immutable image digest/config ID/platform, not host CAD metadata
+or a script-supplied fingerprint. The canonical record is retained in reserved
+`metadata["hephaestus.execution_identity"]`; assembly overwrites any script value.
+Publication validates it and compares against its explicitly injected live backend;
+freshness uses the same comparison. Missing, wrong or unavailable identity never
+promotes a build. BREP refs remain byte identities; build bundles record differing
+execution inputs without new pins or GC classes. See
+[the experimental identity contract](docs/macos-execution-identity.md). This does
+not activate production OCI or certify live CAD, cancellation or rendering.
+
 A build invocation freezes immutable script, part params, request-effective
 params, pinned toolchain, and the part's consumed-`hc` projection (the exact
 `hc` names read plus canonical values) under its trusted idempotency key. Full

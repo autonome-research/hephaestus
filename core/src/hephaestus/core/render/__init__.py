@@ -2,23 +2,25 @@
 software rendering, the bijective selection palette/legend, and immutable
 render/selection-bundle artifacts over ``opstore``.
 
-The heavier submodules (:mod:`tessellate`, :mod:`offscreen`) import the OCP /
-trimesh / pyrender stacks and are imported lazily by callers rather than
-re-exported here, so importing :mod:`hephaestus.core.render` for the pure
-palette/camera/bundle types does not pull the renderer.
+Heavy modules and NumPy-backed camera exports are lazy. The experimental OCI
+host boundary can therefore import its closed protocol without installing any
+native CAD/numerical/render stack. Existing public camera exports are preserved.
 """
 
 from __future__ import annotations
 
-from hephaestus.core.render.cameras import (
-    DEFAULT_MARGIN,
-    STANDARD_VIEWS,
-    CameraFraming,
-    ViewSpec,
-    camera_framing,
-    parse_view,
-    standard_view_names,
-)
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from hephaestus.core.render.cameras import (
+        DEFAULT_MARGIN,
+        STANDARD_VIEWS,
+        CameraFraming,
+        ViewSpec,
+        camera_framing,
+        parse_view,
+        standard_view_names,
+    )
 from hephaestus.core.render.palette import (
     BACKGROUND_RGB,
     MAX_SELECTION_ID,
@@ -32,6 +34,23 @@ from hephaestus.core.render.palette import (
     rgb_to_hex,
     rgb_to_id,
 )
+
+
+def __getattr__(name: str) -> Any:
+    if name in {
+        "DEFAULT_MARGIN",
+        "STANDARD_VIEWS",
+        "CameraFraming",
+        "ViewSpec",
+        "camera_framing",
+        "parse_view",
+        "standard_view_names",
+    }:
+        from hephaestus.core.render import cameras
+
+        return getattr(cameras, name)
+    raise AttributeError(name)
+
 
 __all__ = [
     "BACKGROUND_RGB",

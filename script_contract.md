@@ -474,6 +474,16 @@ record:
 }
 ```
 
+**Experimental OCI amendment (2026-10-08):** the `toolchain` hash identifies the
+actual executor image/platform and trusted installed source/package/version
+inventory, never the orchestration host's CAD metadata. Native hashing is
+unchanged. `metadata["hephaestus.execution_identity"]` is reserved host-owned
+canonical JSON; a script cannot supply or override it. Publication and freshness
+compare the same identity against the explicitly injected backend; stored metadata
+is evidence, not backend-selection authority. This adds no BuildResult fields or
+artifact kinds and does not change BREP byte addressing, retention or refusal
+semantics. See [execution identity](docs/macos-execution-identity.md).
+
 `input_hashes` identify the immutable snapshot used by the build, including
 canonical effective values after request-local overrides, the exact consumed
 `hc` name/value projection, the pinned toolchain, and (`INGEST.md` §1) the

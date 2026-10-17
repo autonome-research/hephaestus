@@ -75,6 +75,7 @@ from hephaestus.agent_bridge.wiring import build_dispatcher
 from hephaestus.contract import toolgen
 from hephaestus.contract.tools_decl import TOOLS_BY_NAME
 from hephaestus.core.errors import HephaestusError
+from hephaestus.core.executor.cancellation import run_cancellable
 from hephaestus.core.executor.sandbox.base import ExecBackend
 from hephaestus.core.executor.sandbox.probe import refuse_unsafe, secure_backend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
@@ -485,8 +486,8 @@ class HephaestusMCP:
 
         if sequential:
             async with self._sequential:
-                return await asyncio.to_thread(run)
-        return await asyncio.to_thread(run)
+                return await run_cancellable(run)
+        return await run_cancellable(run)
 
     # -- ask_user ----------------------------------------------------------
 

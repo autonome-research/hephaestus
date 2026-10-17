@@ -36,7 +36,6 @@ from hephaestus.core.executor.artifact_geometry import load_brep_shape
 from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.core.registry import Material, RegistrySet
 from hephaestus.core.types import BuildResult
-from hephaestus.geom.metrics import bbox_mm, shape_volume
 from opstore.types import JSONValue
 
 from ._base import CadOpError
@@ -497,6 +496,9 @@ class DocOps(ExportOps, FrozenMetadataOps):
         scratch: Path,
     ) -> tuple[BomRow, ...]:
         """One row per group of identically labeled, identically sized solids."""
+        # Documents need the kernel; opening a remote-execution workspace does not.
+        from hephaestus.geom.metrics import bbox_mm, shape_volume
+
         shape: Any = load_brep_shape(
             self._store.blobs.get(blob_hash_of_ref(source_ref)), scratch_dir=scratch
         )
