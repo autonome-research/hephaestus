@@ -261,12 +261,107 @@ def test_owner_reap_expiry_cannot_acknowledge_success(
         os.kill(started[0], 0)
 
 
+@pytest.mark.parametrize("failure", ["timeout", "wait-error"])
+@pytest.mark.parametrize("elapsed_slice_first", [False, True])
+def test_wait_propagates_unknown_ack_without_retry_even_after_an_elapsed_slice(
+    monkeypatch: pytest.MonkeyPatch, failure: str, elapsed_slice_first: bool
+) -> None:
+    now = [0]
+    monkeypatch.setattr(clocks, "continuous_ns", lambda: now[0])
+    process = subprocess.Popen([sys.executable, "-c", "pass"])
+    original_wait = process.wait
+    calls: list[float] = []
+    error = (
+        subprocess.TimeoutExpired(process.args, clocks.POLL_SECONDS)
+        if failure == "timeout"
+        else OSError("wait acknowledgement lost")
+    )
+
+    def wait(timeout: float | None = None) -> int:
+        assert timeout is not None and timeout == clocks.POLL_SECONDS
+        calls.append(timeout)
+        # Fail by name instead of spinning until the outer pytest hang detector.
+        assert len(calls) <= 1 + int(elapsed_slice_first), "unknown ACK was retried"
+        if elapsed_slice_first and len(calls) == 1:
+            now[0] += int(timeout * 1_000_000_000)
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        raise error
+
+    monkeypatch.setattr(process, "wait", wait)
+    try:
+        with pytest.raises(type(error)) as caught:
+            clocks.wait_process(process, Deadline.after(1))
+        assert caught.value is error
+        assert len(calls) == 1 + int(elapsed_slice_first)
+    finally:
+        original_wait(timeout=5)
+    # Eventual actual reap is cleanup by the test, not a successful wait result.
+    assert process.returncode == 0
+    with pytest.raises(ProcessLookupError):
+        os.kill(process.pid, 0)
+
+
+@pytest.mark.parametrize("release", [False, True])
+def test_real_wait_slices_block_and_preserve_the_absolute_bound(
+    monkeypatch: pytest.MonkeyPatch, release: bool
+) -> None:
+    # This child cannot finish until the parent closes stdin. No CAD, sleeps or
+    # scheduler-dependent guess about whether a short-lived child is still live.
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import os, signal; signal.alarm(10); os.read(0, 1)"],
+        stdin=subprocess.PIPE,
+    )
+    assert process.stdin is not None
+    original_wait = process.wait
+    timeouts: list[float] = []
+    calls: list[float] = []
+
+    def wait(timeout: float | None = None) -> int:
+        assert timeout is not None and 0 < timeout <= clocks.POLL_SECONDS
+        calls.append(timeout)
+        try:
+            return original_wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timeouts.append(timeout)
+            if release and len(timeouts) == 2:
+                assert process.stdin is not None
+                process.stdin.close()  # positive release after two genuine timed waits
+            raise
+
+    monkeypatch.setattr(process, "wait", wait)
+    budget = Deadline.after(3 if release else 0.25)
+    try:
+        if release:
+            assert clocks.wait_process(process, budget) == 0
+            assert len(timeouts) >= 2 and len(calls) == len(timeouts) + 1
+            assert not budget.expired()
+        else:
+            with pytest.raises(subprocess.TimeoutExpired):
+                clocks.wait_process(process, budget)
+            assert budget.expired()
+            assert process.returncode is None
+            # ceil(0.25 / POLL_SECONDS): bounded calls, not millions of retries.
+            assert 1 <= len(calls) <= 3
+            assert calls == timeouts
+    finally:
+        process.stdin.close()
+        if process.poll() is None:
+            process.kill()  # exact owned, still-waitable test child only
+        original_wait(timeout=5)
+    with pytest.raises(ProcessLookupError):
+        os.kill(process.pid, 0)
+
+
 def test_wait_rechecks_after_ready_on_resume(monkeypatch: pytest.MonkeyPatch) -> None:
     now = [0]
     monkeypatch.setattr(clocks, "continuous_ns", lambda: now[0])
     budget = Deadline.after(1)
     with subprocess.Popen([sys.executable, "-c", "pass"]) as process:
         original = process.wait
+        # Establish the ready/reaped edge, rather than assuming interpreter
+        # startup completes in one 100 ms slice while the injected clock is
+        # frozen. Five seconds is a setup hang detector, not the tested budget.
+        assert original(timeout=5) == 0
 
         def wait(timeout: float | None = None) -> int:
             code = original(timeout=timeout)

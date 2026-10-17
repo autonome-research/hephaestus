@@ -129,15 +129,24 @@ def wait_process(process: subprocess.Popen[Any], deadline: Deadline) -> int:
 
     Recheck AFTER wait: a ready result on wake does not trump expiration.
     Preserve subprocess.TimeoutExpired for existing lifecycle handlers.
+
+    POSIX Popen.wait uses an awake-monotonic timeout and sleeps between probes.
+    Retry only when the requested slice actually elapsed on our continuous
+    clock (which also counts suspend). An early TimeoutExpired is not evidence
+    of an elapsed slice: propagate that unknown acknowledgement, rather than
+    busy-spinning or turning a later exit into successful cleanup.
     """
     while True:
+        started_ns = continuous_ns()
+        remaining_ns = deadline.end_ns - started_ns
+        if remaining_ns <= 0:
+            raise subprocess.TimeoutExpired(process.args, 0)
+        wait_ns = min(int(POLL_SECONDS * 1_000_000_000), remaining_ns)
         try:
-            remaining = deadline.remaining()
-        except TimeoutError as exc:
-            raise subprocess.TimeoutExpired(process.args, 0) from exc
-        try:
-            code = process.wait(timeout=min(POLL_SECONDS, remaining))
+            code = process.wait(timeout=wait_ns / 1_000_000_000)
         except subprocess.TimeoutExpired:
+            if continuous_ns() < started_ns + wait_ns:
+                raise
             continue
         if deadline.expired():
             raise subprocess.TimeoutExpired(process.args, 0)

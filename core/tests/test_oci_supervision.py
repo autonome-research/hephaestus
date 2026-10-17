@@ -615,6 +615,43 @@ def test_owner_death_during_create_keeps_pending_after_resource_recovery(
         SupervisedOciBackend(config)
 
 
+@pytest.mark.parametrize("failure", ["timeout", "wait-error"])
+def test_lost_owner_reap_ack_refuses_reuse_after_actual_child_exit(
+    config: SupervisorConfig, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    original_wait = subprocess.Popen[bytes].wait
+    children: list[subprocess.Popen[bytes]] = []
+
+    def lost_wait(process: subprocess.Popen[bytes], timeout: float | None = None) -> int:
+        children.append(process)
+        assert len(children) == 1, "unknown owner ACK must not be retried"
+        assert timeout is not None
+        if failure == "wait-error":
+            raise OSError("wait acknowledgement lost")
+        raise subprocess.TimeoutExpired(process.args, timeout)
+
+    with SupervisedOciBackend(config) as backend:
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr(subprocess.Popen, "wait", lost_wait)
+                assert not backend.probe().available
+        finally:
+            if children:
+                original_wait(children[0], timeout=10)
+        assert len(children) == 1 and children[0].returncode == 0
+        with pytest.raises(ProcessLookupError):
+            os.kill(children[0].pid, 0)
+        assert backend.last_directory is not None
+        assert (backend.last_directory / "owner-final.json").is_file()
+        assert not (backend.last_directory / "reaped.json").exists()
+        with pytest.raises(SandboxDeniedError, match="settlement evidence missing"):
+            backend.require_settled()
+        report = backend.probe()
+        assert not report.available and report.reason is not None
+        assert "session closed" in report.reason
+        assert len(list(config.directory.glob("operation-*"))) == 1
+
+
 def test_local_reaping_failure_retains_durable_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

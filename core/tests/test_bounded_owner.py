@@ -43,6 +43,10 @@ try:
 except (EOFError, OSError):
     marker.write_text('parent EOF; cleanup complete')
 conn.close()
+if mode == 'held-cleanup':
+    import time
+    while not marker.with_suffix('.release').exists():
+        time.sleep(0.01)
 sys.exit(9 if mode == 'bad-exit' else 0)
 """
 
@@ -78,6 +82,7 @@ def invoke(
     *,
     cancel_fd: int | None = None,
     timeout_s: float = 3,
+    reap_s: float = 10,
 ) -> bytes:
     def started(pid: int, connection: ChildConnection) -> None:
         evidence.started(pid, connection)
@@ -94,6 +99,7 @@ def invoke(
         on_unreaped=evidence.poison,
         cancel_fd=cancel_fd,
         on_cancel=evidence.cancel,
+        reap_s=reap_s,
     )
 
 
@@ -197,6 +203,36 @@ def test_lost_reap_acknowledgement_poisons_even_if_child_eventually_exits(
         for process in children:
             original_wait(process, timeout=10)
     assert marker.is_file()
+    assert_closed(evidence)
+
+
+def test_genuine_reap_timeout_poisons_before_the_child_is_released(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_wait = subprocess.Popen[bytes].wait
+    children: list[subprocess.Popen[bytes]] = []
+
+    def wait(process: subprocess.Popen[bytes], timeout: float | None = None) -> int:
+        assert timeout is not None and 0 < timeout <= 0.1
+        children.append(process)
+        return original_wait(process, timeout=timeout)
+
+    monkeypatch.setattr(subprocess.Popen, "wait", wait)
+    evidence = Evidence()
+    marker = tmp_path / "cleanup"
+    try:
+        with pytest.raises(OwnerRefusal, match="cleanup deadline"):
+            invoke(marker, "held-cleanup", evidence, reap_s=0.25)
+        assert marker.read_text() == "parent EOF; cleanup complete"
+        assert evidence.unreaped and evidence.reaped == []
+        assert 1 <= len(children) <= 3  # ceil(0.25 / 0.1), one cleanup allowance
+        assert all(process is children[0] for process in children)
+        assert children[0].returncode is None  # still held, not inferred from a sleep
+    finally:
+        marker.with_suffix(".release").touch()
+        if children:
+            original_wait(children[0], timeout=10)
+    assert evidence.unreaped and evidence.reaped == []  # late exit never upgrades the ACK
     assert_closed(evidence)
 
 
