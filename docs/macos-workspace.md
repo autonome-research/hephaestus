@@ -13,22 +13,28 @@ publication, privileged worker or host CAD installation is needed.
 
 ## Current evidence
 
-**The current unpublished gap closure needs new-source acceptance.** Baseline
-`8ea36417` has 21 successful exact-tree CI jobs and the accepted 13-stage report
-`dist/macos-pr128-acceptance-20261015T082028Z/report.json`; those results cannot
-be reused for changed sources or as proof of writable-bind guardrail compliance.
-The independent four-gap review, fresh local results and remaining acceptance
-limits are recorded at the top of [progress](macos-progress.md).
-Khronos requires new-source CI acceptance. The scoped continuous-clock implementation,
-expiration-at-resume semantics, separate cleanup bounds and still-unverified physical
-trial are described in [suspend-inclusive deadlines](suspend-inclusive-deadlines.md).
-The prior smoke's writable download/package binds remain a separate acceptance
-blocker: do not rerun that path under the no-writable-bind guardrail until repaired.
-Review evidence: `dist/macos-gap-independent-review-20261015T204655Z/`.
-Authoritative new-source CI, physical-suspend testing and clean-machine
-certification remain outstanding. Do not publish or merge on historical evidence.
-Setup commands below are a reproduction procedure, not proof this source passed;
-image preparation also uses the blocked writable-bind helpers.
+**Scoped install repairs need new-source acceptance.** Published baseline
+`a92edc76546b797ada1a30b41373f6b3331dc6bf` has 21 successful exact-source CI jobs
+(run `39017093038`) and compliant cached 13-stage acceptance at
+`dist/pr128-network-retry-20261017T165219Z/acceptance/report.json` (SHA256
+`01ea937efe0cff18b04e9dcbb014986c693b7f4329020f74af2b3ebf0fbd278e`).
+Preparation already uses [read-only inputs and bounded transfer](macos-preparation.md);
+the older writable-bind failures below are historical, not the current recipe.
+
+The same-host empty-project-cache rehearsal at
+`dist/clean-app-rehearsal-20261017T203250Z/REPORT.md` remains **blocked**, not a
+cold-install pass: host/web and fresh wheels succeeded, then expat's Debian pool
+URL returned 404 before image/CAD/browser work. Both ARM64 locks now point to
+an official immutable Snapshot content address serving the identical pinned bytes.
+Explicit installer cache/temp and browser scratch controls below address the
+other isolation findings. These source changes invalidate reuse of earlier
+CI/live passes as current acceptance. A new independent empty fixture and
+exact-source CI are still needed; no merge/release certification follows.
+
+This is one existing Mac with inherited tools/Chrome and shared Docker Desktop,
+base images and BuildKit cache: **not a fresh machine or cold Docker**. Physical
+suspend remains untested; see [suspend-inclusive deadlines](suspend-inclusive-deadlines.md).
+Dated failures and remaining limits are preserved in [progress](macos-progress.md).
 
 Historical independent all-stage **local experimental acceptance** is recorded in
 `dist/macos-final-reviewed-20261012T152211Z/report.json` (SHA256
@@ -57,16 +63,35 @@ native server; the acceptance harness uses the specified Homebrew Python 3.13.
 
 ```sh
 # Only on a checkout without a venv; never replace an existing environment.
-test -e .venv/bin/python || uv venv --python /opt/homebrew/opt/python@3.13/bin/python3.13 .venv
+umask 077
+mkdir -p "$PWD/dist"
+mkdir "$PWD/dist/mac-setup-new"
+mkdir "$PWD/dist/mac-setup-new/home" "$PWD/dist/mac-setup-new/tmp"
+# Use this shell for the setup commands; do not copy user credentials into HOME.
+export HOME="$PWD/dist/mac-setup-new/home" TMPDIR="$PWD/dist/mac-setup-new/tmp"
+test -e .venv/bin/python || uv --no-cache --no-config --no-python-downloads venv \
+  --python /opt/homebrew/opt/python@3.13/bin/python3.13 .venv
 /opt/homebrew/opt/python@3.13/bin/python3.13 scripts/macos_workspace_dependencies.py \
-  --report-dir "$PWD/dist/mac-host-deps-new"
-(cd web && pnpm install --frozen-lockfile && pnpm build)
+  --report-dir "$PWD/dist/mac-host-deps-new" --no-cache
+(cd web && pnpm install --frozen-lockfile --store-dir "$PWD/../dist/mac-pnpm-new" \
+  --network-concurrency=2 --fetch-retries=0 --fetch-timeout=30000 && pnpm build)
 ```
 
 The acceptance preflight performs a frozen web install into
 `dist/macos-pnpm-store`, verifies all direct exact pins, and rebuilds `web/dist`.
 Public pinned downloads are permitted; an empty offline store is not a pass.
-No global pnpm/Docker configuration is changed.
+No global pnpm/Docker configuration is changed. For an empty-cache rehearsal use
+a new checkout with no ignored project files; do not delete old caches/evidence.
+These commands reuse installed Python/uv/Node/pnpm/Chrome prerequisites.
+
+The host installer defaults to `--no-cache`; mutually exclusive `--cache-dir`
+can select a **new** owned directory below this checkout's `dist/`. `--temp-dir`
+can similarly select a new temporary directory there. Otherwise HOME/TMPDIR are
+private `installer/home` and `installer/tmp` below the new report directory.
+Symlink components, existing leaves and escaping paths refuse. Cache/config,
+public index and disabled keyring controls are passed explicitly to uv; outer
+`UV_CACHE_DIR` is deliberately not inherited. No user config/provider environment
+is forwarded. Hash-required binary installation and the non-CAD subset remain.
 
 The host installer takes the non-CAD server subset from **this `uv.lock`**,
 including wheel hashes. It never resolves newer dependencies. `web/` retains its
@@ -77,15 +102,16 @@ browser or treat a failed browser installation as a pass. Golden pins are unchan
 
 ## Prepare images and a disposable example
 
-All paths marked `new` must not exist. The existing wheelhouse is revalidated,
-not trusted by location. Preparation is serial, offline for source packaging and
-image installation, and reuses unchanged build inputs/cache. It does **not** run
+All paths marked `new` must not exist. Without `--wheelhouse`, preparation fetches
+fresh hash-locked ARM64 wheels from public PyPI; no prior `dist/` wheelhouse is
+required. Optional `--wheelhouse` revalidates every cached wheel. Preparation is
+serial, offline for source packaging/image installation, and may reuse Docker
+build cache and checkout-local verified native caches. It does **not** run
 untrusted CAD or confer an execution capability.
 
 ```sh
 /opt/homebrew/opt/python@3.13/bin/python3.13 scripts/macos_prepare_workspace.py \
-  --report-dir "$PWD/dist/mac-images-new" \
-  --wheelhouse "$PWD/dist/macos-report-02/download/wheels"
+  --report-dir "$PWD/dist/mac-images-new"
 /opt/homebrew/opt/python@3.13/bin/python3.13 scripts/macos_workspace_demo.py \
   --directory "$PWD/dist/mac-demo-new"
 ```
@@ -168,8 +194,7 @@ artifacts for the next launch is intentional, not an active service.
 
 ```sh
 bash scripts/macos_milestone_smoke.sh \
-  --report-dir "$PWD/dist/mac-all-stage-new" \
-  --wheelhouse "$PWD/dist/macos-report-02/download/wheels"
+  --report-dir "$PWD/dist/mac-all-stage-new"
 ```
 
 The command verifies host pins, rebuilds the actual bundle, prepares fresh image
@@ -180,6 +205,17 @@ native authenticated Chrome **serially**. Browser evidence includes an HTTP buil
 existing context route, rejection of an unknown selection, actual section controls,
 PNG byte/hash equality and independently checked kernel/worker provenance. Named
 screenshots supplement those assertions; they establish no geometry fact.
+
+The browser collector derives private HOME, TMPDIR/profile parent and artifact
+paths under `<report-dir>/browser/runtime/`, passes them through the actual Node
+and Playwright launch, and records the actual `--user-data-dir` path after checking
+confinement. It never adopts a user's Chrome profile/cookies. Settled scratch is
+removed on success and initialization failure; unresolved browser ownership
+retains its profile for exact-resource reconciliation. After a client launch, a
+missing browser ownership record is unresolved, not proof of absence. Evidence
+stays outside scratch.
+A private OS temporary directory was not itself a security flaw; these controls
+make same-host fixture confinement explicit and verifiable.
 
 Browser/Node/server ownership is recorded before launch, and graceful signal
 handling closes the actual Chrome process, not merely its client. Final checks

@@ -22,10 +22,10 @@ from macos_workspace_dependencies import preflight
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report-dir", required=True)
-    parser.add_argument("--wheelhouse", required=True, type=Path)
+    parser.add_argument("--wheelhouse", type=Path, help="optional hash-revalidated wheel cache")
     args = parser.parse_args()
-    wheels = args.wheelhouse.resolve(strict=True)
-    if not wheels.is_relative_to(ROOT) or not wheels.is_dir():
+    wheels = args.wheelhouse.resolve(strict=True) if args.wheelhouse else None
+    if wheels is not None and (not wheels.is_relative_to(ROOT) or not wheels.is_dir()):
         parser.error("wheelhouse must be inside this checkout")
     smoke = RendererSmoke(report_path(args.report_dir), wheels)
     renderer = RendererSmoke(smoke.directory / "renderer", wheels, deadline=smoke.deadline)
@@ -46,6 +46,8 @@ def main():
         smoke.native_dependencies()
         executor = resolve_image(smoke, executor_image(smoke))
         renderer.docker = smoke.docker
+        # Revalidate this invocation's newly downloaded closure, not a prior dist tree.
+        renderer.wheelhouse = smoke.directory / "download/wheels"
         renderer.native_dependencies()
         render = resolve_image(renderer, renderer_image(renderer), role="renderer")
         document(smoke.directory / "images.json", {"executor": executor, "renderer": render})

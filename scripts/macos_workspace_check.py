@@ -8,12 +8,14 @@ import hashlib
 import json
 import os
 import selectors
+import shutil
 import signal
 import subprocess
 import threading
 
 from hephaestus.core.deadline import Deadline, wait_process
 from macos_milestone_smoke import ROOT, StageFailure
+from macos_owned_paths import private_directory
 from macos_workspace import document
 
 
@@ -45,18 +47,29 @@ def run_browser_client(smoke, argv, directory):
     deadline = Deadline(min(Deadline.after(480).end_ns, smoke.deadline.end_ns))
     state = {"launch_pending": True, "pid": None, "reaped": False}
     owner = directory / "client-owner.json"
-    document(owner, state)
-    process = reader = None
+    process = reader = runtime = None
     acknowledged = False
     errors = []
     try:
+        runtime = private_directory(directory / "runtime", directory)
+        home = private_directory(runtime / "home", runtime)
+        temporary = private_directory(runtime / "tmp", runtime)
+        artifacts = private_directory(runtime / "artifacts", runtime)
+        env = {**RUNTIME_ENV, "HOME": str(home), "TMPDIR": str(temporary)}
+        state["paths"] = {
+            "home": str(home),
+            "tmp": str(temporary),
+            "artifacts": str(artifacts),
+            "profile_parent": str(temporary),
+        }
+        document(owner, state)
         deadline.remaining()
         process = subprocess.Popen(
             argv,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            env=RUNTIME_ENV,
+            env=env,
             start_new_session=True,
             cwd=ROOT,
         )
@@ -82,6 +95,7 @@ def run_browser_client(smoke, argv, directory):
             "argv": list(argv),
             "timeout_seconds": 480,
             "output_limit_bytes": 128 * 1024,
+            "paths": state["paths"],
         }
         smoke.save()
         code = wait_process(process, deadline)
@@ -115,8 +129,26 @@ def run_browser_client(smoke, argv, directory):
             if errors:
                 raise StageFailure("; ".join(errors))
         finally:
-            for sig, handler in old.items():
-                signal.signal(sig, handler)
+            # Never discard an unresolved browser's profile. Ownership evidence
+            # stays outside scratch, including when initialization/persistence fails.
+            browser_owner = directory / "browser-owner.json"
+            try:
+                browser_state = (
+                    json.loads(browser_owner.read_text()) if browser_owner.exists() else {}
+                )
+                settled = process is None or (
+                    browser_state.get("launch_pending") is False
+                    and browser_state.get("closed") is True
+                )
+                if (
+                    runtime is not None
+                    and settled
+                    and (process is None or process.returncode is not None)
+                ):
+                    shutil.rmtree(runtime)
+            finally:
+                for sig, handler in old.items():
+                    signal.signal(sig, handler)
 
 
 def diagnostic_requirements():

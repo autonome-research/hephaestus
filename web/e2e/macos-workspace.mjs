@@ -11,15 +11,17 @@ import { chromium, expect } from '@playwright/test';
 import { readFileSync, writeFileSync, openSync, fsyncSync, closeSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { browserPaths, launchOptions, launchSettled, profilePath } from './macos-browser-paths.mjs';
 
 const [readyPath, directory] = process.argv.slice(2);
-const ready = JSON.parse(readFileSync(readyPath, 'utf8'));
-const token = readFileSync(ready.token_path, 'utf8').trim();
-const origin = ready.http;
+let token = '';
+let origin;
+const redact = value => token ? String(value).replaceAll(token, '[redacted]') : String(value);
 const report = { passed: false, cleanup_passed: false, http: [], page_errors: [] };
 const sha = data => createHash('sha256').update(data).digest('hex');
 const save = (name, value) => writeFileSync(join(directory, name), JSON.stringify(value, null, 2));
 let server, browser, context;
+let launchAttempted = false;
 let interrupted = false;
 function owned(value) {
   const temporary = join(directory, 'browser-owner.next');
@@ -46,13 +48,17 @@ function archive(name, bytes) {
   writeFileSync(join(directory, name), bytes);
 }
 try {
-  server = await chromium.launchServer({
-    executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    headless: true, host: '127.0.0.1', timeout: 30000,
-    args: ['--disable-background-networking', '--disable-component-update'],
-  });
+  const paths = browserPaths(directory);
+  report.paths = paths;
+  const ready = JSON.parse(readFileSync(readyPath, 'utf8'));
+  token = readFileSync(ready.token_path, 'utf8').trim();
+  origin = ready.http;
+  const options = launchOptions(paths);
+  launchAttempted = true;
+  server = await chromium.launchServer(options);
   report.browser_pid = server.process().pid;
   owned({ launch_pending: false, pid: report.browser_pid, closed: false });
+  report.paths.profile = profilePath(server.process(), paths);
   if (process.argv[4] === '--interrupt-control') {
     const delivered = once(process, 'SIGTERM');
     process.kill(process.pid, 'SIGTERM');
@@ -65,7 +71,7 @@ try {
   context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   context.setDefaultTimeout(120000);
   const page = await context.newPage();
-  page.on('pageerror', error => report.page_errors.push(String(error).replaceAll(token, '[redacted]')));
+  page.on('pageerror', error => report.page_errors.push(redact(error)));
   page.on('response', response => {
     const url = new URL(response.url());
     if (url.origin !== origin && url.protocol !== 'blob:' && url.protocol !== 'data:') {
@@ -198,23 +204,25 @@ try {
   expect(report.page_errors).toEqual([]);
   report.passed = !interrupted;
 } catch (error) {
-  report.error = String(error).replaceAll(token, '[redacted]');
+  report.error = redact(error);
 } finally {
-  try {
-    await context?.close();
-    await browser?.close();
-    await server?.close();
-    report.browser_exit = server ? { code: server.process().exitCode, signal: server.process().signalCode } : null;
-    report.cleanup_passed = !!server && (server.process().exitCode !== null || server.process().signalCode !== null);
-    if (!report.cleanup_passed) {
-      report.cleanup_error = 'browser process not reaped or launch evidence missing';
-      report.passed = false;
-    }
-  } catch (error) {
-    report.cleanup_error = String(error).replaceAll(token, '[redacted]');
+  // One failed close must not prevent closing/reaping the actual browser server.
+  const cleanupErrors = [];
+  for (const resource of [context, browser, server]) {
+    try { await resource?.close(); }
+    catch (error) { cleanupErrors.push(redact(error)); }
+  }
+  report.browser_exit = server ? { code: server.process().exitCode, signal: server.process().signalCode } : null;
+  // Before launch there is no child to reap. A rejected launch may have spawned
+  // one: without its handle/terminal evidence retain pending ownership, even
+  // though Playwright attempts internal cleanup. Never infer absence from rejection.
+  const closed = launchSettled(launchAttempted, server?.process());
+  report.cleanup_passed = closed && cleanupErrors.length === 0;
+  if (!report.cleanup_passed) {
+    report.cleanup_error = cleanupErrors.join('; ') || 'browser process not reaped';
     report.passed = false;
   }
-  if (report.cleanup_passed) owned({ launch_pending: false, pid: report.browser_pid, closed: true });
+  if (closed) owned({ launch_pending: false, pid: report.browser_pid ?? null, closed: true });
   report.interrupted = interrupted;
   save('browser.json', report);
 }

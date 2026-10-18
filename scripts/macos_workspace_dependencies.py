@@ -18,6 +18,7 @@ import tomllib
 from pathlib import Path
 
 from macos_milestone_smoke import ROOT, Smoke, StageFailure, report_path
+from macos_owned_paths import private_directory
 from macos_workspace import document
 
 HOST_ROOTS = ("numpy", "starlette", "uvicorn", "websockets", "httpx", "jsonschema", "pypdf")
@@ -89,6 +90,7 @@ def preflight(smoke):
         + str(Path(node).parent)
         + ":/opt/homebrew/bin:/usr/bin:/bin",
         "HOME": str(ROOT / "dist/macos-tool-home"),
+        "TMPDIR": str(private_directory(smoke.directory / "web-tmp", ROOT)),
         "LANG": "C",
         "CI": "true",
     }
@@ -153,6 +155,10 @@ def preflight(smoke):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report-dir", required=True)
+    cache = parser.add_mutually_exclusive_group()
+    cache.add_argument("--no-cache", action="store_true", help="disable uv cache (default)")
+    cache.add_argument("--cache-dir", type=Path, help="new owned cache below checkout/dist")
+    parser.add_argument("--temp-dir", type=Path, help="new owned temp path below checkout/dist")
     args = parser.parse_args()
     smoke = Smoke(report_path(args.report_dir))
     requirements, versions = host_lock()
@@ -161,11 +167,33 @@ def main():
     uv = shutil.which("uv")
     if uv is None or not (ROOT / ".venv/bin/python").exists():
         raise StageFailure("create project-local .venv first; uv is required")
+    runtime = private_directory(smoke.directory / "installer", ROOT)
+    home = private_directory(runtime / "home", runtime)
+    temporary = private_directory(
+        args.temp_dir or runtime / "tmp", ROOT / "dist" if args.temp_dir is not None else ROOT
+    )
+    cache_args = (
+        ("--cache-dir", str(private_directory(args.cache_dir, ROOT / "dist")))
+        if args.cache_dir is not None
+        else ("--no-cache",)
+    )
     smoke.command(
         (
+            "/usr/bin/env",
+            "HOME=" + str(home),
+            "TMPDIR=" + str(temporary),
+            "UV_HTTP_TIMEOUT=30",
+            "UV_HTTP_RETRIES=0",
             uv,
+            "--no-config",
+            "--no-python-downloads",
+            *cache_args,
             "pip",
             "install",
+            "--index-url",
+            "https://pypi.org/simple",
+            "--keyring-provider",
+            "disabled",
             "--python",
             str(ROOT / ".venv/bin/python"),
             "--require-hashes",

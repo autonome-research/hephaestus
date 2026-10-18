@@ -5,9 +5,36 @@ SPDX-License-Identifier: Apache-2.0
 
 # macOS progress — experimental executor and renderer
 
-## Independent four-gap review — 2026-10-15, unpublished
+## Isolated install repairs — 2026-10-17, current source needs validation
 
-**Hold publication/merge and certification. No commits or pushes.** Reviewed the
+Published `a92edc76546b797ada1a30b41373f6b3331dc6bf` passed exact-source CI
+`39017093038` (21 jobs) and the compliant **cached** 13-stage run at
+`dist/pr128-network-retry-20261017T165219Z/acceptance/report.json`, SHA256
+`01ea937efe0cff18b04e9dcbb014986c693b7f4329020f74af2b3ebf0fbd278e`.
+The read-only preparation-bind repair is already published. The four-gap review
+below records an earlier checkpoint, not a current publication restriction.
+
+The independent same-host empty fixture at
+`dist/clean-app-rehearsal-20261017T203250Z/REPORT.md` remains blocked: 1,812 source
+files matched, 19 non-CAD host packages, frozen web (253 downloads, zero reused,
+1,514 tests) and 53 fresh ARM64 wheels succeeded; expat HTTP 404 stopped native
+preparation before image/CAD/browser acceptance. Its independent verification and
+all earlier failures remain retained unchanged.
+
+Current scoped repairs preserve expat's version/architecture/size/SHA256 while
+using official Debian Snapshot, add explicit installer cache/config/temp and
+browser HOME/temp/profile/artifact confinement, and correct cold setup examples.
+[Workspace setup](macos-workspace.md) no longer requires an old wheelhouse.
+These modifications need their own focused checks, reviewed source, exact-source
+CI and another empty fixture; old passes are not acceptance of changed source.
+No merge/release or production/agent activation is authorized by these results.
+Only one existing Mac is available: inherited tools and shared Docker/BuildKit
+are not fresh-machine/cold-Docker certification. Physical suspend and the other
+coverage limits below remain; no new numerical roadmap gate is introduced.
+
+## Independent four-gap review — 2026-10-15, historical unpublished checkpoint
+
+**At this checkpoint: hold publication/merge and certification; no commits or pushes.** Reviewed the
 actual accumulated source/contracts, not only the phase reports. Evidence and
 exact commands: `dist/macos-gap-independent-review-20261015T204655Z/`.
 

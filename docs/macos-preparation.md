@@ -8,9 +8,12 @@ SPDX-License-Identifier: Apache-2.0
 This repairs the writable `/work` host binds in the milestone downloader and
 both source-wheel helpers. Those binds were in **trusted preparation**, not
 actual CAD execution; this repair does not demonstrate a new CAD escape. The
-historical smoke remains noncompliant acceptance. New-source CI and fresh
-ARM64 Mac acceptance are still required. No production backend/agent activation
-or physical suspend/clean-machine certification follows from unit controls.
+historical pre-repair smoke remains noncompliant acceptance. The repair was
+published through `a92edc76546b797ada1a30b41373f6b3331dc6bf`, with exact-source
+CI and compliant cached ARM64 acceptance recorded in [progress](macos-progress.md).
+Subsequent isolated-install repairs need new-source validation; those old results
+are not current acceptance. No production backend/agent activation or physical
+suspend/clean-machine certification follows.
 
 ## Complete paths
 
@@ -55,8 +58,21 @@ local requirements in a new directory; it never accepts a worker-supplied lock.
 Both existing Dockerfile builds still use `--network none --pull=false`, ARM64,
 CPU/data/nproc ulimits and their previous aggregate wall budgets. They install
 hash-pinned public/local wheels offline. Renderer Python/native URL-size-hash
-fetches and executor's pinned native fetcher are unchanged host supply-chain
-steps, not container output mounts. Image tags remain random, local and
+fetches and executor's pinned native fetcher are host supply-chain steps,
+not container output mounts. Both ARM64 native locks now locate the unchanged
+`libexpat1_2.5.0-1+deb12u3_arm64.deb` at
+`https://snapshot.debian.org/file/90544df9f8be225046764399c0a1786b98669611`.
+Snapshot's binary-version and file-info APIs identify Debian security provenance;
+a fresh HTTPS download matched 87,944 bytes and SHA256
+`3caad0fb4382e206b005737de35b3193450589a10053f8415ded216649a233bc`, including
+embedded package/version/ARM64 metadata. The SHA-1-shaped archive locator is not
+the integrity authority: the original SHA256 and byte length remain mandatory.
+Only that exact Snapshot URL/pin tuple is admitted; ordinary native sources remain
+HTTPS `deb.debian.org` pool paths, Python wheels HTTPS `files.pythonhosted.org`.
+Both fetch paths refuse redirects rather than following arbitrary hosts/protocols.
+The curl fetcher disables user configuration before all other options, so `.curlrc`
+cannot weaken TLS verification or add transfers.
+No package upgrade or old-cache substitute is involved. Image tags remain random, local and
 recorded before build; no push/registry/provider service is introduced.
 
 ## Mount and resource policy
@@ -161,7 +177,11 @@ stream proves large wheels use the separate finite preparation policy. An
 isolated no-site-packages child imports the exact downloader code snapshot
 without CAD/provider modules.
 
-These are local unit/contract controls, **not live Docker preparation, kernel
-quota exhaustion, native wheel-build acceptance or full Mac acceptance**. The
-fresh exact-source CI and authorized compliant ARM64 acceptance gates remain;
+These tests are unit/contract controls, **not live Docker preparation, kernel
+quota exhaustion, native wheel-build acceptance or full Mac acceptance**.
+For a fresh-download setup without a prior wheelhouse, follow
+[workspace setup](macos-workspace.md); omission of `--wheelhouse` downloads the
+locked native wheels. A new checkout isolates project caches but does not isolate
+the Docker daemon/base/BuildKit cache or provision a new OS. Exact-source CI and
+another empty same-host fixture remain required for these install repairs;
 physical suspend and clean-machine certification remain separate.

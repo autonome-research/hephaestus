@@ -259,13 +259,15 @@ def test_browser_post_spawn_faults_reap_client_and_detached_child(tmp_path, monk
     # Real POSIX client plus detached stand-in browser; positive readiness pipe
     # ensures injected faults occur after both exist. No browser/daemon acceptance.
     child_script = """
-import os, signal, subprocess, sys
+import json, os, pathlib, signal, subprocess, sys
 child = subprocess.Popen(
     [sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
 
 def stop(sig, frame):
     child.terminate()
     child.wait(timeout=5)
+    pathlib.Path(sys.argv[1]).write_text(json.dumps(
+        {'launch_pending': False, 'closed': True, 'pid': child.pid}))
     raise SystemExit(0)
 signal.signal(signal.SIGTERM, stop)
 print(child.pid, flush=True)
@@ -313,10 +315,11 @@ signal.pause()
         with pytest.raises((OSError, RuntimeError, KeyboardInterrupt)):
             check.run_browser_client(
                 SimpleNamespace(report={}, save=save, deadline=Deadline.after(480)),
-                [sys.executable, "-c", child_script],
+                [sys.executable, "-c", child_script, str(tmp_path / "browser-owner.json")],
                 tmp_path,
             )
         assert len(processes) == 1 and processes[0].poll() == 0
+        assert not (tmp_path / "runtime").exists()
         for pid in child_ids:
             with pytest.raises(ProcessLookupError):
                 os.kill(pid, 0)
