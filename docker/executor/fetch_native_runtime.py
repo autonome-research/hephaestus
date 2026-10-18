@@ -16,6 +16,34 @@ from pathlib import Path
 from typing import TypedDict, cast
 from urllib.parse import urlsplit
 
+# Official Snapshot binfiles/info metadata maps this content address to the
+# unchanged Debian security artifact. SHA-1 is only its archive locator; SHA-256
+# and byte length below remain the integrity authority.
+EXPAT_SNAPSHOT = "https://snapshot.debian.org/file/90544df9f8be225046764399c0a1786b98669611"
+EXPAT_PIN = (
+    "libexpat1_2.5.0-1+deb12u3_arm64.deb",
+    "3caad0fb4382e206b005737de35b3193450589a10053f8415ded216649a233bc",
+    87944,
+)
+
+
+def native_source_allowed(url: str, filename: str, sha256: str, size: int) -> bool:
+    if url == EXPAT_SNAPSHOT:
+        return (filename, sha256, size) == EXPAT_PIN
+    parsed = urlsplit(url)
+    return (
+        parsed.scheme == "https"
+        and parsed.netloc == "deb.debian.org"
+        and not parsed.query
+        and not parsed.fragment
+        and parsed.path.startswith(("/debian/pool/", "/debian-security/pool/"))
+    )
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError("native package redirects are not allowed")
+
 
 class Package(TypedDict):
     filename: str
@@ -55,17 +83,12 @@ def _load_lock(path: Path, architecture: str) -> Lock:
             and isinstance(url, str)
         ):
             raise ValueError("native package record has invalid field types")
-        parsed_url = urlsplit(url)
         if (
             Path(filename).name != filename
             or not filename.endswith(".deb")
             or re.fullmatch(r"[0-9a-f]{64}", sha256) is None
             or size <= 0
-            or parsed_url.scheme != "https"
-            or parsed_url.hostname != "deb.debian.org"
-            or parsed_url.username is not None
-            or parsed_url.password is not None
-            or parsed_url.fragment
+            or not native_source_allowed(url, filename, sha256, size)
         ):
             raise ValueError("native package record violates integrity policy")
         packages.append(Package(filename=filename, sha256=sha256, size=size, url=url))
@@ -102,9 +125,13 @@ def fetch(lock_path: Path, destination: Path, architecture: str) -> None:
         try:
             with (
                 os.fdopen(fd, "wb") as output,
-                urllib.request.urlopen(item["url"], timeout=60) as response,
+                urllib.request.build_opener(NoRedirect()).open(item["url"], timeout=60) as response,
             ):
-                while chunk := response.read(1024 * 1024):
+                received = 0
+                while chunk := response.read(min(1024 * 1024, item["size"] - received + 1)):
+                    received += len(chunk)
+                    if received > item["size"]:
+                        raise ValueError("native package exceeds locked size")
                     output.write(chunk)
             temporary = Path(temporary_name)
             if not _valid(temporary, item):

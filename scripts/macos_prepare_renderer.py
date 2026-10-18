@@ -10,9 +10,13 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "docker/executor"))
+from fetch_native_runtime import native_source_allowed  # noqa: E402
 
 
 def _locked_bytes(path: Path, item: dict) -> bytes:
@@ -41,6 +45,18 @@ def fetch_locked(lock: Path, destination: Path, cache: Path | None = None) -> No
         name = item["filename"]
         if Path(name).name != name or not 0 < item["size"] <= 64 * 1024**2:
             raise ValueError("download leaf/size")
+        url = urlsplit(item["url"])
+        allowed = (
+            native_source_allowed(item["url"], name, item["sha256"], item["size"])
+            if name.endswith(".deb")
+            else name.endswith(".whl")
+            and url.scheme == "https"
+            and url.netloc == "files.pythonhosted.org"
+            and not url.query
+            and not url.fragment
+        )
+        if not allowed:
+            raise ValueError("download source violates integrity policy")
         target = destination / name
         if not target.exists() and cache is not None and (cache / name).is_file():
             data = _locked_bytes(cache / name, item)  # admission BEFORE staging writes
@@ -50,10 +66,13 @@ def fetch_locked(lock: Path, destination: Path, cache: Path | None = None) -> No
             subprocess.run(
                 (
                     "/usr/bin/curl",
+                    "--disable",  # Must be first: never load a user's .curlrc (e.g. insecure).
                     "--silent",
                     "--show-error",
                     "--fail",
                     "--location",
+                    "--max-redirs",
+                    "0",
                     "--proto",
                     "=https",
                     "--proto-redir",
