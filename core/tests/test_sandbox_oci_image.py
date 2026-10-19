@@ -118,7 +118,19 @@ def test_native_runtime_locks_are_arch_specific_and_renderer_free() -> None:
         assert any(item["filename"].startswith("libgl1_") for item in packages)
         assert any(item["filename"].startswith("fonts-dejavu-core_") for item in packages)
         for item in packages:
-            assert item["url"].startswith("https://deb.debian.org/")
+            if item["filename"] == "libexpat1_2.5.0-1+deb12u3_arm64.deb":
+                # The pool URL expired. Only this reviewed identical-byte
+                # Snapshot source is an alternative, not a general archive bypass.
+                assert architecture == "arm64"
+                assert item == {
+                    "filename": "libexpat1_2.5.0-1+deb12u3_arm64.deb",
+                    "sha256": "3caad0fb4382e206b005737de35b3193450589a10053f8415ded216649a233bc",
+                    "size": 87944,
+                    "url": "https://snapshot.debian.org/file/"
+                    "90544df9f8be225046764399c0a1786b98669611",
+                }
+            else:
+                assert item["url"].startswith("https://deb.debian.org/")
             assert re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
             assert type(item["size"]) is int and item["size"] > 0
             filename = item["filename"].lower()

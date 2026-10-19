@@ -267,6 +267,8 @@
 .streamResize:focus-visible::before {
   background: var(--accent);
   width: 2px;
+  /* Keyboard focus is an immediate state, not a partly drawn animated seam. */
+  transition: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

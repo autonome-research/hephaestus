@@ -27,8 +27,8 @@ from hephaestus.core.render.channels import explode_silhouette, scene_from_shape
 from hephaestus.core.render.inspect import (
     INLINE_LEGEND_CAP_BYTES,
     RenderProject,
-    _publish_legend,
     inspect_part,
+    publish_legend,
 )
 from hephaestus.core.render.palette import SelectionEntry, build_legend
 from opstore.types import JSONValue
@@ -188,7 +188,7 @@ def test_oversized_legend_pages_through_readable_ref(project: RenderProject) -> 
     payload = canonical_json(big).encode("utf-8")
     assert len(payload) > INLINE_LEGEND_CAP_BYTES  # genuinely over the cap
 
-    inline, ref, truncated = _publish_legend(project.store, big, force_ref=False)
+    inline, ref, truncated = publish_legend(project.store, big, force_ref=False)
     assert truncated is True
     assert inline is None  # over the cap => not inlined
     assert ref is not None
@@ -199,7 +199,7 @@ def test_oversized_legend_pages_through_readable_ref(project: RenderProject) -> 
 
 def test_under_cap_legend_inlines_without_forced_ref(project: RenderProject) -> None:
     small = _big_legend(3)
-    inline, ref, truncated = _publish_legend(project.store, small, force_ref=False)
+    inline, ref, truncated = publish_legend(project.store, small, force_ref=False)
     assert truncated is False
     assert inline == small
     assert ref is None

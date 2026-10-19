@@ -268,6 +268,15 @@ class BuildOps(CadOpsState):
         """
         if solid_count < 2:
             return interference_report((), declared_intentional=declared, solid_count=solid_count)
+        if self._renderer is not None:
+            # This is not a remote interference API. Never fall back to host CAD
+            # or call an unmeasured compound clean merely because rendering works.
+            return interference_report(
+                (),
+                declared_intentional=declared,
+                solid_count=solid_count,
+                unavailable="pairwise interference is not implemented by the OCI renderer",
+            )
         if artifact_ref is None or not self._store.blobs.has(blob_hash_of_ref(artifact_ref)):
             return interference_report(
                 (),
@@ -385,6 +394,7 @@ class BuildOps(CadOpsState):
             last_good=last_good,
             artifact_ref=artifact_ref,
             focus=focus,
+            **self._render_dimensions(),
         )
         if len(result.images) > MAX_IMAGES_PER_RESULT:  # pragma: no cover - schema-capped
             raise CadOpError(
@@ -491,4 +501,5 @@ class BuildOps(CadOpsState):
             name,
             views=list(views) if views else ["iso"],
             artifact_ref=artifact_ref,
+            **self._render_dimensions(),
         )

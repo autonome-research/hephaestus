@@ -26,7 +26,10 @@
 
 import {
   Box3,
+  Raycaster,
+  Vector2,
   Vector3,
+  type Camera,
   type Object3D,
   type OrthographicCamera,
   type PerspectiveCamera,
@@ -53,9 +56,33 @@ export interface SolidIndex {
   readonly byMesh: ReadonlyMap<number, SolidNode>;
 }
 
-interface Association {
+export interface Association {
   readonly meshes?: number;
   readonly primitives?: number;
+}
+
+/** A screen-space hint, never a resolved selection or provenance claim. */
+export function raycastHint(
+  associations: ReadonlyMap<Object3D, Association>, camera: Camera, x: number, y: number,
+): { mesh_index: number; primitive_index: number } | null {
+  if (![x, y].every(Number.isFinite) || Math.abs(x) > 1 || Math.abs(y) > 1) return null;
+  const candidates = [...associations.keys()].filter((object) => {
+    const association = associations.get(object);
+    if (association?.meshes === undefined || association.primitives === undefined) return false;
+    for (let parent: Object3D | null = object; parent !== null; parent = parent.parent) {
+      if (!parent.visible) return false;
+    }
+    return true;
+  });
+  const ray = new Raycaster();
+  ray.setFromCamera(new Vector2(x, y), camera);
+  for (const hit of ray.intersectObjects(candidates, false)) {
+    const association = associations.get(hit.object);
+    if (association?.meshes !== undefined && association.primitives !== undefined) {
+      return { mesh_index: association.meshes, primitive_index: association.primitives };
+    }
+  }
+  return null;
 }
 
 /**

@@ -38,11 +38,11 @@ shaded ``rgb`` channel.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
-import numpy as np
 from hephaestus.core.errors import AddressingError, ValidationError
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
 from hephaestus.core.executor.published_geometry import tag_placements
@@ -54,32 +54,20 @@ from hephaestus.core.project_store.retention import last_failure_pointer
 from hephaestus.core.project_store.store import artifact_ref as make_artifact_ref
 from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.core.render.bundle import PassRefs, RenderStore, SelectionBundle
-from hephaestus.core.render.cameras import camera_framing, parse_view
-from hephaestus.core.render.channels import (
-    RenderOptions,
-    RenderScene,
-    render_channel,
-    scene_from_shape,
-)
-from hephaestus.core.render.offscreen import (
-    DEFAULT_HEIGHT,
-    DEFAULT_WIDTH,
-    ColoredMesh,
-    OffscreenSession,
-)
+from hephaestus.core.render.defaults import DEFAULT_HEIGHT, DEFAULT_WIDTH
 from hephaestus.core.render.palette import build_legend, id_to_rgb
-from hephaestus.core.render.selection import (
-    SelectionCatalog,
-    build_selection_catalog,
-    encode_png,
-    render_selection_view,
-)
-from hephaestus.core.render.tessellate import Tessellation, face_trimesh
 from hephaestus.core.types import BuildResult
-from numpy.typing import NDArray
 from opstore.types import JSONValue
 
 from opstore import OpStore, canonical_json
+
+if TYPE_CHECKING:
+    import numpy as np
+    from hephaestus.core.executor.sandbox.base import ExecBackend
+    from hephaestus.core.render.channels import RenderScene
+    from hephaestus.core.render.oci_backend import RenderService
+    from hephaestus.core.render.tessellate import Tessellation
+    from numpy.typing import NDArray
 
 __all__ = [
     "CHANNELS",
@@ -131,10 +119,12 @@ class RenderProject:
 
     layout: ProjectLayout
     store: OpStore
+    renderer: RenderService | None = None
+    backend: ExecBackend | None = None
 
     def publisher(self) -> Publisher:
         """A :class:`Publisher` for lock-free current/last-good reads."""
-        return Publisher(self.layout, self.store)
+        return Publisher(self.layout, self.store, backend=self.backend)
 
 
 @dataclass(frozen=True)
@@ -220,6 +210,8 @@ def _validate(
     explode: float,
     last_good: bool,
     artifact_ref: str | None,
+    *,
+    remote: bool = False,
 ) -> tuple[tuple[str, ...], Channel, MaskMode]:
     """Enforce every conditional canonical-schema rule (raises ``validation_error``)."""
     if channel not in CHANNELS:
@@ -241,7 +233,15 @@ def _validate(
         )
     resolved_views = tuple(dict.fromkeys(views))
     for view in resolved_views:
-        parse_view(view)  # rejects unknown names with candidates/grammar
+        if remote:
+            from hephaestus.core.render.oci_protocol import VIEWS
+
+            if view not in VIEWS:
+                raise ValidationError("unsupported OCI view", kind="contract")
+        else:
+            from hephaestus.core.render.cameras import parse_view
+
+            parse_view(view)  # rejects unknown names with candidates/grammar
     if mask_mode != "solid" and channel != "mask":
         raise ValidationError(
             f"mask_mode={mask_mode!r} requires channel='mask' (got {channel!r})", kind="contract"
@@ -256,7 +256,7 @@ def _validate(
         raise ValidationError(
             "artifact_ref and last_good=true are mutually exclusive", kind="contract"
         )
-    if not np.isfinite(explode) or explode < 0.0:
+    if not math.isfinite(explode) or explode < 0.0:
         raise ValidationError(
             f"explode must be a finite value >= 0.0, got {explode!r}", kind="contract"
         )
@@ -456,6 +456,8 @@ def tag_placements_from_source_map(
 def _tess_bounds(
     tess: Tessellation, solids: Sequence[int] | None
 ) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    import numpy as np
+
     if solids is None:
         return tess.bounds()
     mins: list[NDArray[np.float64]] = []
@@ -505,7 +507,7 @@ def _focus_solids(
 # legend publication
 
 
-def _publish_legend(
+def publish_legend(
     store: OpStore, legend: Mapping[str, JSONValue], *, force_ref: bool
 ) -> tuple[Mapping[str, JSONValue] | None, str | None, bool]:
     """Return ``(inline_legend | None, legend_ref | None, truncated)``."""
@@ -539,8 +541,8 @@ def inspect_part(
     last_good: bool = False,
     artifact_ref: str | None = None,
     focus: str | None = None,
-    width: int = DEFAULT_WIDTH,
-    height: int = DEFAULT_HEIGHT,
+    width: int | None = None,
+    height: int | None = None,
 ) -> InspectResult:
     """Render a part's geometry per ``tool_schema.md`` §inspect_part.
 
@@ -549,17 +551,41 @@ def inspect_part(
     geometry is loaded. Rendering delegates to the shared render service; see the
     module docstring for the division of responsibilities.
     """
-    resolved_views, channel_lit, mask_mode_lit = _validate(
-        views, channel, mask_mode, section_plane, explode, last_good, artifact_ref
-    )
-    if focus is not None and channel_lit == "section":
-        # The focused camera path has no section-plane clipping. Do not publish
-        # a plain shaded preview under a section identity.
+    if focus is not None and channel == "section":
+        # Refuse before touching the project: the focused path cannot clip a
+        # section and must never publish a shaded preview as one.
         raise ValidationError(
             "focus with channel='section' is not supported; omit focus for a section render",
             kind="contract",
         )
+    width = width if width is not None else (256 if project.renderer else DEFAULT_WIDTH)
+    height = height if height is not None else (192 if project.renderer else DEFAULT_HEIGHT)
+    resolved_views, channel_lit, mask_mode_lit = _validate(
+        views,
+        channel,
+        mask_mode,
+        section_plane,
+        explode,
+        last_good,
+        artifact_ref,
+        remote=project.renderer is not None,
+    )
     resolved = resolve_render_source(project, name, last_good=last_good, artifact_ref=artifact_ref)
+    if project.renderer is not None:
+        from hephaestus.core.render.remote_service import inspect_remote
+
+        if focus is not None or explode != 0:
+            raise ValidationError("OCI focus/explode not supported", kind="contract")
+        return inspect_remote(
+            project,
+            resolved,
+            resolved_views,
+            channel_lit,
+            mask_mode_lit,
+            section_plane,
+            width,
+            height,
+        )
     shape = load_brep_shape(resolved.brep)
 
     if channel_lit == "mask" and mask_mode_lit == "selection":
@@ -582,6 +608,8 @@ def inspect_part(
 
 def scene_tessellation(scene: RenderScene) -> Tessellation:
     """Reuse the scene's per-solid tessellation (avoids a second OCP meshing)."""
+    from hephaestus.core.render.tessellate import Tessellation
+
     return Tessellation(solids=tuple(solid.tessellation for solid in scene.solids))
 
 
@@ -598,6 +626,8 @@ def _render_channel(
     height: int,
 ) -> InspectResult:
     """rgb / mask-solid / section (+ optional explode/focus) via channels.py."""
+    from hephaestus.core.render.channels import RenderOptions, render_channel, scene_from_shape
+
     scene = scene_from_shape(shape)
     render_store = RenderStore(project.store)
 
@@ -639,7 +669,7 @@ def _render_channel(
     mask_legend_ref: str | None = None
     truncated = False
     if channel == "mask" and legend is not None:
-        mask_legend, mask_legend_ref, truncated = _publish_legend(
+        mask_legend, mask_legend_ref, truncated = publish_legend(
             project.store, legend, force_ref=False
         )
 
@@ -671,6 +701,11 @@ def _render_channel_focused(
     ``focus`` changes only the camera; the ID namespace / legend are unchanged
     (the solid-ID mask legend is the scene's, keyed by ``solid_index``).
     """
+    from hephaestus.core.render.cameras import camera_framing, parse_view
+    from hephaestus.core.render.offscreen import ColoredMesh, OffscreenSession
+    from hephaestus.core.render.selection import encode_png
+    from hephaestus.core.render.tessellate import face_trimesh
+
     tess = scene_tessellation(scene)
     labels = build_solid_labels(resolved.result, len(tess.solids))
     placements = tag_placements_from_source_map(resolved.source_map)
@@ -730,6 +765,16 @@ def _render_selection(
     Uses the shared :func:`~hephaestus.core.render.selection.build_selection_catalog`
     namespace so the bundle's IDs match a GLTF export's embedded raycast IDs.
     """
+    from hephaestus.core.render.cameras import camera_framing, parse_view
+    from hephaestus.core.render.channels import scene_from_shape
+    from hephaestus.core.render.offscreen import OffscreenSession
+    from hephaestus.core.render.selection import (
+        SelectionCatalog,
+        build_selection_catalog,
+        encode_png,
+        render_selection_view,
+    )
+
     scene = scene_from_shape(shape)
     tess = scene_tessellation(scene)
     placements = tag_placements_from_source_map(resolved.source_map)
@@ -784,7 +829,7 @@ def _render_selection(
             )
 
     legend = build_legend(catalog.entries)
-    mask_legend, mask_legend_ref, truncated = _publish_legend(
+    mask_legend, mask_legend_ref, truncated = publish_legend(
         project.store, cast("Mapping[str, JSONValue]", legend), force_ref=True
     )
     return InspectResult(
@@ -812,8 +857,8 @@ def prepare_render_bundle(
     *,
     views: Sequence[str] = DEFAULT_VIEWS,
     artifact_ref: str | None = None,
-    width: int = DEFAULT_WIDTH,
-    height: int = DEFAULT_HEIGHT,
+    width: int | None = None,
+    height: int | None = None,
 ) -> dict[str, JSONValue]:
     """Tool-free render bundle for Stage 2 ``query_snapshot`` (no session/tool coupling).
 

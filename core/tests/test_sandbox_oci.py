@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import copy
 import errno
+import io
 import json
 import math
+import stat
 import sys
-from collections.abc import Mapping, Sequence
+import tempfile
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -45,6 +48,92 @@ from hephaestus.core.executor.sandbox.oci_protocol import (
     PROTOCOL_VERSION,
     REQUIRED_OCI_FEATURES,
 )
+from hephaestus.core.executor.sandbox.oci_storage import MASKED_DEVICE_PATHS, RUNTIME_PATHS
+from hephaestus.core.executor.sandbox.oci_storage_policy import DEFAULT_STORAGE, StoragePolicy
+from hephaestus.core.executor.sandbox.oci_transfer import export
+
+
+def synthetic_storage(policy: StoragePolicy = DEFAULT_STORAGE):
+    return {
+        "mounts": {
+            "/": {"fs_type": "overlay", "options": ["ro"]},
+            "/inputs": {"fs_type": "bind", "options": ["ro"]},
+            "/dev": {"fs_type": "tmpfs", "options": ["rw"]},
+            "/dev/mqueue": {"fs_type": "tmpfs", "options": ["ro", "nosuid", "nodev", "noexec"]},
+            "/proc": {"fs_type": "proc", "options": ["rw"]},
+            **{p: {"fs_type": "tmpfs", "options": ["rw"]} for p in MASKED_DEVICE_PATHS},
+            **{
+                p: {"fs_type": "tmpfs", "options": ["rw", "nosuid", "nodev", "noexec"]}
+                for p in ("/work", "/tmp")
+            },
+        },
+        "capacities": {
+            p: {
+                "bytes": size,
+                "available_bytes": size,
+                "inodes": count,
+                "available_inodes": count - 1,
+                "block_size": 4096,
+            }
+            for p, size, count in (
+                ("/work", policy.work_bytes, policy.work_inodes),
+                ("/tmp", policy.tmp_bytes, policy.tmp_inodes),
+            )
+        },
+        "runtime_write_errno": {p: 30 for p in RUNTIME_PATHS},
+        "masked_devices": {
+            p: {"file_type": stat.S_IFCHR, "major": 1, "minor": 3} for p in MASKED_DEVICE_PATHS
+        },
+    }
+
+
+def synthetic_effective(argv: Sequence[str]) -> dict[str, object]:
+    def arg(name: str) -> str:
+        return argv[argv.index(name) + 1]
+
+    mount = arg("--mount")
+    source = mount.split("source=", 1)[1].split(",")[0]
+    return {
+        "Image": "sha256:" + "e" * 64,
+        "LogPath": "",
+        "HostConfig": {
+            "ReadonlyRootfs": True,
+            "Privileged": False,
+            "NetworkMode": "none",
+            "IpcMode": "none",
+            "PidMode": "",
+            "UTSMode": "",
+            "Memory": int(arg("--memory")),
+            "MemorySwap": int(arg("--memory-swap")),
+            "PidsLimit": int(arg("--pids-limit")),
+            "NanoCpus": 1000000000,
+            "CapDrop": ["ALL"],
+            "LogConfig": {"Type": "none", "Config": {}},
+            "SecurityOpt": [arg("--security-opt")],
+            "Tmpfs": dict(argv[i + 1].split(":", 1) for i, a in enumerate(argv) if a == "--tmpfs"),
+        },
+        "Config": {
+            "Entrypoint": list(AUDITED_ENTRYPOINT),
+            "Cmd": list(argv[argv.index(IMAGE) + 1 :]),
+            "Env": list(AUDITED_IMAGE_ENV),
+            "WorkingDir": "/work",
+            "User": arg("--user"),
+            "Hostname": OCI_HOSTNAME,
+            "Healthcheck": {"Test": ["NONE"]},
+            "Tty": False,
+            "OpenStdin": True,
+        },
+        "Mounts": [
+            {
+                "Type": "bind",
+                "Source": source,
+                "Destination": "/inputs",
+                "RW": False,
+                "Propagation": "rprivate",
+            }
+        ],
+    }
+
 
 DIGEST = "a" * 64
 IMAGE = f"registry.example/hephaestus/executor@sha256:{DIGEST}"
@@ -54,9 +143,11 @@ IDENTITY = OciIdentity(uid=501, gid=20)
 
 
 class FakeTransport:
-    def __init__(self, results: Sequence[TransportResult | Exception] = ()) -> None:
+    def __init__(self, results: Sequence[TransportResult | BaseException] = ()) -> None:
         self.results = list(results)
         self.calls: list[tuple[tuple[str, ...], bytes, Mapping[str, str], float]] = []
+        self.config_calls = []
+        self.create = None
 
     def run(
         self,
@@ -67,14 +158,37 @@ class FakeTransport:
         stdout_limit: int,
         stderr_limit: int,
         env: Mapping[str, str],
+        stdout_consumer: Callable[[bytes], None] | None = None,
     ) -> TransportResult:
         del stdout_limit, stderr_limit
+        if "create" in argv:
+            self.create = argv
+        if "inspect" in argv and "{{json .}}" in argv and self.create is not None:
+            self.config_calls.append(tuple(argv))
+            return TransportResult(
+                0, (json.dumps(synthetic_effective(self.create)) + "\n").encode(), b""
+            )
         self.calls.append((tuple(argv), input, dict(env), timeout))
         if not self.results:
             raise AssertionError("unexpected transport invocation")
         result = self.results.pop(0)
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             raise result
+        if stdout_consumer:
+            assert self.create is not None
+            # Lifecycle fixtures use a genuine framed, artifact-free failed build.
+            with tempfile.TemporaryDirectory() as path:
+                stream = io.BytesIO()
+                export(
+                    stream,
+                    {"status": "failed", "artifacts": {}},
+                    self.create[-1],
+                    BUILD_WORKER,
+                    Path(path).resolve(),
+                    DEFAULT_STORAGE,
+                )
+                stdout_consumer(stream.getvalue())
+            return TransportResult(result.returncode, b"", result.stderr)
         return result
 
 
@@ -97,6 +211,10 @@ def spec(out: Path, **changes: object) -> SandboxSpec:
 
 
 def passing(backend: OciBackend) -> None:
+    from _execution_identity import identity
+
+    backend._image_id = "sha256:" + "e" * 64
+    backend._execution_identity = identity(image_ref=backend.image_ref, platform=backend.platform)
     backend._passing_report = CapabilityReport(
         backend=backend.name,
         available=True,
@@ -120,6 +238,8 @@ def test_exact_docker_create_argv(tmp_path: Path) -> None:
         "--user",
         "501:20",
         "--read-only",
+        "--log-driver=none",
+        "--no-healthcheck",
         "--network",
         "none",
         "--ipc",
@@ -139,18 +259,24 @@ def test_exact_docker_create_argv(tmp_path: Path) -> None:
         "--cpus",
         "1.0",
         "--tmpfs",
-        f"/tmp:rw,nosuid,nodev,noexec,size={OCI_TMPFS_BYTES},mode=1777",
+        f"/tmp:rw,nosuid,nodev,noexec,size={OCI_TMPFS_BYTES},nr_inodes=256,mode=0700,uid=501,gid=20",
+        "--tmpfs",
+        "/work:rw,nosuid,nodev,noexec,size=134217728,nr_inodes=2048,mode=0700,uid=501,gid=20",
+        "--tmpfs",
+        "/dev/mqueue:ro,nosuid,nodev,noexec,size=4096,nr_inodes=1,mode=0000",
         "--mount",
-        f"type=bind,source={out},destination=/work,bind-propagation=rprivate",
+        f"type=bind,source={out}/inputs,destination=/inputs,readonly,bind-propagation=rprivate",
         "--workdir",
         "/work",
         IMAGE,
         "run",
-        "2",
+        "3",
         BUILD_WORKER,
         "17",
         "123456789",
         "31",
+        "ordinary",
+        "0" * 64,
     )
     assert actual.count("--mount") == 1
     assert not any(item in actual for item in ("--tty", "-t", "--env", "--env-file"))
@@ -287,25 +413,44 @@ def test_direct_execution_without_instance_probe_fails_closed(tmp_path: Path) ->
     assert transport.calls == []
 
 
-def test_normal_lifecycle_uses_inspected_status_and_sanitized_env(tmp_path: Path) -> None:
+@pytest.mark.parametrize("worker_exit", [0, 7])
+def test_normal_lifecycle_uses_inspected_status_and_sanitized_env(
+    tmp_path: Path, worker_exit: int
+) -> None:
     out = tmp_path / "out"
     out.mkdir()
     transport = FakeTransport(
         [
             TransportResult(0, (CONTAINER_ID + "\n").encode(), b""),
-            TransportResult(99, b"worker-output", b"worker-error"),
-            TransportResult(0, b'{"Running":false,"ExitCode":7}\n', b""),
+            TransportResult(0, b"worker-output", b"worker-error"),
+            TransportResult(
+                0,
+                (
+                    json.dumps({"Running": False, "ExitCode": worker_exit, "OOMKilled": False})
+                    + "\n"
+                ).encode(),
+                b"",
+            ),
             TransportResult(0, b"", b""),
             TransportResult(1, b"", b"Error: no such container\n"),
         ]
     )
     backend = OciBackend(runtime(), IMAGE, "linux/amd64", transport=transport)
     passing(backend)
-    outcome = backend.execute(spec(out), b"exact-input")
-    assert outcome.exit_code == 7
-    assert outcome.stdout == b"worker-output"
+    outcome = backend.execute(spec(out), b'{"out_dir":"."}')
+    assert outcome.exit_code == worker_exit
+    assert backend.last_terminal_state == {
+        "Running": False,
+        "ExitCode": worker_exit,
+        "OOMKilled": False,
+    }
+    with pytest.raises(TypeError):
+        backend.last_terminal_state["OOMKilled"] = True  # type: ignore[index]
+    assert not backend.unsettled_creates
+    assert outcome.stdout == (b'{"artifacts":{},"status":"failed"}\n' if worker_exit == 0 else b"")
     assert outcome.stderr == b"worker-error"
-    assert transport.calls[1][1] == b"exact-input"
+    assert transport.calls[1][1] == b'{"out_dir":"."}'
+    assert len(transport.config_calls) == 1
     assert transport.calls[1][2] == {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"}
     assert transport.calls[1][0][-4:-1] == ("start", "--attach", "--interactive")
 
@@ -317,16 +462,16 @@ def test_timeout_kills_confirms_and_removes(tmp_path: Path) -> None:
         [
             TransportResult(0, (CONTAINER_ID + "\n").encode(), b""),
             TransportTimeout(),
-            TransportResult(0, b'{"Running":true,"ExitCode":0}\n', b""),
+            TransportResult(0, b'{"Running":true,"ExitCode":0,"OOMKilled":false}\n', b""),
             TransportResult(0, b"", b""),
-            TransportResult(0, b'{"Running":false,"ExitCode":137}\n', b""),
+            TransportResult(0, b'{"Running":false,"ExitCode":137,"OOMKilled":false}\n', b""),
             TransportResult(0, b"", b""),
             TransportResult(1, b"", b"no such container"),
         ]
     )
     backend = OciBackend(runtime(), IMAGE, "linux/amd64", transport=transport)
     passing(backend)
-    outcome = backend.execute(spec(out), b"")
+    outcome = backend.execute(spec(out), b'{"out_dir":"."}')
     assert outcome.timed_out
     assert any("kill" in call[0] for call in transport.calls)
     assert any("rm" in call[0] for call in transport.calls)
@@ -335,7 +480,7 @@ def test_timeout_kills_confirms_and_removes(tmp_path: Path) -> None:
 def test_cleanup_force_removes_after_failed_asynchronous_kill(tmp_path: Path) -> None:
     out = tmp_path / "out"
     out.mkdir()
-    running = TransportResult(0, b'{"Running":true,"ExitCode":0}\n', b"")
+    running = TransportResult(0, b'{"Running":true,"ExitCode":0,"OOMKilled":false}\n', b"")
     transport = FakeTransport(
         [
             TransportResult(0, (CONTAINER_ID + "\n").encode(), b""),
@@ -344,14 +489,14 @@ def test_cleanup_force_removes_after_failed_asynchronous_kill(tmp_path: Path) ->
             TransportResult(1, b"", b"kill failed"),
             running,
             running,
-            TransportResult(0, b'{"Running":false,"ExitCode":137}\n', b""),
+            TransportResult(0, b'{"Running":false,"ExitCode":137,"OOMKilled":false}\n', b""),
             TransportResult(0, b"", b""),
             TransportResult(1, b"", b"no such container"),
         ]
     )
     backend = OciBackend(runtime(), IMAGE, "linux/amd64", identity=IDENTITY, transport=transport)
     passing(backend)
-    outcome = backend.execute(spec(out), b"")
+    outcome = backend.execute(spec(out), b'{"out_dir":"."}')
     assert outcome.timed_out
     assert any("rm" in call[0] for call in transport.calls)
     assert transport.results == []
@@ -366,16 +511,44 @@ def test_post_attach_inspection_respects_the_worker_deadline(
         [
             TransportResult(0, (CONTAINER_ID + "\n").encode(), b""),
             TransportResult(0, b"worker", b""),
-            TransportResult(0, b'{"Running":false,"ExitCode":0}\n', b""),
+            TransportResult(0, b'{"Running":false,"ExitCode":0,"OOMKilled":false}\n', b""),
             TransportResult(0, b"", b""),
             TransportResult(1, b"", b"no such container"),
         ]
     )
-    ticks = iter((0.0, 0.0, 0.0, 21.0))
-    monkeypatch.setattr(oci_module.time, "monotonic", lambda: next(ticks))
+    from hephaestus.core import deadline as clocks
+
+    now = [0]
+    monkeypatch.setattr(clocks, "continuous_ns", lambda: now[0])
+    original = transport.run
+
+    def run(
+        argv: Sequence[str],
+        *,
+        input: bytes,
+        timeout: float,
+        stdout_limit: int,
+        stderr_limit: int,
+        env: Mapping[str, str],
+        stdout_consumer: Callable[[bytes], None] | None = None,
+    ) -> TransportResult:
+        result = original(
+            argv,
+            input=input,
+            timeout=timeout,
+            stdout_limit=stdout_limit,
+            stderr_limit=stderr_limit,
+            env=env,
+            stdout_consumer=stdout_consumer,
+        )
+        if "start" in argv:
+            now[0] = 21_000_000_000
+        return result
+
+    monkeypatch.setattr(transport, "run", run)
     backend = OciBackend(runtime(), IMAGE, "linux/amd64", identity=IDENTITY, transport=transport)
     passing(backend)
-    outcome = backend.execute(spec(out), b"")
+    outcome = backend.execute(spec(out), b'{"out_dir":"."}')
     assert outcome.timed_out
     # No ordinary post-attach inspect used a fresh five-second allowance. The
     # first inspect is cleanup after the deadline has already expired.
@@ -389,16 +562,16 @@ def test_output_limit_is_bounded_failure_after_cleanup(tmp_path: Path) -> None:
         [
             TransportResult(0, (CONTAINER_ID + "\n").encode(), b""),
             TransportOutputLimit("stdout"),
-            TransportResult(0, b'{"Running":true,"ExitCode":0}\n', b""),
+            TransportResult(0, b'{"Running":true,"ExitCode":0,"OOMKilled":false}\n', b""),
             TransportResult(0, b"", b""),
-            TransportResult(0, b'{"Running":false,"ExitCode":137}\n', b""),
+            TransportResult(0, b'{"Running":false,"ExitCode":137,"OOMKilled":false}\n', b""),
             TransportResult(0, b"", b""),
             TransportResult(1, b"", b"no such object"),
         ]
     )
     backend = OciBackend(runtime(), IMAGE, "linux/amd64", transport=transport)
     passing(backend)
-    outcome = backend.execute(spec(out), b"")
+    outcome = backend.execute(spec(out), b'{"out_dir":"."}')
     assert outcome.exit_code == 125
     assert not outcome.timed_out
     assert outcome.stdout == b""
@@ -451,8 +624,12 @@ def test_only_passing_probe_is_cached_on_instance(monkeypatch: pytest.MonkeyPatc
     calls = 0
 
     def validate() -> None:
+        from _execution_identity import identity
+
         nonlocal calls
         calls += 1
+        backend._image_id = "sha256:" + "e" * 64
+        backend._execution_identity = identity()
 
     monkeypatch.setattr(backend, "_validate_runtime", validate)
     monkeypatch.setattr(backend, "_validate_image", validate)
@@ -480,9 +657,9 @@ def test_invalid_create_id_is_cleaned_up_by_name(tmp_path: Path) -> None:
     transport = FakeTransport(
         [
             TransportResult(0, b"not-a-container-id\n", b""),
-            TransportResult(0, b'{"Running":true,"ExitCode":0}\n', b""),
+            TransportResult(0, b'{"Running":true,"ExitCode":0,"OOMKilled":false}\n', b""),
             TransportResult(0, b"", b""),
-            TransportResult(0, b'{"Running":false,"ExitCode":137}\n', b""),
+            TransportResult(0, b'{"Running":false,"ExitCode":137,"OOMKilled":false}\n', b""),
             TransportResult(0, b"", b""),
             TransportResult(1, b"", b"no such container"),
         ]
@@ -490,11 +667,91 @@ def test_invalid_create_id_is_cleaned_up_by_name(tmp_path: Path) -> None:
     backend = OciBackend(runtime(), IMAGE, "linux/amd64", identity=IDENTITY, transport=transport)
     passing(backend)
     with pytest.raises(SandboxDeniedError):
-        backend.execute(spec(out), b"")
+        backend.execute(spec(out), b'{"out_dir":"."}')
     cleanup_identity = transport.calls[1][0][-1]
     assert cleanup_identity.startswith("heph-exec-")
     assert "kill" in transport.calls[2][0]
     assert transport.calls[-1][0][-1] == cleanup_identity
+
+
+@pytest.mark.parametrize(
+    "interruption", [TransportTimeout(), KeyboardInterrupt(), TransportOutputLimit("stdout")]
+)
+@pytest.mark.parametrize("delayed_create", [False, True])
+def test_unsettled_create_absence_is_never_cleanup_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interruption: BaseException,
+    delayed_create: bool,
+) -> None:
+    # Simulate a daemon that creates AFTER the first no-such-container result.
+    # Also cover creation later than the entire polling window: still unresolved.
+    absent = TransportResult(1, b"", b"no such container")
+    responses: list[TransportResult | BaseException] = [interruption, absent]
+    if delayed_create:
+        responses.extend(
+            [
+                TransportResult(0, b'{"Running":false,"ExitCode":0,"OOMKilled":false}\n', b""),
+                TransportResult(0, b"", b""),
+                absent,
+            ]
+        )
+    else:
+        responses.extend([absent] * 4)
+    transport = FakeTransport(responses)
+    monkeypatch.setattr(oci_module.time, "sleep", lambda _: None)
+    backend = OciBackend(runtime(), IMAGE, "linux/amd64", identity=IDENTITY, transport=transport)
+    passing(backend)
+    with pytest.raises(SandboxDeniedError, match="create settlement unconfirmed"):
+        backend.execute(spec(tmp_path), b'{"out_dir":"."}')
+    name = transport.calls[0][0][transport.calls[0][0].index("--name") + 1]
+    assert backend.unsettled_creates == {name}
+    assert not backend.probe().available
+    assert transport.results == []
+    assert any("rm" in call[0] for call in transport.calls) is delayed_create
+    calls = len(transport.calls)
+    with pytest.raises(SandboxDeniedError):
+        backend.execute(spec(tmp_path), b'{"out_dir":"."}')
+    assert len(transport.calls) == calls
+
+
+@pytest.mark.parametrize(
+    "bad_state",
+    [
+        {"Running": False, "ExitCode": 0},
+        {"Running": False, "ExitCode": 0, "OOMKilled": None},
+        {"Running": False, "ExitCode": 0, "OOMKilled": 0},
+        {"Running": False, "ExitCode": 0, "OOMKilled": "false"},
+        {"Running": False, "ExitCode": 0, "OOMKilled": True},
+        {"Running": False, "ExitCode": False, "OOMKilled": False},
+        {"Running": False, "ExitCode": 0.0, "OOMKilled": False},
+        {"Running": 0, "ExitCode": 0, "OOMKilled": False},
+    ],
+)
+def test_terminal_state_requires_typed_non_oom_evidence(
+    tmp_path: Path, bad_state: dict[str, object]
+) -> None:
+    state = TransportResult(0, (json.dumps(bad_state) + "\n").encode(), b"")
+    transport = FakeTransport(
+        [
+            TransportResult(0, (CONTAINER_ID + "\n").encode(), b""),
+            TransportResult(0, b"worker", b""),
+            state,
+            state,
+            TransportResult(0, b"", b""),
+            TransportResult(1, b"", b"no such container"),
+        ]
+    )
+    backend = OciBackend(runtime(), IMAGE, "linux/amd64", identity=IDENTITY, transport=transport)
+    passing(backend)
+    with pytest.raises(SandboxDeniedError):
+        backend.execute(spec(tmp_path), b'{"out_dir":"."}')
+    assert any("rm" in call[0] for call in transport.calls)
+    assert transport.results == []
+    if bad_state.get("OOMKilled") is True:
+        assert backend.last_terminal_state == bad_state
+    else:
+        assert backend.last_terminal_state is None
 
 
 def test_malformed_post_start_inspection_still_cleans_up(tmp_path: Path) -> None:
@@ -505,9 +762,9 @@ def test_malformed_post_start_inspection_still_cleans_up(tmp_path: Path) -> None
             TransportResult(0, (CONTAINER_ID + "\n").encode(), b""),
             TransportResult(0, b"worker", b""),
             TransportResult(0, b"{}\n", b""),
-            TransportResult(0, b'{"Running":true,"ExitCode":0}\n', b""),
+            TransportResult(0, b'{"Running":true,"ExitCode":0,"OOMKilled":false}\n', b""),
             TransportResult(0, b"", b""),
-            TransportResult(0, b'{"Running":false,"ExitCode":137}\n', b""),
+            TransportResult(0, b'{"Running":false,"ExitCode":137,"OOMKilled":false}\n', b""),
             TransportResult(0, b"", b""),
             TransportResult(1, b"", b"no such object"),
         ]
@@ -515,12 +772,12 @@ def test_malformed_post_start_inspection_still_cleans_up(tmp_path: Path) -> None
     backend = OciBackend(runtime(), IMAGE, "linux/amd64", identity=IDENTITY, transport=transport)
     passing(backend)
     with pytest.raises(SandboxDeniedError):
-        backend.execute(spec(out), b"")
+        backend.execute(spec(out), b'{"out_dir":"."}')
     assert any("kill" in call[0] for call in transport.calls)
     assert any("rm" in call[0] for call in transport.calls)
 
 
-def _valid_probe_response(nonce: str) -> dict[str, object]:
+def valid_probe_response(nonce: str) -> dict[str, object]:
     return {
         "capabilities": {
             "CapInh": "0000000000000000",
@@ -552,9 +809,19 @@ def _valid_probe_response(nonce: str) -> dict[str, object]:
             },
         },
         "network": {
-            "interfaces": ["lo"],
+            "interfaces": [
+                {
+                    "name": "lo",
+                    "index": 1,
+                    "flags": 73,
+                    "primary_ipv4": "127.0.0.1",
+                    "ipv6": ["::1"],
+                }
+            ],
+            "proc_interfaces": ["lo"],
             "routes": [],
-            "connect_errno": errno.ENETUNREACH,
+            "connect_errno": 101,  # Linux worker errno, regardless of host OS
+            "connect_errno_v6": 101,
         },
         "nonce": nonce,
         "no_new_privs": 1,
@@ -571,7 +838,8 @@ def _valid_probe_response(nonce: str) -> dict[str, object]:
         "root_write_errno": errno.EACCES,
         "tmp_capacity_bytes": OCI_TMPFS_BYTES,
         "tmp_write_errno": 0,
-        "work_proof": f".heph-oci-probe-{nonce}",
+        "work_proof": nonce,
+        "storage": synthetic_storage(),
     }
 
 
@@ -581,12 +849,18 @@ def test_probe_response_requires_every_raw_containment_observation(tmp_path: Pat
     out.mkdir()
     (out / f".heph-oci-probe-{nonce}").write_text(nonce, encoding="ascii")
     request_spec = spec(out)
-    response = _valid_probe_response(nonce)
+    response = valid_probe_response(nonce)
     features = oci_module._validate_probe_response(response, nonce, request_spec, out, IDENTITY)
     assert set(features) == set(REQUIRED_OCI_FEATURES)
     assert all(features.values())
 
     for mutate in (
+        lambda value: value.__setitem__("oci_profile_version", 2),
+        lambda value: value.__setitem__("oci_profile_version", 4),
+        lambda value: value.__setitem__("oci_profile_version", float(OCI_PROFILE_VERSION)),
+        lambda value: value.__setitem__("protocol_version", float(PROTOCOL_VERSION)),
+        lambda value: value["rlimits"].__setitem__("RLIMIT_CORE", [False, False]),
+        lambda value: value["rlimits"].__setitem__("RLIMIT_CORE", [0.0, 0.0]),
         lambda value: value.__setitem__("effective_uid", 0),
         lambda value: value.__setitem__("effective_uid", True),
         lambda value: value.__setitem__("no_new_privs", True),
@@ -605,9 +879,42 @@ def test_probe_response_requires_every_raw_containment_observation(tmp_path: Pat
         with pytest.raises(SandboxDeniedError):
             oci_module._validate_probe_response(invalid, nonce, request_spec, out, IDENTITY)
 
-    (out / f".heph-oci-probe-{nonce}").write_bytes(b"\xff")
+    response["work_proof"] = "wrong-nonce"
     with pytest.raises(SandboxDeniedError):
         oci_module._validate_probe_response(response, nonce, request_spec, out, IDENTITY)
+
+
+def test_macos_observed_network_inventory_does_not_pass_on_connect_errno_alone(
+    tmp_path: Path,
+) -> None:
+    """Replay the network observation from macos-report-09, not a live test.
+
+    Docker Desktop returned ENETUNREACH and no routes, but its sysfs inventory
+    was not loopback-only. This old record has no device flags/address evidence;
+    profile 3 must still reject it, not silently filter its names to green a demo.
+    """
+    nonce = "d" * 64
+    (tmp_path / f".heph-oci-probe-{nonce}").write_text(nonce, encoding="ascii")
+    response = valid_probe_response(nonce)
+    response["network"] = {
+        "connect_errno": errno.ENETUNREACH,
+        "routes": [],
+        "interfaces": [
+            "bonding_masters",
+            "erspan0",
+            "gre0",
+            "gretap0",
+            "ip6_vti0",
+            "ip6gre0",
+            "ip6tnl0",
+            "ip_vti0",
+            "lo",
+            "sit0",
+            "tunl0",
+        ],
+    }
+    with pytest.raises(SandboxDeniedError, match="network_isolated"):
+        oci_module._validate_probe_response(response, nonce, spec(tmp_path), tmp_path, IDENTITY)
 
 
 def test_runtime_and_image_metadata_are_strict() -> None:

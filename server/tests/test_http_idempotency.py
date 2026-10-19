@@ -30,10 +30,12 @@ created"* — which is why :func:`_project_state` now reads ``.heph/exports/``.
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
+from hephaestus.http import app, providers
 from hephaestus.http.idempotency import (
     FRESHNESS_SKEW_S,
     KEY_REQUIRED_ROUTES,
@@ -62,6 +64,12 @@ KEY_REQUIRED_CASES: dict[tuple[str, str], tuple[str, dict[str, Any]]] = {
     ("POST", "/parts/{part}/dfm"): ("/parts/widget/dfm", {}),
     ("POST", "/project/config/dfm"): ("/project/config/dfm", {"auto_run": True}),
     ("POST", "/git/tag"): ("/git/tag", {"name": "v0.0.1", "message": "release"}),
+    # INTERFACE.md §23.6 catalog registration amendment: additive config write
+    # in §2.3's key-required table and the same non-tool ledger extension.
+    ("POST", "/providers/register"): (
+        "/providers/register",
+        {"provider_id": "key-ladder-probe", "auth_type": "api_key"},
+    ),
     # §22.2's three egress rows. The `artifact_ref` is well formed and names a
     # blob this scaffold has never built: every rung exercised over this table is
     # a **no execution** rung, refused by the key ladder before dispatch, so the
@@ -99,6 +107,37 @@ KEY_REQUIRED_CASES: dict[tuple[str, str], tuple[str, dict[str, Any]]] = {
         },
     ),
 }
+
+
+@pytest.fixture(autouse=True)
+def no_registration_work_before_key_admission(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """A usable offline catalog; every refusal must avoid even discovering it."""
+    calls: list[str] = []
+
+    def catalog(root: Path) -> dict[str, Any]:
+        calls.append("catalog")
+        return {
+            "catalog": [
+                {
+                    "id": "key-ladder-probe",
+                    "auth_methods": [{"type": "api_key"}],
+                    "models": [{"id": "offline-model"}],
+                }
+            ]
+        }
+
+    original_write = providers.register_catalog_provider
+
+    def write(
+        path: Path, *, catalog_entry: dict[str, Any], auth_type: object
+    ) -> tuple[providers.ProvidersFile, dict[str, Any]]:
+        calls.append("write")
+        return original_write(path, catalog_entry=catalog_entry, auth_type=auth_type)
+
+    monkeypatch.setattr(app, "native_provider_catalog", catalog)
+    monkeypatch.setattr(providers, "register_catalog_provider", write)
+    yield
+    assert calls == [], "key refusal performed catalog/registration work"
 
 
 def _widget_script(root: Path) -> str:
@@ -184,6 +223,7 @@ def test_the_key_required_table_is_the_routes_the_spec_enumerates() -> None:
         ("POST", "/project/config/dfm"),
         ("POST", "/git/tag"),
         ("PUT", "/providers/specs"),
+        ("POST", "/providers/register"),
     }
     assert set(NON_TOOL_KEY_ROUTES) < set(KEY_REQUIRED_ROUTES)
 

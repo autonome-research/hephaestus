@@ -248,10 +248,50 @@ def _patch_clock(monkeypatch: pytest.MonkeyPatch, clock: _FakeClock) -> None:
     import hephaestus.core.executor.bounded_pass as bounded_pass
 
     monkeypatch.setattr(
-        bounded_pass.time,  # pyright: ignore[reportPrivateImportUsage]
-        "monotonic",
+        bounded_pass,
+        "continuous_seconds",
         lambda: clock.now,
     )
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_late_owner_ack_is_not_accepted_but_measurement_drain_is_preserved(
+    monkeypatch: pytest.MonkeyPatch, strict: bool
+) -> None:
+    clock = _FakeClock(start=5.0)
+    _patch_clock(monkeypatch, clock)
+    parent = _FakeConn(clock, schedule=[(5.0, ("done", "buffered"))])
+    proc = _FakeProc(alive_until=1000.0, exitcode=0, clock=clock)
+    outcome = supervise(
+        proc,
+        parent,
+        timeout_s=0,
+        on_message=_terminal_on("done"),
+        strict_deadline=strict,
+    )
+    assert outcome.terminal == (None if strict else ("done", "buffered"))
+    assert not outcome.died
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_owner_frame_completing_after_progression_is_not_an_ack(
+    monkeypatch: pytest.MonkeyPatch, strict: bool
+) -> None:
+    clock = _FakeClock()
+    _patch_clock(monkeypatch, clock)
+    parent = _FakeConn(clock, schedule=[(0.0, ("done", "buffered"))])
+    proc = _FakeProc(alive_until=1000.0, exitcode=0, clock=clock)
+
+    def receive() -> tuple[str, str]:
+        clock.now = 20.0  # injected progression while a frame finishes reading
+        return "done", "buffered"
+
+    monkeypatch.setattr(parent, "recv", receive)
+    outcome = supervise(
+        proc, parent, timeout_s=10, on_message=_terminal_on("done"), strict_deadline=strict
+    )
+    assert outcome.terminal == (None if strict else ("done", "buffered"))
+    assert not outcome.died
 
 
 def test_a_zero_budget_pass_whose_child_had_already_answered_is_not_a_timeout(
@@ -329,6 +369,30 @@ def test_a_message_that_never_comes_yields_no_terminal_and_no_death(
     assert outcome.terminal is None
     assert outcome.died is False
     assert proc.killed, "the ceiling fired, so the still-alive child must be killed"
+
+
+@pytest.mark.parametrize("race", ["deadline", "death"])
+def test_independent_finish_policy_keeps_the_shared_terminal_drains(
+    monkeypatch: pytest.MonkeyPatch, race: str
+) -> None:
+    clock = _FakeClock(start=5.0 if race == "deadline" else 0.0)
+    _patch_clock(monkeypatch, clock)
+    parent = _FakeConn(
+        clock, schedule=[(5.0 if race == "deadline" else 0.1, ("done", "cleanup owner"))]
+    )
+    proc = _FakeProc(alive_until=1000.0 if race == "deadline" else 0.05, exitcode=0, clock=clock)
+    finished: list[bool] = []
+    outcome = supervise(
+        proc,
+        parent,
+        timeout_s=0 if race == "deadline" else 10,
+        on_message=_terminal_on("done"),
+        finish=lambda: finished.append(True),
+    )
+    assert outcome.terminal == ("done", "cleanup owner")
+    assert not outcome.died
+    assert finished == [True]
+    assert not proc.killed, "independent cleanup owners must not be killed on terminal"
 
 
 # ==========================================================================

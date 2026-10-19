@@ -18,12 +18,14 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, TextIO
 
+from hephaestus.core.executor.sandbox.oci_network import observe_network
 from hephaestus.core.executor.sandbox.oci_protocol import (
     OCI_PROFILE_VERSION,
     PROBE_REQUEST_MAX_BYTES,
     PROTOCOL_VERSION,
     diagnostic_bytes,
 )
+from hephaestus.core.executor.sandbox.oci_storage import bounded_text, observe_storage
 
 MAX_REQUEST_BYTES = PROBE_REQUEST_MAX_BYTES
 _NONCE_RE = re.compile(r"[0-9a-f]{64}", flags=re.ASCII)
@@ -111,7 +113,7 @@ def parse_status(text: str) -> dict[str, object]:
     return {"capabilities": caps, "no_new_privs": int(values["NoNewPrivs"])}
 
 
-def _unescape_mount(value: str) -> str:
+def unescape_mount(value: str) -> str:
     return re.sub(
         r"\\(040|011|012|134)",
         lambda match: {"040": " ", "011": "\t", "012": "\n", "134": "\\"}[match.group(1)],
@@ -130,7 +132,7 @@ def parse_mountinfo(
         tail = after.split()
         if not separator or len(fields) < 6 or len(tail) < 3:
             raise RuntimeError("malformed mountinfo")
-        mountpoint = _unescape_mount(fields[4])
+        mountpoint = unescape_mount(fields[4])
         options = set(fields[5].split(",")) | set(tail[2].split(","))
         mounts.append((mountpoint, tail[0], options))
 
@@ -194,8 +196,8 @@ def parse_cgroup_observation(
         if tail[0] in {"cgroup", "cgroup2"}:
             cgroup_mounts.append(
                 (
-                    _unescape_mount(fields[4]),
-                    _unescape_mount(fields[3]),
+                    unescape_mount(fields[4]),
+                    unescape_mount(fields[3]),
                     tail[0],
                     set(tail[2].split(",")),
                 )
@@ -276,34 +278,7 @@ def _attempt_write(path: Path, payload: bytes) -> int:
 
 
 def _network_observation() -> dict[str, object]:
-    interfaces = sorted(path.name for path in Path("/sys/class/net").iterdir())
-    # Loopback routes are compatible with --network=none. Report only routes
-    # attached to another interface so the host can require this list empty.
-    ipv4_rows = [
-        line.split()
-        for line in Path("/proc/net/route").read_text().splitlines()[1:]
-        if line.strip()
-    ]
-    ipv6_rows = [
-        line.split()
-        for line in Path("/proc/net/ipv6_route").read_text().splitlines()
-        if line.strip()
-    ]
-    if any(len(row) < 1 for row in ipv4_rows) or any(len(row) < 10 for row in ipv6_rows):
-        raise RuntimeError("malformed network route table")
-    routes = [" ".join(row) for row in ipv4_rows if row[0] != "lo"]
-    routes += [" ".join(row) for row in ipv6_rows if row[-1] != "lo"]
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(0.25)
-    try:
-        sock.connect(("198.51.100.1", 9))
-    except OSError as exc:
-        connect_errno = int(exc.errno or -1)
-    else:
-        connect_errno = 0
-    finally:
-        sock.close()
-    return {"interfaces": interfaces, "routes": routes, "connect_errno": connect_errno}
+    return observe_network()
 
 
 def probe_record(
@@ -318,8 +293,8 @@ def probe_record(
     read_limit = resource.getrlimit if getrlimit is None else getrlimit
     observations: dict[str, object]
     if raw_observations is None:
-        status = parse_status(Path("/proc/self/status").read_text(encoding="ascii"))
-        mount_text = Path("/proc/self/mountinfo").read_text(encoding="utf-8")
+        status = parse_status(bounded_text("/proc/self/status"))
+        mount_text = bounded_text("/proc/self/mountinfo")
         proof_name = f".heph-oci-probe-{request.nonce}"
         proof = Path("/work") / proof_name
         proof.write_text(request.nonce, encoding="ascii")
@@ -331,13 +306,12 @@ def probe_record(
             "pid": os.getpid(),
             "mounts": parse_mountinfo(mount_text),
             "root_write_errno": _attempt_write(Path("/.heph-oci-root-write"), b"x"),
-            "work_proof": proof_name,
+            "work_proof": proof.read_text(encoding="ascii"),
+            "storage": observe_storage(),
             "tmp_write_errno": _attempt_write(Path("/tmp/.heph-oci-tmp-write"), b"x"),
             "tmp_capacity_bytes": tmp_stat.f_frsize * tmp_stat.f_blocks,
             "network": _network_observation(),
-            "cgroup": parse_cgroup_observation(
-                Path("/proc/self/cgroup").read_text(encoding="ascii"), mount_text
-            ),
+            "cgroup": parse_cgroup_observation(bounded_text("/proc/self/cgroup"), mount_text),
         }
     else:
         observations = dict(raw_observations)
@@ -368,6 +342,7 @@ def probe_record(
         "tmp_capacity_bytes": observations.get("tmp_capacity_bytes"),
         "tmp_write_errno": observations.get("tmp_write_errno"),
         "work_proof": observations.get("work_proof"),
+        "storage": observations.get("storage"),
     }
 
 
@@ -406,6 +381,11 @@ def _read_bounded(stream: BinaryIO) -> bytes:
 
 
 def main() -> int:
+    from .oci_protocol import PROBE_WORKER
+    from .oci_transfer import unique_json
+    from .oci_worker_io import worker_io
+
+    transport = worker_io()
     try:
         request = parse_request(_read_bounded(sys.stdin.buffer))
     except ProbeProtocolError:
@@ -425,7 +405,10 @@ def main() -> int:
             diagnostic_bytes("probe_inspection_failed", component="oci_probe_worker"),
         )
         return 78
-    _write(sys.stdout, response)
+    if transport:
+        transport.send(unique_json(response), PROBE_WORKER)
+    else:
+        _write(sys.stdout, response)
     return 0
 
 

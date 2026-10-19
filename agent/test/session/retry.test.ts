@@ -115,6 +115,19 @@ afterEach(async () => {
 });
 
 describe("transient-fault retry", () => {
+  it.each(["before prompt", "at retry audit"])("cancellation %s prevents a new provider turn", async (when) => {
+    let cancelled = when === "before prompt";
+    const prompts: string[] = [];
+    const outcome = await promptWithTransientRetry("operator", {
+      prompt: async text => { prompts.push(text); },
+      takeTurnError: () => "WebSocket error",
+      aborted: () => cancelled,
+      onRetry: () => { cancelled = true; },
+    });
+    expect(outcome).toEqual({ state: "cancelled" });
+    expect(prompts).toEqual(when === "before prompt" ? [] : ["operator"]);
+  });
+
   it("errors once then succeeds: the run completes, with the audit event", async () => {
     const fx = await makeFixture([
       { kind: "error", message: "WebSocket error" },

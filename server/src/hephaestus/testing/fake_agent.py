@@ -46,6 +46,7 @@ from hephaestus.agent_bridge.model_selection import (
 from hephaestus.agent_bridge.protocol import ErrorCode
 from hephaestus.agent_bridge.sessions import RunInFlightError
 from hephaestus.agent_bridge.supervisor import SupervisorError
+from hephaestus.agent_bridge.turn_controls import DEFAULT_TURN_CONTROLS, TurnControls
 from opstore.admission import AdmissionControl
 from opstore.errors import NotFoundError
 
@@ -132,6 +133,7 @@ class FakeAgent:
         #: that prepended the block — this records the two halves as the route
         #: passed them.
         self.prompts: list[tuple[str, str | None]] = []
+        self.turn_controls: list[TurnControls] = []
         self.rebinds = 0
         self.closed = False
         # -- §23 credential state ------------------------------------------
@@ -340,6 +342,7 @@ class FakeAgent:
         *,
         run_id: str | None = None,
         context: str | None = None,
+        turn_controls: TurnControls = DEFAULT_TURN_CONTROLS,
         answerer: Callable[[dict[str, Any]], Any] | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
         timeout: float | None = None,
@@ -359,6 +362,7 @@ class FakeAgent:
             self._active_models[session_id] = run
             self._run_sessions[run] = session_id
             self.prompts.append((text, context))
+            self.turn_controls.append(turn_controls)
         try:
             script = self.on_prompt
             if script is not None:

@@ -3,7 +3,7 @@
 // Recovery gets its own disposable PACKAGED fixture, not extra budget from the
 // shared G4 provider. Reuses the existing Python fixture and its unchanged limits.
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Page } from "@playwright/test";
 import type { World } from "./world";
@@ -16,8 +16,10 @@ export function world(): World {
   return owned;
 }
 export async function startRecoveryWorld(output: string): Promise<void> {
-  const directory = join(output, "recovery-owned");
-  mkdirSync(directory, { recursive: true });
+  mkdirSync(output, { recursive: true });
+  // Playwright restarts a failed worker and runs beforeAll again. Retain that
+  // worker's evidence and allocate a new owned directory, never overwrite it.
+  const directory = mkdtempSync(join(output, "recovery-owned-"));
   const handshake = join(directory, "handshake.json");
   if (existsSync(handshake)) throw new Error("refusing to overwrite recovery fixture");
   const child = spawn("uv", ["run", "python", "web/e2e/harness/serve_fixture.py", handshake], {

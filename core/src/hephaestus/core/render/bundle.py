@@ -214,6 +214,7 @@ class RenderStore:
         edge_png: bytes,
         entries: Mapping[int, SelectionEntry],
         preview_png: bytes | None = None,
+        provenance: Mapping[str, JSONValue] | None = None,
     ) -> SelectionBundle:
         """Publish one view's three ID passes, table, and linking bundle.
 
@@ -250,6 +251,9 @@ class RenderStore:
             "pass_refs": pass_refs.to_json(),
             "selection_table_ref": table_ref,
         }
+        if provenance is not None:
+            bundle_payload["version"] = 2
+            bundle_payload["provenance"] = dict(provenance)
         if preview_ref is not None:
             bundle_payload["preview_ref"] = preview_ref
         bundle_blob = self._store.blobs.put(canonical_json(bundle_payload).encode("utf-8"))
@@ -418,6 +422,59 @@ def resolve_selection(
         raise StaleSelectionError(
             StaleSelection("malformed", ref, f"selection table invalid: {exc}")
         ) from exc
+
+    # Payload labels alone do not establish a selectable publication. All
+    # immutable table/source/layer links and published kinds must still exist.
+    from hephaestus.core.project_store.artifact_kinds import recorded_kinds
+
+    try:
+        version = payload.get("version")
+        if type(version) is not int or version not in (1, 2):
+            raise ValueError("unsupported bundle version")
+        if (
+            table_payload.get("kind") != "selection_table"
+            or table_payload.get("version") != 1
+            or table_payload.get("source_artifact_ref") != source_artifact_ref
+        ):
+            raise ValueError("table source/version mismatch")
+        links = set(store.gc.links())
+        for linked_ref, expected_kind in (
+            (bundle_ref, SELECTION_BUNDLE_KIND),
+            (table_ref, SELECTION_TABLE_KIND),
+            *((r, SELECTION_PASS_KIND) for r in pass_refs.as_tuple()),
+        ):
+            linked_blob = blob_hash_of_ref(linked_ref)
+            if (
+                _ref_kind(linked_ref) != expected_kind
+                or expected_kind not in recorded_kinds(store, linked_blob)
+                or not store.blobs.has(linked_blob)
+            ):
+                raise ValueError("missing/mislabeled selection artifact")
+        for target in (
+            source_blob,
+            table_blob,
+            *(blob_hash_of_ref(r) for r in pass_refs.as_tuple()),
+        ):
+            if (bundle_blob, target) not in links:
+                raise ValueError("unlinked bundle")
+        for layer in pass_refs.as_tuple():
+            if (blob_hash_of_ref(layer), bundle_blob) not in links:
+                raise ValueError("unlinked selection pass")
+        if version == 2:
+            from hephaestus.core.executor.identity import ExecutionIdentity
+
+            from opstore import canonical_json
+
+            provenance = payload["provenance"]
+            if (
+                not isinstance(provenance, dict)
+                or provenance.get("source_artifact_ref") != source_artifact_ref
+            ):
+                raise ValueError("render provenance source")
+            for key in ("executor_identity", "renderer_identity"):
+                ExecutionIdentity(canonical_json(provenance[key]))
+    except (ValueError, KeyError, TypeError) as exc:
+        raise StaleSelectionError(StaleSelection("malformed", ref, str(exc))) from exc
 
     return SelectionResolution(
         bundle_ref=bundle_ref,

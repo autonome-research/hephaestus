@@ -109,6 +109,11 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
+    # Public dependency-injection annotation for transports. Expose the service
+    # contract, not OciRenderer or any rendering implementation to HTTP. Like
+    # other TYPE_CHECKING-only dependencies this adds no runtime import edge.
+    from hephaestus.core.render.oci_backend import RenderService as RenderService
+
     # The type checker reads the real symbols from the real modules; only the
     # runtime defers. Nothing about the surface changes — see the class
     # declaration at the end of this block.

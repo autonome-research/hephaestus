@@ -174,6 +174,8 @@ describe("model wire and shared state", () => {
     const button = host.querySelector("[data-model-button]");
     expect(button?.getAttribute("title")).toContain("Saved selection (not active): local/fake/spark");
     expect(button?.getAttribute("title")).toContain("Capability unknown");
+    expect(button?.getAttribute("aria-label")).toContain("Saved selection (not active): local/fake/spark");
+    expect(button?.getAttribute("aria-label")).toContain("Capability unknown");
     expect(host.textContent).toContain("model_unknown");
   });
   it("does not confuse unavailable-model repair with unresolved execution ownership", () => {
@@ -217,12 +219,32 @@ describe("model wire and shared state", () => {
 });
 
 describe("model control interaction", () => {
+  it.each([true, false])("creation visibly identifies default versus explicit choice (%s)", isDefault => {
+    const host = document.createElement("div"); document.body.append(host);
+    const root = createRoot(host);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const choice = models.providers[0]!.models[0]!;
+    act(() => root.render(<QueryClientProvider client={client}>
+      <ModelPicker sessionId={null} creation={{ choice, isDefault, busy: false, onChoose: vi.fn() }} />
+    </QueryClientProvider>));
+    teardown = () => { root.unmount(); client.clear(); };
+    const note = host.querySelector("[data-model-control] > p");
+    expect(note?.textContent).toContain(isDefault ? "Proposed default" : "New-session choice");
+    expect(note?.textContent).toContain(`${choice.provider_id}/${choice.model_id}`);
+    expect(note?.textContent).toContain("Text + images");
+    expect(createSession).not.toHaveBeenCalled();
+    expect(sendPrompt).not.toHaveBeenCalled();
+  });
   it("shows Spark even when vision is first; arrows do not mutate, Enter confirms, Escape restores focus", async () => {
     ready(); const host = mount(); await act(async () => {});
     const button = host.querySelector<HTMLElement>("[data-model-button]")!;
     expect(button.textContent).toContain("Spark");
     expect(button.getAttribute("title")).toContain("local/fake/spark");
     expect(button.getAttribute("title")).toContain("Text only");
+    expect(button.getAttribute("aria-label")).toContain("Spark");
+    expect(button.getAttribute("aria-label")).toContain("Current model: local/fake/spark");
+    expect(button.getAttribute("aria-label")).toContain("Text only");
+    expect(button.getAttribute("aria-label")).toContain("Effort: Medium");
     button.focus(); click(button); await act(async () => {});
     expect(document.activeElement?.getAttribute("role")).toBe("option");
     expect(host.querySelector('[role="option"][aria-selected="true"]')?.textContent).toContain("Spark");

@@ -52,7 +52,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from "three";
-import type { Box3, Quaternion } from "three";
+import type { Box3, Object3D, Quaternion } from "three";
 import { GLTFLoader, type GLTF } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { nameForDirection } from "./cameras";
@@ -78,6 +78,8 @@ import {
   boundsAt,
   framingFor,
   indexSolidNodes,
+  raycastHint,
+  type Association,
   type Framing,
   type SolidIndex,
 } from "./scene";
@@ -124,6 +126,7 @@ export class ViewportEngine {
   private grid: BuildSpace | null = null;
   private step = 0;
   private index: SolidIndex | null = null;
+  private associations: ReadonlyMap<Object3D, Association> = new Map();
   /** The plain scene bbox — the `rgb`/`mask`/`section` framing (`_framing`). */
   private bounds: Box3 | null = null;
   /** The `t = 1` extent — the `explode` channel's framing. */
@@ -136,6 +139,7 @@ export class ViewportEngine {
   /** Multiplicative zoom still owed to the camera; 1 is "nothing pending". */
   private zoomPending = 1;
   private disposed = false;
+  private sectionActive = false;
 
   constructor(canvas: HTMLCanvasElement, options: ViewportEngineOptions) {
     this.canvas = canvas;
@@ -252,6 +256,7 @@ export class ViewportEngine {
     applyAppearance(gltf.scene, this.display.material, this.appearance);
     this.root.add(gltf.scene);
     this.index = indexSolidNodes(gltf, geometry);
+    this.associations = gltf.parser.associations as Map<Object3D, Association>;
     this.bounds = boundsAt(this.index, 0);
     this.explodedBounds = boundsAt(this.index, 1);
     return this.index;
@@ -462,6 +467,7 @@ export class ViewportEngine {
 
   /** §5.3's live preview: `null` clears every clipping plane. */
   setSection(plane: SectionPlaneSpec | null): void {
+    this.sectionActive = plane !== null;
     if (plane === null) {
       applyClipping(this.root, []);
     } else {
@@ -599,6 +605,13 @@ export class ViewportEngine {
     }));
   }
 
+  /** Read-only screen-space hint over the actual loaded primitives. */
+  raycast(x: number, y: number) {
+    // Clipped surfaces are a preview, not selection evidence.
+    if (this.sectionActive) return null;
+    return raycastHint(this.associations, this.camera, x, y);
+  }
+
   /** Read-only camera evidence for the existing packaged browser harness. */
   cameraSnapshot() {
     return {
@@ -671,6 +684,7 @@ export class ViewportEngine {
   }
 
   private clearRoot(): void {
+    this.associations = new Map();
     for (const child of [...this.root.children]) this.root.remove(child);
     // The authored material and the edge geometries are ours; the GLB's own
     // buffers are the loader's and are collected with the parsed document. The

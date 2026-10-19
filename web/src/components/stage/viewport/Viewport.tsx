@@ -344,6 +344,7 @@ export function Viewport(): React.JSX.Element {
       index: indexRef.current,
       artifactRef: loadedRefRef.current,
       camera: engineRef.current?.cameraSnapshot() ?? null,
+      raycast: (x, y) => engineRef.current?.raycast(x, y) ?? null,
     }));
     // PUBLISH THE LIVE POSE for the orientation gizmo (2026-09-20). The cube
     // used to read `workspace.view`, which is written once when a drag SETTLES

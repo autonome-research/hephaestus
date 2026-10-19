@@ -55,7 +55,9 @@ class GeometryOps(CadOpsState):
         """
         self._require_stored(source_artifact_ref)
         try:
-            return publish_gltf_for_build(self._render_project(), source_artifact_ref)
+            return publish_gltf_for_build(
+                self._render_project(), source_artifact_ref, **self._render_dimensions()
+            )
         except StaleSelectionError as exc:
             raise _stale(exc, source_artifact_ref) from exc
         except HephaestusError as exc:
@@ -147,7 +149,11 @@ class GeometryOps(CadOpsState):
         self._require_stored(gltf_artifact_ref)
         data = self._store.blobs.get(blob_hash_of_ref(gltf_artifact_ref))
         source = self._declared_source(data)
-        published = None if source is None else resolve_published_gltf(self._store, source)
+        published = (
+            None
+            if source is None
+            else resolve_published_gltf(self._store, source, gltf_ref=gltf_artifact_ref)
+        )
         if published is None or published.ref != gltf_artifact_ref:
             raise CadOpError(
                 "stale_selection",
@@ -176,16 +182,17 @@ class GeometryOps(CadOpsState):
     def _declared_source(data: bytes) -> str | None:
         """A GLB's ``asset.extras.source_artifact_ref``, or ``None``.
 
-        Read through ``validate_gltf`` so a blob that does not parse, or whose
-        meshes carry no ``explode_offset``, is already ``None`` here rather than
-        failing later with a less specific message.
+        Parse only to find the candidate source. ``linked_gltf`` then applies
+        the complete linked-GLB gate (including meshes/table/GC) before returning
+        any bytes. Source discovery must not import the native kernel/EGL stack.
         """
-        from hephaestus.core.errors import ValidationError
-        from hephaestus.core.render.gltf import validate_gltf
+        from hephaestus.core.render.glb_gate import parse_glb
 
         try:
-            return validate_gltf(data).source_artifact_ref
-        except ValidationError:
+            document, _ = parse_glb(data)
+            source = document["asset"]["extras"]["source_artifact_ref"]
+            return source if isinstance(source, str) else None
+        except (ValueError, KeyError, TypeError):
             return None
 
 

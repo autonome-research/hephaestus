@@ -535,6 +535,11 @@ routing is unavailable; it must not claim that no other image-capable model is
 configured. Model selection and any new request remain explicit operator acts.
 This refusal is not visual review and does not implement `query_snapshot`.
 
+Plan (§7A.10A of `INTERFACE.md`) permits this tool's immutable evidence
+publication: render/selection bytes, tables, bundles, artifact-kind/provenance
+records and retention links under the existing bounds. It does not permit a
+build, a modeling-input/current-build change, or rewriting prior evidence.
+
 Renders the current build by default. `artifact_ref` renders an exact immutable
 build/checkpoint returned by `build_part`; canonical JSON Schema makes it
 mutually exclusive with `last_good=true`. `last_good=true` is a convenience
@@ -581,6 +586,9 @@ query_snapshot(name: str, question: str,
     -> {status: "ok", answer, render_artifacts, usage}  # maxItems=4
      | {status: "capability_error", code: "capability_not_available", message}
 ```
+Plan admits only this bounded inspection child, never a modeling delegation.
+Its render-evidence publication follows `inspect_part` above; usage is ordinary
+parent-budget bookkeeping. Cancellation forbids starting a new child after Stop.
 Runs an ephemeral child Pi vision session against 1–4 fresh renders. The child
 `AgentSession` is created with `noTools="all"`, an explicit minimal
 ResourceLoader containing no extensions/skills, and in-memory/no persistence.
@@ -1780,6 +1788,13 @@ sidecar/owner crash produces `interrupted` only when coordinator recovery with
 the same child ID is impossible; recoverable crashes resume the existing child,
 deadline expiry is `timed_out`, and durable cancellation intent is `cancelled`.
 All outcomes are replayable through the synchronous result/status tool.
+In Plan, only `get_delegation_status` is available (profile permitting): it may
+persist `timed_out` for an existing expired delegation or project an existing
+terminal, with the corresponding admission bookkeeping. This is not a pure
+zero-write read; it cannot start, resume, enqueue, extend or delegate work.
+Terminal precedence and slot retention until acknowledgment are unchanged.
+`delegate_part_agent` (both deliveries) and `cancel_delegation` remain absent
+from Plan's tool set; operator Stop remains authoritative.
 For synchronous `prompt`, the waiting parent durably enters `SUSPENDED_WAIT`
 and releases its active slot atomically with child reservation; child/resume
 admissions outrank new prompts, and the parent reacquires a slot before

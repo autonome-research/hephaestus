@@ -358,8 +358,8 @@ def _cmd_build(args: argparse.Namespace) -> int:
         root, part = project_root_or_refuse(), None
     layout = load_project(root)
     store = open_store(layout)
-    publisher = Publisher(layout, store)
     backend = make_backend(layout, unsafe=bool(args.unsafe_local_executor))
+    publisher = Publisher(layout, store, backend=backend)
 
     exit_code = 0
     built: set[str] = set()

@@ -50,8 +50,7 @@ __all__ = [
     "software_egl_device",
 ]
 
-DEFAULT_WIDTH = 960
-DEFAULT_HEIGHT = 720
+from hephaestus.core.render.defaults import DEFAULT_HEIGHT, DEFAULT_WIDTH
 
 #: Environment override for the EGL device index (skips the software scan).
 DEVICE_ENV_VAR = "HEPH_EGL_DEVICE"

@@ -31,12 +31,14 @@ from hephaestus.core.executor.sandbox.oci_protocol import (
 
 
 def test_protocol_manifest_is_exact_and_canonical() -> None:
+    from hephaestus.core.executor.sandbox.oci_storage_policy import STORAGE_WORKER
+
     assert PROTOCOL_NAME == "hephaestus.oci-executor"
-    assert PROTOCOL_VERSION == 2
-    assert frozenset({BUILD_WORKER, DFM_WORKER, PROBE_WORKER}) == APPROVED_MODULES
+    assert PROTOCOL_VERSION == 3
+    assert frozenset({BUILD_WORKER, DFM_WORKER, PROBE_WORKER, STORAGE_WORKER}) == APPROVED_MODULES
     assert manifest_bytes() == manifest_bytes()
     assert manifest_bytes().endswith(b"\n") and manifest_bytes().count(b"\n") == 1
-    assert json.loads(manifest_bytes()) == manifest_record()
+    assert json.loads(manifest_bytes()) == {**manifest_record(), "execution_identity": None}
     assert manifest_record()["workers"] == sorted(APPROVED_MODULES)
 
 
@@ -65,7 +67,7 @@ def test_worker_args_refuse_every_near_match(args: tuple[str, ...]) -> None:
 def test_diagnostic_is_one_canonical_line() -> None:
     assert diagnostic_bytes("worker_not_allowed") == (
         b'{"code":"worker_not_allowed","component":"oci_launcher",'
-        b'"diagnostic_version":1,"protocol_version":2}\n'
+        b'"diagnostic_version":1,"protocol_version":3}\n'
     )
 
 
@@ -73,11 +75,13 @@ def test_parse_exact_valid_run() -> None:
     parsed = launcher.parse_argv(
         (
             "run",
-            "2",
+            "3",
             BUILD_WORKER,
             str(MAX_CPU_SECONDS),
             str(MAX_ADDRESS_SPACE_BYTES),
             str(MAX_NPROC),
+            "ordinary",
+            "0" * 64,
         )
     )
     assert parsed == launcher.LaunchRequest(
@@ -95,7 +99,7 @@ def test_parse_exact_valid_run() -> None:
 )
 def test_limit_parser_refuses_noncanonical_values(value: str) -> None:
     with pytest.raises(ValueError):
-        launcher.parse_argv(("run", "2", BUILD_WORKER, value, "1", "1"))
+        launcher.parse_argv(("run", "3", BUILD_WORKER, value, "1", "1", "ordinary", "0" * 64))
 
 
 def test_limit_parser_refuses_values_above_caps() -> None:
@@ -104,7 +108,7 @@ def test_limit_parser_refuses_values_above_caps() -> None:
         (4, str(MAX_ADDRESS_SPACE_BYTES + 1)),
         (5, str(MAX_NPROC + 1)),
     ):
-        args = ["run", "2", BUILD_WORKER, "1", "1", "1"]
+        args = ["run", "3", BUILD_WORKER, "1", "1", "1", "ordinary", "0" * 64]
         args[position] = value
         with pytest.raises(ValueError):
             launcher.parse_argv(args)
@@ -157,7 +161,7 @@ def test_limit_failure_prevents_exec_and_is_deterministic(
 
     monkeypatch.setattr(launcher, "apply_rlimits", fail_limits)
     monkeypatch.setattr(launcher, "exec_worker", mark_exec)
-    code = launcher.main(("run", "2", BUILD_WORKER, "1", "1", "1"))
+    code = launcher.main(("run", "3", BUILD_WORKER, "1", "1", "1", "ordinary", "0" * 64))
     captured = capsys.readouterr()
     assert code == launcher.EXIT_RLIMIT
     assert not executed
@@ -166,7 +170,7 @@ def test_limit_failure_prevents_exec_and_is_deterministic(
         "code": "resource_limit_failed",
         "component": "oci_launcher",
         "diagnostic_version": 1,
-        "protocol_version": 2,
+        "protocol_version": 3,
     }
     assert "attacker" not in captured.err
 
@@ -187,35 +191,40 @@ def test_exec_worker_uses_absolute_interpreter_and_fixed_environment(
     assert seen is not None
     assert seen == (
         sys.executable,
-        [sys.executable, "-I", "-m", BUILD_WORKER],
+        [sys.executable, "-I", "-m", BUILD_WORKER, "--oci-transfer", "ordinary", "0" * 64],
         dict(launcher.FIXED_WORKER_ENV),
     )
     assert Path(seen[0]).is_absolute()
 
 
 def test_launcher_refusal_codes(capsys: pytest.CaptureFixture[str]) -> None:
-    assert launcher.main(("run", "1", BUILD_WORKER, "1", "1", "1")) == 65
-    assert json.loads(capsys.readouterr().err)["code"] == "protocol_version_mismatch"
-    assert launcher.main(("run", "2", "not.allowed", "1", "1", "1")) == 66
+    for stale in ("1", "2"):
+        assert (
+            launcher.main(("run", stale, BUILD_WORKER, "1", "1", "1", "ordinary", "0" * 64)) == 65
+        )
+        assert json.loads(capsys.readouterr().err)["code"] == "protocol_version_mismatch"
+    assert launcher.main(("run", "2", BUILD_WORKER, "1", "1", "1")) == 64
+    capsys.readouterr()
+    assert launcher.main(("run", "3", "not.allowed", "1", "1", "1", "ordinary", "0" * 64)) == 66
     assert json.loads(capsys.readouterr().err)["code"] == "worker_not_allowed"
 
 
 def test_probe_schema_size_nonce_and_deterministic_response() -> None:
     nonce = "a" * 64
     request = probe.parse_request(
-        json.dumps({"nonce": nonce, "protocol_version": 2}).encode("ascii")
+        json.dumps({"nonce": nonce, "protocol_version": 3}).encode("ascii")
     )
     with pytest.raises(probe.ProbeRequestError):
         probe.parse_request(b"x" * 1025)
     with pytest.raises(probe.ProbeRequestError):
-        probe.parse_request(b'{"nonce":"a","protocol_version":2}')
+        probe.parse_request(b'{"nonce":"a","protocol_version":3}')
     with pytest.raises(probe.ProbeRequestError):
         probe.parse_request(
-            f'{{"nonce":"{nonce}","nonce":"{nonce}","protocol_version":2}}'.encode()
+            f'{{"nonce":"{nonce}","nonce":"{nonce}","protocol_version":3}}'.encode()
         )
     with pytest.raises(probe.ProbeRequestError):
         probe.parse_request(
-            json.dumps({"nonce": nonce, "protocol_version": 2, "extra": 1}).encode()
+            json.dumps({"nonce": nonce, "protocol_version": 3, "extra": 1}).encode()
         )
 
     values = {
@@ -239,7 +248,10 @@ def test_probe_schema_size_nonce_and_deterministic_response() -> None:
     assert result["effective_gid"] == 65532
     assert result["kind"] == "hephaestus_executor_probe"
     assert result["nonce"] == nonce
-    assert result["protocol_version"] == 2
+    assert result["protocol_version"] == 3
+    for stale in (1, 2):
+        with pytest.raises(probe.ProbeProtocolError):
+            probe.parse_request(json.dumps({"nonce": nonce, "protocol_version": stale}).encode())
 
 
 def test_probe_status_and_mountinfo_parsers_are_raw_and_strict() -> None:

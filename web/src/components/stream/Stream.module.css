@@ -156,9 +156,10 @@
 
 .srOnly { composes: srOnly from "./ModelPicker.module.css"; }
 
-/* The `+` anchors its menu; the menu is drawn only while open (§7.1(b)(2)). */
+/* The strip, not the tiny `+`, supplies the available width for its menu.
+   Its padding aligns the menu with the opener without letting long part names
+   extend beyond the conversation column (§7.1(b)(2)). */
 .tabsCreateAnchor {
-  position: relative;
   display: flex;
 }
 
@@ -171,9 +172,9 @@
      bounding box survives clipping — but every click on an entry landed on the
      popover scrim instead. Anchor the LEADING edges so it grows into the panel. */
   top: 100%;
-  left: 0;
+  left: var(--space-2);
   width: max-content;
-  max-width: min(44ch, 80vw);
+  max-width: min(44ch, calc(100% - 2 * var(--space-2)));
   max-height: 60vh;
   overflow: auto;
   display: flex;

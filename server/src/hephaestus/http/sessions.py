@@ -50,6 +50,7 @@ from hephaestus.agent_bridge.session_edges import (
     THREAD_UNLINKED,
     SessionEdgeStore,
 )
+from hephaestus.agent_bridge.turn_controls import DEFAULT_TURN_CONTROLS, TurnControls
 from opstore.errors import NotFoundError
 
 from .errors import HttpRefusal
@@ -160,6 +161,7 @@ class SessionBackend(Protocol):
         *,
         run_id: str | None = ...,
         context: str | None = ...,
+        turn_controls: TurnControls = ...,
         answerer: Callable[[dict[str, Any]], Any] | None = ...,
         on_event: Callable[[dict[str, Any]], None] | None = ...,
         timeout: float | None = ...,
@@ -807,6 +809,7 @@ class WorkspaceSessions:
         *,
         run_id: str | None = None,
         context: str | None = None,
+        turn_controls: TurnControls = DEFAULT_TURN_CONTROLS,
         include_events: bool = True,
         expected_model_revision: ModelRevision | None = None,
     ) -> dict[str, Any]:
@@ -852,6 +855,7 @@ class WorkspaceSessions:
             text,
             run_id=run,
             context=context,
+            turn_controls=turn_controls,
             answerer=self.questions.answerer(session_id),
             expected_model_revision=expected_model_revision,
         )
