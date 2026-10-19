@@ -248,6 +248,7 @@ def prepare_files(smoke: Smoke, route: str, destination: Path, wheels: Path | No
     smoke.owned.append(name)
     smoke.save()
     with _Receiver(collected, nonce, "preparation-v1/" + route, BOUNDS, schema) as receiver:
+        primary_error = None
         try:
             smoke.command(create_argv(smoke, route, name, inputs, nonce))
             cid = smoke.report["build_ownership"][name]["id"]
@@ -271,8 +272,28 @@ def prepare_files(smoke: Smoke, route: str, destination: Path, wheels: Path | No
             ):
                 raise RuntimeError("preparation terminal failure")
             (area / "terminal.json").write_text(json.dumps(state) + "\n")
+        except BaseException as exc:
+            primary_error = exc
+            smoke.report["preparation_error"] = f"{type(exc).__name__}: {exc}"
+            raise
         finally:
-            remove_owned(smoke, name)
+            try:
+                remove_owned(smoke, name)
+            except BaseException as exc:
+                smoke.report.setdefault("preparation_cleanup_errors", []).append(
+                    f"{name}: {type(exc).__name__}: {exc}"
+                )
+                if primary_error is None:
+                    raise
+            finally:
+                try:
+                    smoke.save()
+                except BaseException as exc:
+                    smoke.report.setdefault("preparation_cleanup_errors", []).append(
+                        f"preparation report persistence: {type(exc).__name__}: {exc}"
+                    )
+                    if primary_error is None:
+                        raise
         smoke.deadline.remaining()
         mkdir_private(destination)  # exclusive; no stale output acceptance
         receiver.install(destination)

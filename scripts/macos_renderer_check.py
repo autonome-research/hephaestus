@@ -52,9 +52,15 @@ def require(condition, message):
 
 def verify_cleanup(smoke, config):
     states = []
-    paths = sorted(config.directory.rglob("ownership")) + sorted(config.directory.rglob("recovery"))
-    require(paths, "missing renderer ownership journals")
+    paths = sorted(
+        path
+        for name in ("ownership", "recovery", "observer-ownership")
+        for path in config.directory.rglob(name)
+    )
+    require((config.directory / "ownership/state.json").is_file(), "missing renderer ownership")
     for path in paths:
+        # Opening an absent state would initialize a clean journal: not verification.
+        require((path / "state.json").is_file(), "missing renderer ownership state")
         with OwnershipJournal(path, config.binding()) as journal:
             journal.require_clean()
             states.append(journal.state)
@@ -78,13 +84,23 @@ def verify_cleanup(smoke, config):
             "pending/live container",
         )
     for operation in sorted(config.directory.rglob("operation-*")):
+        require(
+            (operation.parent / "ownership/state.json").is_file(),
+            "missing renderer operation ownership",
+        )
         owner = json.loads((operation / "owner.json").read_text())
         reaped = json.loads((operation / "reaped.json").read_text())
         final = json.loads((operation / "owner-final.json").read_text())
         require(
-            owner["pid"] == reaped["pid"]
+            type(owner["pid"]) is int
+            and owner["pid"] > 0
+            and type(reaped["pid"]) is int
+            and owner["pid"] == reaped["pid"]
+            and type(reaped["exitcode"]) is int
             and reaped["exitcode"] == 0
             and owner["pid"] not in live
+            and type(final["pid"]) is int
+            and final["pid"] == owner["pid"]
             and final["commands_finished"] is True,
             "unreaped/live owner",
         )
@@ -127,6 +143,7 @@ def live(smoke, image_ref, executor):
     smoke.report["renderer_cleanup_passed"] = False
     smoke.save()
     renderer = OciRenderer(config)
+    primary_error = None
     try:
         probe = renderer.probe()
         save(smoke.directory / "renderer-identity.json", probe.identity.to_json())
@@ -247,11 +264,30 @@ def live(smoke, image_ref, executor):
             }
         else:
             raise StageFailure("invalid BREP unexpectedly rendered")
+    except BaseException as exc:
+        primary_error = exc
+        smoke.report["renderer_live_error"] = f"{type(exc).__name__}: {exc}"
+        raise
     finally:
-        renderer.close()
-        verify_cleanup(smoke, config)
-        smoke.report["renderer_cleanup_passed"] = True
-        smoke.save()
+        try:
+            renderer.close()
+            verify_cleanup(smoke, config)
+        except BaseException as exc:
+            smoke.report["renderer_live_cleanup_errors"] = [f"{type(exc).__name__}: {exc}"]
+            if primary_error is None:
+                raise
+        else:
+            smoke.report["renderer_cleanup_passed"] = True
+        finally:
+            try:
+                smoke.save()
+            except BaseException as exc:
+                smoke.report["renderer_cleanup_passed"] = False
+                smoke.report.setdefault("renderer_live_cleanup_errors", []).append(
+                    f"live cleanup report persistence: {type(exc).__name__}: {exc}"
+                )
+                if primary_error is None:
+                    raise
 
 
 def renderer_passed(report: dict) -> bool:

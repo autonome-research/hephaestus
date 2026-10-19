@@ -79,9 +79,10 @@ def test_cleanup_only_addresses_recorded_resources(tmp_path: Path) -> None:
     smoke.docker = ("docker", "--host", "unix:///owned-endpoint")
     smoke.owned.append("owned-container")
     smoke.report["owned_image_tags"].append("owned:image")
+    smoke.report["build_ownership"] = {"owned-container": {"pending": False, "id": "a" * 64}}
     smoke.cleanup()
     assert calls == [
-        (*smoke.docker, "rm", "--force", "owned-container"),
+        (*smoke.docker, "rm", "--force", "a" * 64),
         (*smoke.docker, "ps", "-a", "--format", "{{.Names}}"),
         (*smoke.docker, "image", "rm", "owned:image"),
         (*smoke.docker, "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"),

@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -17,6 +18,18 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "docker/executor"))
 from fetch_native_runtime import native_source_allowed  # noqa: E402
+
+# The sole reviewed sdist: consumed only by the offline ARM64 preparation build.
+# Keep independent of the input lock so modifying that lock cannot widen policy.
+PYOPENGL_SOURCE = (
+    "https://files.pythonhosted.org/packages/9c/1d/"
+    "4544708aaa89f26c97cc09450bb333a23724a320923e74d73e028b3560f9/PyOpenGL-3.1.0.tar.gz",
+    "PyOpenGL-3.1.0.tar.gz",
+    "9b47c5c3a094fa518ca88aeed35ae75834d53e4285512c61879f67a48c94ddaf",
+    1172688,
+    "pyopengl",
+    "3.1.0",
+)
 
 
 def _locked_bytes(path: Path, item: dict) -> bytes:
@@ -39,6 +52,15 @@ def fetch_locked(lock: Path, destination: Path, cache: Path | None = None) -> No
     """
     destination.mkdir(parents=True, exist_ok=True)
     packages = json.loads(lock.read_text())["packages"]
+    if not isinstance(packages, list) or any(
+        not isinstance(p, dict)
+        or any(not isinstance(p.get(key), str) for key in ("filename", "url", "sha256"))
+        or type(p.get("size")) is not int
+        or not 0 < p["size"] <= 64 * 1024**2
+        or re.fullmatch(r"[0-9a-f]{64}", p["sha256"]) is None
+        for p in packages
+    ):
+        raise ValueError("download malformed lock record")
     if len(packages) > 128 or sum(p["size"] for p in packages) > 128 * 1024**2:
         raise ValueError("download aggregate bound")
     for item in packages:
@@ -49,16 +71,34 @@ def fetch_locked(lock: Path, destination: Path, cache: Path | None = None) -> No
         allowed = (
             native_source_allowed(item["url"], name, item["sha256"], item["size"])
             if name.endswith(".deb")
-            else name.endswith(".whl")
-            and url.scheme == "https"
-            and url.netloc == "files.pythonhosted.org"
-            and not url.query
-            and not url.fragment
+            else (
+                name.endswith(".whl")
+                and url.scheme == "https"
+                and url.netloc == "files.pythonhosted.org"
+                and url.path.endswith("/" + name)
+                and not url.query
+                and not url.fragment
+            )
+            or (
+                item["url"],
+                name,
+                item["sha256"],
+                item["size"],
+                item.get("name"),
+                item.get("version"),
+            )
+            == PYOPENGL_SOURCE
         )
         if not allowed:
             raise ValueError("download source violates integrity policy")
         target = destination / name
-        if not target.exists() and cache is not None and (cache / name).is_file():
+        if target.is_symlink():
+            raise ValueError("download target is a symlink")
+        if (
+            not target.exists()
+            and cache is not None
+            and ((cache / name).exists() or (cache / name).is_symlink())
+        ):
             data = _locked_bytes(cache / name, item)  # admission BEFORE staging writes
             with target.open("xb") as stream:
                 stream.write(data)

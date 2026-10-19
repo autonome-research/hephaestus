@@ -339,7 +339,14 @@ class Smoke:
                     failures.append(name)
             except Exception as exc:
                 failures.append(f"{name}: {exc}")
-        if any(r["pending"] for r in self.report.get("build_ownership", {}).values()):
+        records = self.report.get("build_ownership", {})
+        if any(
+            not isinstance(record, dict)
+            or record.get("pending") is not False
+            or not isinstance(record.get("id"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", record["id"]) is None
+            for record in [records.get(name) for name in self.owned] + list(records.values())
+        ):
             failures.append("unsettled preparation create; retain build-ownership.json")
         self.report["retained_image_artifacts"] = (
             list(self.report["owned_image_tags"]) if retain_images else []

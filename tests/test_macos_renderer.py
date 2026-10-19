@@ -61,7 +61,7 @@ def test_cached_download_admission_precedes_write(tmp_path, mutation):
         "filename": leaf.name,
         "size": len(payload),
         "sha256": hashlib.sha256(payload).hexdigest(),
-        "url": "https://files.pythonhosted.org/not-fetched",
+        "url": "https://files.pythonhosted.org/package.whl",
     }
     if mutation == "huge":
         with leaf.open("wb") as stream:

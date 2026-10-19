@@ -501,6 +501,45 @@ def test_actual_attach_client_is_reaped_on_cancel_before_owned_container_cleanup
         assert not list((tmp_path / "prepare-download/collected").iterdir())
 
 
+@pytest.mark.parametrize("route", ["download", "download-cache", "package"])
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_preparation_primary_failure_survives_nested_cleanup(
+    tmp_path, monkeypatch, route, interrupted
+):
+    original = (
+        KeyboardInterrupt("original attach failure")
+        if interrupted
+        else ValueError("original attach failure")
+    )
+
+    class FailingDaemon(Daemon):
+        def run(self, argv, **kwargs):
+            if "start" in argv:
+                raise original
+            if "ps" in argv:
+                raise OSError("independent cleanup inventory failure")
+            return super().run(argv, **kwargs)
+
+    smoke = smoke_module.Smoke(tmp_path)
+    smoke.docker = ("docker",)
+    smoke.transport = FailingDaemon(tmp_path)
+    monkeypatch.setattr(prep, "locked_packages", lambda _: PACKAGES)
+    wheels = None
+    if route != "download":
+        wheels = tmp_path / "wheels"
+        wheels.mkdir()
+        (wheels / LEAF).write_bytes(PAYLOAD)
+    with pytest.raises(type(original)) as caught:
+        prep.prepare_files(smoke, route, tmp_path / "published", wheels)
+    assert caught.value is original
+    report = json.loads((tmp_path / "report.json").read_text())
+    assert "original attach failure" in report["preparation_error"]
+    assert "independent cleanup inventory failure" in str(report["preparation_cleanup_errors"])
+    assert report["accepted"] is False
+    assert not (tmp_path / "published").exists()
+    assert smoke.cleanup_deadline is None
+
+
 def test_fixed_recipes_and_production_boundaries():
     for route in ("download", "download-cache"):
         commands = worker.recipe(route)

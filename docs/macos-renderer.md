@@ -166,6 +166,32 @@ image build. Public render Python/native downloads are independently URL/size/ha
 locked. Existing executor wheels and identical build inputs/cache are revalidated
 and reused. No dependency or golden upgrade; no image build timed out in this slice.
 
+## Preparation policy and failure reporting
+
+The downloader admits the committed PyOpenGL 3.1.0 source archive only by its
+reviewed exact URL, filename, size, SHA256, name and version tuple. This is not a
+general sdist permission. Wheels must retain their URL filename; TLS, disabled
+curl configuration, zero redirects, bounded requests/aggregate and pre-write
+cache integrity checks still apply. The archive is built only in the existing
+offline ARM64 preparation image, never on the host and never as a CAD workload.
+
+The workspace collector records `renderer_live_phase`: `not_started` is set by
+this invocation's control flow; `attempted` is persisted before calling the live
+collector, including partial launches; `returned` is not a cleanup acknowledgement.
+Missing/default state or resource absence establishes none of these facts.
+Preparation/download owners must always settle through their existing ledger;
+missing, mistyped or incomplete create settlement cannot pass an empty inventory.
+`renderer_stage_error` retains the primary preparation/live error, while
+`renderer_cleanup` records preparation status, live acknowledgement and independent
+cleanup errors, including nested preparation removal failures. Live probe/render
+failures likewise retain independent close/reap errors. Live verification requires
+existing journal state (including observer journals) and matching owner/final/reap
+PIDs; it never initializes replacement evidence for a missing journal.
+These checks do **not** waive the milestone's live cleanup ACK requirement:
+an early preparation failure still fails acceptance and keeps
+`renderer_cleanup_passed:false`, even when preparation cleanup succeeded. It does
+not retrofit historical reports or certify fresh renderer/browser acceptance.
+
 ## Remaining scope
 
 Remote focus/explode/custom azimuth/elevation, non-current provenance-less refs,

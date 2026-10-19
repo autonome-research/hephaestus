@@ -382,6 +382,15 @@ def browser(smoke, renderer_image):
 
 
 def later_stages(smoke):
+    """Keep primary failures and cleanup diagnostics independent.
+
+    `not_started` is established by this invocation's control flow, never by an
+    absent journal/default flag. `attempted` is persisted BEFORE calling live,
+    including partial launch failures; `returned` alone is not a cleanup ACK.
+    Preparation owners always use their existing cleanup ledger. This is a
+    reporting-only repair: even a proven not-started live phase does not satisfy
+    the full milestone's unchanged requirement for a real live cleanup ACK.
+    """
     from macos_prepare_renderer import prepare
     from macos_probe_executor import resolve_image
     from macos_renderer_check import RendererSmoke, live
@@ -390,21 +399,56 @@ def later_stages(smoke):
         smoke.directory / "renderer", smoke.wheelhouse, deadline=smoke.deadline
     )
     renderer.docker = smoke.docker
+    live_phase = "not_started"
+    primary_error = None
     try:
+        smoke.report["renderer_live_phase"] = live_phase
+        smoke.save()
         renderer.native_dependencies()
         image = resolve_image(renderer, prepare(renderer), role="renderer")
         smoke.report["renderer_image_ref"] = image
+        live_phase = "attempted"
+        smoke.report["renderer_live_phase"] = live_phase
+        smoke.save()
         live(renderer, image, smoke)
+        live_phase = "returned"
+        smoke.report["renderer_live_phase"] = live_phase
         for name in ("rgb", "selection_masks", "kernel_section", "linked_glb"):
             smoke.report["checks"][name] = renderer.report["checks"][name]
         smoke.report["render_integration"] = renderer.report["render_integration"]
         smoke.save()
         browser(smoke, image)
+    except BaseException as exc:
+        primary_error = exc
+        smoke.report["renderer_stage_error"] = f"{type(exc).__name__}: {exc}"
+        raise
     finally:
-        renderer.cleanup()
-        smoke.report["renderer_cleanup_passed"] = (
-            renderer.report.get("renderer_cleanup_passed") is True
-            and renderer.report["checks"]["cleanup"]["status"] == "passed"
-        )
-        if smoke.report["renderer_cleanup_passed"] is not True:
-            raise StageFailure("renderer stage cleanup incomplete")
+        errors = []
+        try:
+            renderer.cleanup()
+        except BaseException as exc:
+            errors.append(f"preparation cleanup: {type(exc).__name__}: {exc}")
+        preparation = renderer.report.get("checks", {}).get("cleanup", {})
+        if preparation.get("status") != "passed":
+            errors.append("preparation cleanup not acknowledged: " + str(preparation))
+        live_ack = renderer.report.get("renderer_cleanup_passed") is True
+        if not live_ack:
+            errors.append(f"renderer live cleanup ACK missing (live phase: {live_phase})")
+        errors.extend(renderer.report.get("preparation_cleanup_errors", []))
+        errors.extend(renderer.report.get("renderer_live_cleanup_errors", []))
+        smoke.report["renderer_cleanup"] = {
+            "live_phase": live_phase,
+            "live_acknowledged": live_ack,
+            "preparation": preparation,
+            "errors": errors,
+        }
+        smoke.report["renderer_cleanup_passed"] = not errors
+        try:
+            smoke.save()
+        except BaseException as exc:
+            errors.append(f"cleanup report persistence: {type(exc).__name__}: {exc}")
+            smoke.report["renderer_cleanup_passed"] = False
+            if primary_error is None:
+                raise
+        if errors and primary_error is None:
+            raise StageFailure("renderer stage cleanup incomplete: " + "; ".join(errors))
